@@ -1,0 +1,660 @@
+-- =============================================================================
+-- 0001_init.sql — School Portal online edition: core schema and row-level security
+--
+-- One platform, many schools. Every school-owned row carries school_id, and
+-- row-level security (RLS) decides who may read or write it:
+--   exec     whole school, settings, staff, audit log
+--   admin    whole school except settings and staff
+--   bursary  learners + finance (may only change a learner's bursary %)
+--   coach    learners + sports (may only change sport fields)
+--   teacher  learners, marks, comments and registers of their assigned classes
+--
+-- Apply once to a fresh Supabase project: Dashboard → SQL Editor → paste → Run.
+-- Keep "Confirm email" ON in Authentication settings: staff invites are claimed
+-- by email address, which is only safe when addresses are verified.
+-- =============================================================================
+
+-- ── Shared helpers ───────────────────────────────────────────────────────────
+create or replace function public.touch_updated_at() returns trigger
+language plpgsql set search_path = '' as $$
+begin new.updated_at := now(); return new; end $$;
+
+-- ── Schools and people ───────────────────────────────────────────────────────
+create table public.schools (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null check (length(trim(name)) between 2 and 120),
+  settings    jsonb not null default '{}'::jsonb,
+  sms_credits integer not null default 0 check (sms_credits >= 0),
+  plan        text not null default 'trial',
+  importing   boolean not null default false,   -- an offline backup is being brought in (see begin_import)
+  created_by  uuid references auth.users(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create table public.memberships (
+  school_id        uuid not null references public.schools(id) on delete cascade,
+  user_id          uuid not null references auth.users(id) on delete cascade,
+  role             text not null check (role in ('exec','admin','bursary','coach','teacher')),
+  display_name     text not null default '',
+  email            text not null default '',   -- copied at sign-up so the staff list can show it
+  assigned_classes text[] not null default '{}',
+  active           boolean not null default true,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  primary key (school_id, user_id)
+);
+create index memberships_user_idx on public.memberships(user_id);
+
+create table public.invites (
+  id               uuid primary key default gen_random_uuid(),
+  school_id        uuid not null references public.schools(id) on delete cascade,
+  email            text not null check (email = lower(trim(email)) and email like '%@%'),
+  role             text not null check (role in ('exec','admin','bursary','coach','teacher')),
+  display_name     text not null default '',
+  assigned_classes text[] not null default '{}',
+  invited_by       uuid references auth.users(id) on delete set null,
+  claimed_by       uuid references auth.users(id) on delete set null,
+  created_at       timestamptz not null default now(),
+  unique (school_id, email)
+);
+
+-- Role helpers. SECURITY DEFINER so policies can read memberships without
+-- recursing into memberships' own policies.
+create or replace function public.my_role(p_school uuid) returns text
+language sql stable security definer set search_path = '' as $$
+  select m.role from public.memberships m
+  where m.school_id = p_school and m.user_id = auth.uid() and m.active
+$$;
+create or replace function public.has_role(p_school uuid, p_roles text[]) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select coalesce(public.my_role(p_school) = any(p_roles), false)
+$$;
+create or replace function public.is_member(p_school uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.my_role(p_school) is not null
+$$;
+create or replace function public.teacher_classes(p_school uuid) returns text[]
+language sql stable security definer set search_path = '' as $$
+  select coalesce((select m.assigned_classes from public.memberships m
+    where m.school_id = p_school and m.user_id = auth.uid() and m.active and m.role = 'teacher'), '{}')
+$$;
+-- Can the caller see a learner in this class?
+create or replace function public.can_see_class(p_school uuid, p_class text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.has_role(p_school, array['exec','admin','bursary','coach'])
+      or (public.my_role(p_school) = 'teacher' and p_class = any(public.teacher_classes(p_school)))
+$$;
+
+-- ── School data ──────────────────────────────────────────────────────────────
+-- Ids are text generated by the app (so offline-created rows sync idempotently);
+-- they are unique within a school.
+
+create table public.learners (
+  school_id      uuid not null references public.schools(id) on delete cascade,
+  id             text not null,
+  admission_no   text not null check (admission_no ~ '^[A-Za-z0-9][A-Za-z0-9/_-]{0,23}$'),
+  name           text not null check (length(trim(name)) between 1 and 120),
+  class          text not null default '',
+  stream         text not null default '',
+  level          text not null default 'Other',
+  combination    text not null default '',     -- A-level subject combination
+  gender         text not null default '',
+  boarding       text not null default 'Day' check (boarding in ('Day','Boarding','Weekly')),
+  guardian_phone text not null default '',
+  fee            bigint not null default 0 check (fee >= 0),
+  bursary_pct    numeric(5,2) not null default 0 check (bursary_pct between 0 and 100),
+  uneb_index     text not null default '',
+  sen            text not null default '',
+  sport          text not null default '',
+  skill          text not null default '',
+  extra          jsonb not null default '{}'::jsonb,  -- sports: performance notes, injury log, athlete profile
+  deleted_at     timestamptz,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  primary key (school_id, id)
+);
+create unique index learners_admission_uq on public.learners (school_id, lower(admission_no)) where deleted_at is null;
+create index learners_class_idx on public.learners (school_id, class);
+
+create table public.terms (
+  school_id         uuid not null references public.schools(id) on delete cascade,
+  id                text not null,
+  year              text not null check (year ~ '^\d{4}$'),
+  term              text not null check (term in ('Term 1','Term 2','Term 3')),
+  start_date        date,
+  end_date          date,
+  is_active         boolean not null default false,
+  opened_at         timestamptz,
+  results_published boolean not null default false,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now(),
+  primary key (school_id, id),
+  unique (school_id, year, term)
+);
+
+create table public.fee_structures (
+  school_id    uuid not null references public.schools(id) on delete cascade,
+  id           text not null,
+  term_id      text not null,
+  applies_to   text not null,
+  items        jsonb not null default '[]'::jsonb,
+  installments jsonb not null default '[]'::jsonb,
+  draft        boolean not null default false,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  primary key (school_id, id),
+  unique (school_id, term_id, applies_to),
+  foreign key (school_id, term_id) references public.terms(school_id, id) on delete cascade
+);
+
+create table public.invoices (
+  school_id    uuid not null references public.schools(id) on delete cascade,
+  id           text not null,
+  learner_id   text not null,
+  term_id      text,            -- null = opening balance brought forward
+  lines        jsonb not null default '[]'::jsonb,
+  bursary_pct  numeric(5,2) not null default 0,
+  gross        bigint not null default 0,
+  discount     bigint not null default 0,
+  total        bigint not null default 0 check (total >= 0),
+  installments jsonb not null default '[]'::jsonb,
+  created_on   date,                -- when the bill was raised (older offline records may not say)
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  primary key (school_id, id),
+  foreign key (school_id, learner_id) references public.learners(school_id, id),
+  foreign key (school_id, term_id) references public.terms(school_id, id)
+);
+create unique index invoices_learner_term_uq on public.invoices (school_id, learner_id, term_id) where term_id is not null;
+
+-- Payments are a ledger: rows are only ever added. A mistake is reversed with
+-- void_payment(), which keeps the row and records who reversed it and why.
+create table public.payments (
+  school_id        uuid not null references public.schools(id) on delete cascade,
+  id               text not null,
+  learner_id       text not null,
+  amount           bigint not null check (amount > 0),
+  method           text not null default 'Cash',
+  reference        text not null default '',
+  paid_on          date not null default current_date,
+  recorded_by      uuid references auth.users(id) on delete set null,
+  recorded_by_name text not null default '',
+  ts               timestamptz not null default now(),
+  void             boolean not null default false,
+  void_reason      text,
+  voided_by        text,
+  voided_at        timestamptz,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  primary key (school_id, id),
+  foreign key (school_id, learner_id) references public.learners(school_id, id)
+);
+create index payments_learner_idx on public.payments (school_id, learner_id);
+
+create table public.marks (
+  school_id   uuid not null references public.schools(id) on delete cascade,
+  id          text not null,
+  learner_id  text not null,
+  term_id     text not null,
+  exam_set    text not null default 'EOT' check (exam_set in ('BOT','MOT','EOT')),
+  subject     text not null check (length(trim(subject)) between 1 and 60),
+  score       numeric(5,2) not null check (score between 0 and 100),
+  recorded_on date,                 -- when the mark was entered (older offline records may not say)
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  primary key (school_id, id),
+  foreign key (school_id, learner_id) references public.learners(school_id, id),
+  foreign key (school_id, term_id) references public.terms(school_id, id)
+);
+create unique index marks_uq on public.marks (school_id, learner_id, term_id, exam_set, lower(subject));
+
+create table public.comments (
+  school_id     uuid not null references public.schools(id) on delete cascade,
+  id            text not null,            -- "<learner_id>|<term_id>"
+  learner_id    text not null,
+  term_id       text not null,
+  class_teacher text not null default '',
+  head_teacher  text not null default '',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  primary key (school_id, id),
+  unique (school_id, learner_id, term_id),
+  foreign key (school_id, learner_id) references public.learners(school_id, id),
+  foreign key (school_id, term_id) references public.terms(school_id, id)
+);
+
+create table public.registers (
+  school_id  uuid not null references public.schools(id) on delete cascade,
+  id         text not null,
+  class      text not null,
+  stream     text not null default '',
+  reg_date   date not null,
+  records    jsonb not null default '[]'::jsonb,
+  marked_by  text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (school_id, id),
+  unique (school_id, class, stream, reg_date)
+);
+
+create table public.conduct (
+  school_id   uuid not null references public.schools(id) on delete cascade,
+  id          text not null,
+  learner_id  text not null,
+  occurred_on date not null default current_date,
+  type        text not null,
+  severity    text not null,
+  description text not null default '',
+  reported_by text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  primary key (school_id, id),
+  foreign key (school_id, learner_id) references public.learners(school_id, id)
+);
+
+create table public.notices (
+  school_id  uuid not null references public.schools(id) on delete cascade,
+  id         text not null,
+  title      text not null,
+  body       text not null default '',
+  category   text not null default 'General',
+  posted_by  text not null default '',
+  posted_at  timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (school_id, id)
+);
+
+-- Low-traffic sports records kept as documents.
+create table public.school_docs (
+  school_id  uuid not null references public.schools(id) on delete cascade,
+  collection text not null check (collection in ('programs','attendance','competitions','squads')),
+  id         text not null,
+  data       jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (school_id, collection, id)
+);
+
+create table public.audit_log (
+  id        bigint generated always as identity primary key,
+  school_id uuid not null references public.schools(id) on delete cascade,
+  user_id   uuid references auth.users(id) on delete set null,
+  username  text not null default '',
+  action    text not null,
+  detail    text not null default '',
+  ts        timestamptz not null default now()
+);
+create index audit_log_school_ts_idx on public.audit_log (school_id, ts desc);
+
+-- updated_at on every write
+do $$ declare t text; begin
+  foreach t in array array['schools','memberships','learners','terms','fee_structures','invoices',
+                           'payments','marks','comments','registers','conduct','notices','school_docs'] loop
+    execute format('create trigger %I before update on public.%I for each row execute function public.touch_updated_at()', t || '_touch', t);
+  end loop;
+end $$;
+
+-- What each role may change on a learner (mirrors the offline app's permissions):
+-- bursary officers only the bursary %, coaches only sport details, and
+-- administrators everything except the bursary %.
+create or replace function public.learners_guard() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare r text := public.my_role(new.school_id);
+begin
+  if r = 'bursary' and (to_jsonb(new) - 'bursary_pct' - 'updated_at') <> (to_jsonb(old) - 'bursary_pct' - 'updated_at') then
+    raise exception 'Bursary officers can only change a learner''s bursary percentage.' using errcode = '42501';
+  end if;
+  if r = 'coach' and (to_jsonb(new) - 'sport' - 'skill' - 'extra' - 'updated_at') <> (to_jsonb(old) - 'sport' - 'skill' - 'extra' - 'updated_at') then
+    raise exception 'Coaches can only change sport details.' using errcode = '42501';
+  end if;
+  if r = 'admin' and new.bursary_pct is distinct from old.bursary_pct then
+    raise exception 'Only the Executive Director or the Bursary Officer can change a bursary.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger learners_guard before update on public.learners for each row execute function public.learners_guard();
+
+-- Only the head teacher's office (exec, admin) writes the head teacher's comment.
+create or replace function public.comments_guard() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is not null and not public.has_role(new.school_id, array['exec','admin'])
+     and new.head_teacher is distinct from (case when tg_op = 'UPDATE' then old.head_teacher else '' end) then
+    raise exception 'Only the head teacher''s office can write the head teacher''s comment.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger comments_guard before insert or update on public.comments for each row execute function public.comments_guard();
+
+-- A school always keeps at least one active Executive Director, so it can never
+-- lock itself out. (Skipped when the school or the user account itself is being deleted.)
+create or replace function public.memberships_guard() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if old.role = 'exec' and old.active
+     and (tg_op = 'DELETE' or new.role <> 'exec' or not new.active)
+     and exists (select 1 from public.schools s where s.id = old.school_id)
+     and exists (select 1 from auth.users u where u.id = old.user_id)
+     and not exists (select 1 from public.memberships m
+                      where m.school_id = old.school_id and m.user_id <> old.user_id
+                        and m.role = 'exec' and m.active) then
+    raise exception 'A school needs at least one active Executive Director.' using errcode = '42501';
+  end if;
+  return case when tg_op = 'DELETE' then old else new end;
+end $$;
+create trigger memberships_guard before update or delete on public.memberships for each row execute function public.memberships_guard();
+
+-- Payments: nothing but the void columns may ever change, and only via void_payment().
+create or replace function public.payments_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if current_setting('school.void_payment', true) is distinct from 'on' then
+    raise exception 'Payments cannot be edited. Reverse the payment instead.' using errcode = '42501';
+  end if;
+  if (to_jsonb(new) - 'void' - 'void_reason' - 'voided_by' - 'voided_at' - 'updated_at')
+     <> (to_jsonb(old) - 'void' - 'void_reason' - 'voided_by' - 'voided_at' - 'updated_at') then
+    raise exception 'Only the reversal details of a payment can change.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger payments_guard before update on public.payments for each row execute function public.payments_guard();
+
+-- ── Row-level security ───────────────────────────────────────────────────────
+alter table public.schools        enable row level security;
+alter table public.memberships    enable row level security;
+alter table public.invites        enable row level security;
+alter table public.learners       enable row level security;
+alter table public.terms          enable row level security;
+alter table public.fee_structures enable row level security;
+alter table public.invoices       enable row level security;
+alter table public.payments       enable row level security;
+alter table public.marks          enable row level security;
+alter table public.comments       enable row level security;
+alter table public.registers      enable row level security;
+alter table public.conduct        enable row level security;
+alter table public.notices        enable row level security;
+alter table public.school_docs    enable row level security;
+alter table public.audit_log      enable row level security;
+
+create policy schools_read   on public.schools for select to authenticated using (public.is_member(id));
+create policy schools_update on public.schools for update to authenticated using (public.has_role(id, array['exec'])) with check (public.has_role(id, array['exec']));
+
+-- People join a school only through create_school() or an invite (claim_invites());
+-- the director can then change their role, classes or access, or remove them.
+create policy memberships_read on public.memberships for select to authenticated
+  using (user_id = auth.uid() or public.has_role(school_id, array['exec','admin']));
+create policy memberships_update on public.memberships for update to authenticated
+  using (public.has_role(school_id, array['exec'])) with check (public.has_role(school_id, array['exec']));
+create policy memberships_delete on public.memberships for delete to authenticated
+  using (public.has_role(school_id, array['exec']));
+
+create policy invites_all on public.invites for all to authenticated
+  using (public.has_role(school_id, array['exec'])) with check (public.has_role(school_id, array['exec']));
+
+create policy learners_read on public.learners for select to authenticated using (public.can_see_class(school_id, class));
+create policy learners_insert on public.learners for insert to authenticated with check (public.has_role(school_id, array['exec','admin']));
+create policy learners_update on public.learners for update to authenticated
+  using (public.has_role(school_id, array['exec','admin','bursary','coach']))
+  with check (public.has_role(school_id, array['exec','admin','bursary','coach']));
+
+create policy terms_read  on public.terms for select to authenticated using (public.is_member(school_id));
+create policy terms_write on public.terms for all to authenticated
+  using (public.has_role(school_id, array['exec','admin'])) with check (public.has_role(school_id, array['exec','admin']));
+
+create policy fee_structures_read  on public.fee_structures for select to authenticated using (public.has_role(school_id, array['exec','admin','bursary']));
+create policy fee_structures_write on public.fee_structures for all to authenticated
+  using (public.has_role(school_id, array['exec','admin'])) with check (public.has_role(school_id, array['exec','admin']));
+
+create policy invoices_read   on public.invoices for select to authenticated using (public.has_role(school_id, array['exec','admin','bursary']));
+create policy invoices_insert on public.invoices for insert to authenticated with check (public.has_role(school_id, array['exec','admin','bursary']));
+create policy invoices_update on public.invoices for update to authenticated
+  using (public.has_role(school_id, array['exec','admin','bursary'])) with check (public.has_role(school_id, array['exec','admin','bursary']));
+
+create policy payments_read   on public.payments for select to authenticated using (public.has_role(school_id, array['exec','admin','bursary']));
+create policy payments_insert on public.payments for insert to authenticated
+  with check (public.has_role(school_id, array['exec','admin','bursary']) and recorded_by = auth.uid() and not void
+              and not exists (select 1 from public.schools s where s.id = school_id and s.importing));
+-- No update or delete policy: see void_payment().
+
+-- Marks and comments follow the learner: visible and writable only when the
+-- learner is (exists() below is itself filtered by learners_read).
+create policy marks_all on public.marks for all to authenticated
+  using (public.has_role(school_id, array['exec','admin','teacher'])
+         and exists (select 1 from public.learners l where l.school_id = marks.school_id and l.id = marks.learner_id))
+  with check (public.has_role(school_id, array['exec','admin','teacher'])
+         and exists (select 1 from public.learners l where l.school_id = marks.school_id and l.id = marks.learner_id));
+create policy comments_all on public.comments for all to authenticated
+  using (public.has_role(school_id, array['exec','admin','teacher'])
+         and exists (select 1 from public.learners l where l.school_id = comments.school_id and l.id = comments.learner_id))
+  with check (public.has_role(school_id, array['exec','admin','teacher'])
+         and exists (select 1 from public.learners l where l.school_id = comments.school_id and l.id = comments.learner_id));
+
+create policy registers_all on public.registers for all to authenticated
+  using (public.has_role(school_id, array['exec','admin']) or (public.my_role(school_id) = 'teacher' and class = any(public.teacher_classes(school_id))))
+  with check (public.has_role(school_id, array['exec','admin']) or (public.my_role(school_id) = 'teacher' and class = any(public.teacher_classes(school_id))));
+
+create policy conduct_all on public.conduct for all to authenticated
+  using (public.has_role(school_id, array['exec','admin'])) with check (public.has_role(school_id, array['exec','admin']));
+
+create policy notices_read  on public.notices for select to authenticated using (public.is_member(school_id));
+create policy notices_write on public.notices for all to authenticated
+  using (public.has_role(school_id, array['exec','admin','coach'])) with check (public.has_role(school_id, array['exec','admin','coach']));
+
+-- Sports records: the head of sports and the director manage all of them;
+-- administrators may add training programmes only (as in the offline app).
+create policy school_docs_read  on public.school_docs for select to authenticated using (public.has_role(school_id, array['exec','admin','bursary','coach']));
+create policy school_docs_write on public.school_docs for all to authenticated
+  using (public.has_role(school_id, array['exec','coach']) or (collection = 'programs' and public.has_role(school_id, array['admin'])))
+  with check (public.has_role(school_id, array['exec','coach']) or (collection = 'programs' and public.has_role(school_id, array['admin'])));
+
+create policy audit_read on public.audit_log for select to authenticated using (public.has_role(school_id, array['exec']));
+-- Rows are added only through log_audit().
+
+-- ── Functions the app calls ──────────────────────────────────────────────────
+-- A signed-in staff account (verified email) creates a school and becomes its executive.
+create or replace function public.create_school(p_name text, p_display_name text) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare v_id uuid; v_uid uuid := auth.uid(); v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if v_uid is null or v_email = '' then
+    raise exception 'Sign in with your email address first.' using errcode = '42501';
+  end if;
+  if (select count(*) from public.schools where created_by = v_uid) >= 3 then
+    raise exception 'This account has already created the maximum number of schools.' using errcode = '42501';
+  end if;
+  insert into public.schools (name, created_by) values (trim(p_name), v_uid) returning id into v_id;
+  insert into public.memberships (school_id, user_id, role, display_name, email)
+    values (v_id, v_uid, 'exec', coalesce(nullif(trim(p_display_name), ''), 'Executive Director'), v_email);
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    values (v_id, v_uid, coalesce(nullif(trim(p_display_name), ''), 'Executive Director'), 'SCHOOL_CREATE', trim(p_name));
+  return v_id;
+end $$;
+
+-- After signing in, staff pick up any invites sent to their (verified) email.
+create or replace function public.claim_invites() returns integer
+language plpgsql security definer set search_path = '' as $$
+declare v_uid uuid := auth.uid(); v_email text := lower(coalesce(auth.jwt() ->> 'email', '')); n integer := 0; i record;
+begin
+  if v_uid is null or v_email = '' then return 0; end if;
+  for i in select * from public.invites where email = v_email and claimed_by is null loop
+    insert into public.memberships (school_id, user_id, role, display_name, email, assigned_classes)
+      values (i.school_id, v_uid, i.role, i.display_name, v_email, i.assigned_classes)
+      on conflict (school_id, user_id) do update
+        set role = excluded.role, display_name = excluded.display_name, email = excluded.email,
+            assigned_classes = excluded.assigned_classes, active = true;
+    update public.invites set claimed_by = v_uid where id = i.id;
+    insert into public.audit_log (school_id, user_id, username, action, detail)
+      values (i.school_id, v_uid, i.display_name, 'INVITE_CLAIM', 'role=' || i.role);
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Reverse a payment. Exec and bursary only; keeps the row and the reason.
+create or replace function public.void_payment(p_school uuid, p_id text, p_reason text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_name text;
+begin
+  if not public.has_role(p_school, array['exec','bursary']) then
+    raise exception 'You do not have permission to reverse payments.' using errcode = '42501';
+  end if;
+  if length(trim(coalesce(p_reason, ''))) = 0 then
+    raise exception 'Give a reason for the reversal.' using errcode = '22023';
+  end if;
+  select display_name into v_name from public.memberships where school_id = p_school and user_id = auth.uid();
+  perform set_config('school.void_payment', 'on', true);
+  update public.payments
+     set void = true, void_reason = trim(p_reason), voided_by = v_name, voided_at = now()
+   where school_id = p_school and id = p_id and not void;
+  if not found then raise exception 'Payment not found or already reversed.' using errcode = 'P0002'; end if;
+  perform set_config('school.void_payment', 'off', true);
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    values (p_school, auth.uid(), coalesce(v_name, ''), 'PAYMENT_VOID', p_id || ' · ' || trim(p_reason));
+end $$;
+
+-- Append to the school's audit trail as the signed-in member.
+create or replace function public.log_audit(p_school uuid, p_action text, p_detail text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_name text;
+begin
+  select display_name into v_name from public.memberships
+   where school_id = p_school and user_id = auth.uid() and active;
+  if not found then raise exception 'Not a member of this school.' using errcode = '42501'; end if;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    values (p_school, auth.uid(), v_name, left(p_action, 40), left(coalesce(p_detail, ''), 200));
+end $$;
+
+-- ── Bringing in a school's offline backup ───────────────────────────────────
+-- The director starts an import (only into a school with no learners or money
+-- records yet), sends the backup in batches with import_rows(), checks every
+-- learner's balance against the backup, then finishes the import. Cancelling
+-- removes everything brought in so far, so a wrong file can be tried again.
+-- Payments are copied exactly, including reversals and who recorded them.
+create or replace function public.begin_import(p_school uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if exists (select 1 from public.learners where school_id = p_school)
+     or exists (select 1 from public.payments where school_id = p_school)
+     or exists (select 1 from public.invoices where school_id = p_school) then
+    raise exception 'This school already has learners or payments. A backup can only be brought into a new school.' using errcode = '42501';
+  end if;
+  -- A new school may already have a first term or a notice; the backup replaces them.
+  delete from public.fee_structures where school_id = p_school;
+  delete from public.terms where school_id = p_school;
+  delete from public.registers where school_id = p_school;
+  delete from public.notices where school_id = p_school;
+  delete from public.school_docs where school_id = p_school;
+  update public.schools set importing = true where id = p_school;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_START', ''
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
+create or replace function public.import_rows(p_school uuid, p_table text, p_rows jsonb) returns integer
+language plpgsql security definer set search_path = '' as $$
+declare v_cols text; v_count integer;
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if not coalesce((select s.importing from public.schools s where s.id = p_school), false) then
+    raise exception 'Start bringing in the backup first.' using errcode = '42501';
+  end if;
+  if p_table not in ('terms','learners','fee_structures','invoices','payments','marks','comments','registers','conduct','notices','school_docs') then
+    raise exception 'Unknown kind of record: %', p_table using errcode = '22023';
+  end if;
+  if jsonb_typeof(p_rows) is distinct from 'array' or jsonb_array_length(p_rows) = 0 then return 0; end if;
+  if jsonb_array_length(p_rows) > 1000 then
+    raise exception 'Send at most 1,000 records at a time.' using errcode = '22023';
+  end if;
+  -- Only real columns of the table; school_id always comes from p_school.
+  select string_agg(format('%I', k.key), ', ') into v_cols
+    from (select distinct jsonb_object_keys(r) as key from jsonb_array_elements(p_rows) r) k
+   where k.key <> 'school_id'
+     and exists (select 1 from pg_catalog.pg_attribute a
+                  where a.attrelid = ('public.' || quote_ident(p_table))::regclass
+                    and a.attname = k.key and a.attnum > 0 and not a.attisdropped);
+  if v_cols is null then return 0; end if;
+  execute format('insert into public.%I (school_id, %s) select $2, %s from jsonb_populate_recordset(null::public.%I, $1)',
+                 p_table, v_cols, v_cols, p_table)
+    using p_rows, p_school;
+  get diagnostics v_count = row_count;
+  return v_count;
+end $$;
+
+create or replace function public.finish_import(p_school uuid, p_summary text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  update public.schools set importing = false where id = p_school and importing;
+  if not found then raise exception 'No backup is being brought in.' using errcode = 'P0002'; end if;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_DONE', left(coalesce(p_summary, ''), 200)
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
+create or replace function public.cancel_import(p_school uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if not coalesce((select s.importing from public.schools s where s.id = p_school), false) then
+    raise exception 'No backup is being brought in.' using errcode = 'P0002';
+  end if;
+  -- Everything here came from the backup being brought in: begin_import()
+  -- required the school to have no learners or money records of its own.
+  delete from public.marks where school_id = p_school;
+  delete from public.comments where school_id = p_school;
+  delete from public.conduct where school_id = p_school;
+  delete from public.payments where school_id = p_school;
+  delete from public.invoices where school_id = p_school;
+  delete from public.registers where school_id = p_school;
+  delete from public.notices where school_id = p_school;
+  delete from public.school_docs where school_id = p_school;
+  delete from public.fee_structures where school_id = p_school;
+  delete from public.learners where school_id = p_school;
+  delete from public.terms where school_id = p_school;
+  update public.schools set importing = false where id = p_school;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_CANCELLED', ''
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
+-- ── Privileges ───────────────────────────────────────────────────────────────
+-- Signed-out visitors get nothing. Signed-in users get table access that RLS
+-- then narrows; the ledger and audit trail are append-only.
+revoke all on all tables in schema public from anon;
+revoke all on all functions in schema public from anon, public;
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on
+  public.invites, public.learners, public.terms,
+  public.fee_structures, public.invoices, public.marks, public.comments, public.registers,
+  public.conduct, public.notices, public.school_docs to authenticated;
+-- Schools and staff: only these columns can be changed directly. The SMS
+-- balance, plan and import state change only through the platform's own
+-- functions, and people join only through create_school() or an invite.
+revoke insert, update, delete, truncate on public.schools, public.memberships from authenticated;
+grant select on public.schools, public.memberships to authenticated;
+grant update (name, settings) on public.schools to authenticated;
+grant update (role, display_name, assigned_classes, active), delete on public.memberships to authenticated;
+-- Supabase grants every privilege on new tables by default, so take back what
+-- the ledger and audit trail must never allow.
+grant select, insert on public.payments to authenticated;
+revoke update, delete, truncate on public.payments from authenticated;
+grant select on public.audit_log to authenticated;
+revoke insert, update, delete, truncate on public.audit_log from authenticated;
+grant execute on function
+  public.create_school(text, text), public.claim_invites(), public.void_payment(uuid, text, text),
+  public.log_audit(uuid, text, text), public.my_role(uuid), public.has_role(uuid, text[]),
+  public.is_member(uuid), public.teacher_classes(uuid), public.can_see_class(uuid, text),
+  public.begin_import(uuid), public.import_rows(uuid, text, jsonb), public.finish_import(uuid, text),
+  public.cancel_import(uuid)
+  to authenticated;

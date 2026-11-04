@@ -1,0 +1,28 @@
+// Cloudflare Worker for the School Portal.
+//
+// One Worker serves the portal's files and its small server API (/api/*) from a
+// single web address. Workers Builds deploys it from GitHub: pushes to `main` go
+// to production, and every other branch gets its own Preview URL.
+//
+// The Worker name below must match the name in the Cloudflare dashboard.
+{
+  "name": "kampala-school-portal",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-13",
+
+  "assets": {
+    // The app's files live at the repository root. .assetsignore keeps the
+    // repository's own files (Worker code, database scripts, tests) off the site.
+    "directory": ".",
+    "binding": "ASSETS",
+    // Only API calls run the Worker; every other request is served as a plain
+    // file from Cloudflare's edge, which is free and unlimited.
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Run API calls close to the database (Supabase, Frankfurt) rather than the
+  // visitor. The app's files are still served from the location nearest the user.
+  "placement": { "mode": "smart" },
+
+  "observability": { "enabled": true }
+}

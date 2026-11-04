@@ -10,6 +10,7 @@
  *   admin    Students, academics, payments, conduct, administration
  *   bursary  Payments, bursaries, financial reports
  *   coach    Sports, attendance, competitions, squads
+ *   teacher  Class register, marks and report comments for assigned classes
  */
 
 'use strict';
@@ -49,7 +50,7 @@ const DEFAULT_USERS = [
 const ROLE_PERMISSIONS = {
   exec: {
     label: 'Executive Director', color: '#0b5d3b', badge: 'Executive',
-    tabs: ['overview', 'directory', 'academics', 'payments', 'sports', 'attendance', 'competitions', 'bursary', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'attendance', 'competitions', 'bursary', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: true, canManageUsers: true,
     canManageSettings: true, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: true, canRecordPayment: true,
@@ -57,10 +58,11 @@ const ROLE_PERMISSIONS = {
     canLogPerformance: true, canMarkAttendance: true, canAddAcademic: true,
     canLogConduct: true, canManageTerms: true, canViewEMIS: true,
     canPostNotice: true, canManageCompetitions: true, canManageSquads: true,
+    canMarkRegister: true, canHeadComment: true,
   },
   admin: {
     label: 'School Administrator', color: '#1d4ed8', badge: 'Administrator',
-    tabs: ['overview', 'directory', 'academics', 'payments', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: false, canRecordPayment: true,
@@ -68,6 +70,7 @@ const ROLE_PERMISSIONS = {
     canLogPerformance: false, canMarkAttendance: false, canAddAcademic: true,
     canLogConduct: true, canManageTerms: true, canViewEMIS: true,
     canPostNotice: true, canManageCompetitions: false, canManageSquads: false,
+    canMarkRegister: true, canHeadComment: true,
   },
   bursary: {
     label: 'Bursary Officer', color: '#0b5d3b', badge: 'Bursary',
@@ -79,6 +82,7 @@ const ROLE_PERMISSIONS = {
     canLogPerformance: false, canMarkAttendance: false, canAddAcademic: false,
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: false, canManageCompetitions: false, canManageSquads: false,
+    canMarkRegister: false, canHeadComment: false,
   },
   coach: {
     label: 'Head of Sports', color: '#b45309', badge: 'Sports',
@@ -90,6 +94,19 @@ const ROLE_PERMISSIONS = {
     canLogPerformance: true, canMarkAttendance: true, canAddAcademic: false,
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: true, canManageCompetitions: true, canManageSquads: true,
+    canMarkRegister: false, canHeadComment: false,
+  },
+  teacher: {
+    label: 'Teacher', color: '#0e7490', badge: 'Teacher',
+    tabs: ['register', 'academics', 'noticeboard'],
+    canExport: false, canImport: false, canReset: false, canManageUsers: false,
+    canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
+    canDeleteConduct: false, canAwardBursary: false, canRecordPayment: false,
+    canVoidPayment: false, canRegisterStudent: false, canAddProgram: false,
+    canLogPerformance: false, canMarkAttendance: false, canAddAcademic: true,
+    canLogConduct: false, canManageTerms: false, canViewEMIS: false,
+    canPostNotice: false, canManageCompetitions: false, canManageSquads: false,
+    canMarkRegister: true, canHeadComment: false,
   },
 };
 
@@ -276,6 +293,7 @@ const AUTH = {
     return loadUsers().map(u => ({
       id: u.id, username: u.username, displayName: u.displayName, role: u.role,
       mustChangePassword: u.mustChangePassword, createdAt: u.createdAt, lastLogin: u.lastLogin,
+      assignedClasses: u.assignedClasses || [],
     }));
   },
 
@@ -326,6 +344,22 @@ const AUTH = {
     const session = getSession();
     if (!session) return 0;
     return Math.max(0, Math.round((session.expiresAt - Date.now()) / 1000));
+  },
+
+  /* Classes a teacher may work with; null means every class (all other roles). */
+  currentUserClasses() {
+    const session = getSession();
+    if (!session || session.role !== 'teacher') return null;
+    const user = loadUsers().find(u => u.id === session.userId);
+    return (user && Array.isArray(user.assignedClasses)) ? user.assignedClasses : [];
+  },
+
+  /* True while the signed-in account still has to replace its password. */
+  mustChangePassword() {
+    const session = getSession();
+    if (!session) return false;
+    const user = loadUsers().find(u => u.id === session.userId);
+    return !!(user && user.mustChangePassword);
   },
 
   validatePasswordStrength,
