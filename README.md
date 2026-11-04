@@ -106,7 +106,18 @@ school-portal/
 ├── manifest.json       PWA manifest
 ├── icon192.png         App icon (192×192)
 ├── icon512.png         App icon (512×512)
-└── tests/e2e.js        End-to-end tests (run on every push by GitHub Actions)
+├── tests/e2e.js        End-to-end tests (run on every push by GitHub Actions)
+│
+│   Hosting on Cloudflare
+├── wrangler.jsonc      Cloudflare Worker settings
+├── worker/index.js     Small server API (/api/*); the app's files are served as-is
+├── _headers            Security headers for every page
+├── .assetsignore       Repository files that are never published
+│
+│   Online edition (in progress)
+└── supabase/
+    ├── migrations/     Database tables and row-level security
+    └── tests/          Database security tests (run on every push)
 ```
 
 No build step, no bundler, no CDN. Everything is self-contained and works
@@ -116,7 +127,26 @@ offline from the first load.
 
 ## Deployment
 
-### GitHub Pages (free, HTTPS)
+### Cloudflare (the portal's production home)
+One Cloudflare Worker serves the portal's files from Cloudflare's network, which
+includes Kampala, and will run the online edition's server API. Requests for the
+app's files are free and unlimited.
+
+1. In the Cloudflare dashboard open **Workers & Pages → Create application →
+   GitHub**, and pick this repository. The Worker name must stay
+   `kampala-school-portal`, the same as in `wrangler.jsonc`.
+2. Keep the production branch as `main`. No build command is needed.
+3. Under **Settings → Builds**, turn on **Builds for Preview branches**. Every
+   branch and pull request then gets its own preview link, so changes can be
+   tried on a phone before they go live.
+
+Only the app's own files are published. `.assetsignore` keeps the server code,
+database scripts, tests and documentation off the site, and `_headers` adds
+the security headers.
+
+### GitHub Pages (free, HTTPS — for trying it out)
+GitHub's terms don't allow Pages to host a commercial service, so use it for
+demos and testing only.
 1. Push all files to a repository.
 2. **Settings → Pages → Source:** deploy from `main` / root.
 3. Open `https://YOUR-USER.github.io/REPO/`.
@@ -223,8 +253,15 @@ before printing report cards.
 ## Running the tests
 
 ```bash
+npm install --no-save playwright @electric-sql/pglite
+npx playwright install chromium
+
+# Database security: signs in as each kind of staff member on a local Postgres
+# (no Supabase account needed) and checks what each one can read and change
+node supabase/tests/rls.test.mjs
+
+# The app itself, in a real browser
 python3 -m http.server 8099 &
-npm install --no-save playwright && npx playwright install chromium
 node tests/e2e.js
 ```
 

@@ -6,10 +6,11 @@
  *     a freshly deployed version is picked up as soon as the device is online,
  *     while the app still opens instantly and works offline.
  *   • Static assets (icons): cache-first for speed.
+ *   • Server API calls (/api/…): never cached; they always go to the network.
  * Bump CACHE_VERSION whenever you deploy new files.
  */
 
-const CACHE_VERSION = 'school-portal-v3.0.0';
+const CACHE_VERSION = 'school-portal-v3.1.0';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -25,10 +26,24 @@ const CORE_ASSETS = [
   './icon512.png',
 ];
 
+/* Some hosts redirect one address to another (Cloudflare sends /index.html to /).
+   Browsers refuse to open a page from a redirected response stored by a service
+   worker, so keep a clean, unredirected copy instead. */
+function storable(response) {
+  if (!response.redirected) return Promise.resolve(response);
+  return response.blob().then(body => new Response(body, {
+    status: response.status, statusText: response.statusText, headers: response.headers,
+  }));
+}
+
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_VERSION)
-      .then(cache => Promise.allSettled(CORE_ASSETS.map(url => cache.add(url))))
+      .then(cache => Promise.allSettled(CORE_ASSETS.map(url =>
+        fetch(url).then(response => {
+          if (!response.ok) throw new Error('Could not cache ' + url);
+          return storable(response).then(clean => cache.put(url, clean));
+        }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -49,7 +64,9 @@ function isAppCode(request) {
 self.addEventListener('fetch', event => {
   const { request } = event;
   if (request.method !== 'GET') return;
-  if (new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;   // server API: always live
 
   if (isAppCode(request)) {
     // Network-first so deployed updates are picked up promptly.
@@ -57,8 +74,7 @@ self.addEventListener('fetch', event => {
       fetch(request)
         .then(response => {
           if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_VERSION).then(cache => cache.put(request, clone));
+            storable(response.clone()).then(clean => caches.open(CACHE_VERSION).then(cache => cache.put(request, clean)));
           }
           return response;
         })
