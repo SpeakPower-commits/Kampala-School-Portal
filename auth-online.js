@@ -204,6 +204,25 @@
       return error ? { ok: false, error: friendly(error) } : { ok: true };
     },
 
+    /* For someone signed in whose email is not linked to a school yet. */
+    async createSchool(name, displayName) {
+      name = String(name || '').trim(); displayName = String(displayName || '').trim();
+      if (name.length < 2) return { ok: false, error: 'Enter the school\'s name.' };
+      if (!displayName) return { ok: false, error: 'Enter your name.' };
+      const { data } = await sb.auth.getSession();
+      const user = data && data.session && data.session.user;
+      if (!user) return { ok: false, error: 'Sign in first.' };
+      const created = await sb.rpc('create_school', { p_name: name, p_display_name: displayName });
+      if (created.error) return { ok: false, error: friendly(created.error) };
+      try {
+        const m = (await myMemberships(user.id)).find(x => x.school_id === created.data);
+        if (!m) return { ok: false, error: 'The school was created but could not be opened. Sign in again.' };
+        return { ok: true, session: await openSchool(user, m) };
+      } catch (e) {
+        return { ok: false, error: friendly(e) };
+      }
+    },
+
     getUsers() { return staff; },
     refreshStaff,
 

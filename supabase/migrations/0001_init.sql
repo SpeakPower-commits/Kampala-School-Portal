@@ -26,6 +26,7 @@ create table public.schools (
   settings    jsonb not null default '{}'::jsonb,
   sms_credits integer not null default 0 check (sms_credits >= 0),
   plan        text not null default 'trial',
+  importing   boolean not null default false,   -- an offline backup is being brought in (see begin_import)
   created_by  uuid references auth.users(id) on delete set null,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
@@ -413,7 +414,8 @@ create policy invoices_update on public.invoices for update to authenticated
 
 create policy payments_read   on public.payments for select to authenticated using (public.has_role(school_id, array['exec','admin','bursary']));
 create policy payments_insert on public.payments for insert to authenticated
-  with check (public.has_role(school_id, array['exec','admin','bursary']) and recorded_by = auth.uid() and not void);
+  with check (public.has_role(school_id, array['exec','admin','bursary']) and recorded_by = auth.uid() and not void
+              and not exists (select 1 from public.schools s where s.id = school_id and s.importing));
 -- No update or delete policy: see void_payment().
 
 -- Marks and comments follow the learner: visible and writable only when the
@@ -524,6 +526,108 @@ begin
     values (p_school, auth.uid(), v_name, left(p_action, 40), left(coalesce(p_detail, ''), 200));
 end $$;
 
+-- ── Bringing in a school's offline backup ───────────────────────────────────
+-- The director starts an import (only into a school with no learners or money
+-- records yet), sends the backup in batches with import_rows(), checks every
+-- learner's balance against the backup, then finishes the import. Cancelling
+-- removes everything brought in so far, so a wrong file can be tried again.
+-- Payments are copied exactly, including reversals and who recorded them.
+create or replace function public.begin_import(p_school uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if exists (select 1 from public.learners where school_id = p_school)
+     or exists (select 1 from public.payments where school_id = p_school)
+     or exists (select 1 from public.invoices where school_id = p_school) then
+    raise exception 'This school already has learners or payments. A backup can only be brought into a new school.' using errcode = '42501';
+  end if;
+  -- A new school may already have a first term or a notice; the backup replaces them.
+  delete from public.fee_structures where school_id = p_school;
+  delete from public.terms where school_id = p_school;
+  delete from public.registers where school_id = p_school;
+  delete from public.notices where school_id = p_school;
+  delete from public.school_docs where school_id = p_school;
+  update public.schools set importing = true where id = p_school;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_START', ''
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
+create or replace function public.import_rows(p_school uuid, p_table text, p_rows jsonb) returns integer
+language plpgsql security definer set search_path = '' as $$
+declare v_cols text; v_count integer;
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if not coalesce((select s.importing from public.schools s where s.id = p_school), false) then
+    raise exception 'Start bringing in the backup first.' using errcode = '42501';
+  end if;
+  if p_table not in ('terms','learners','fee_structures','invoices','payments','marks','comments','registers','conduct','notices','school_docs') then
+    raise exception 'Unknown kind of record: %', p_table using errcode = '22023';
+  end if;
+  if jsonb_typeof(p_rows) is distinct from 'array' or jsonb_array_length(p_rows) = 0 then return 0; end if;
+  if jsonb_array_length(p_rows) > 1000 then
+    raise exception 'Send at most 1,000 records at a time.' using errcode = '22023';
+  end if;
+  -- Only real columns of the table; school_id always comes from p_school.
+  select string_agg(format('%I', k.key), ', ') into v_cols
+    from (select distinct jsonb_object_keys(r) as key from jsonb_array_elements(p_rows) r) k
+   where k.key <> 'school_id'
+     and exists (select 1 from pg_catalog.pg_attribute a
+                  where a.attrelid = ('public.' || quote_ident(p_table))::regclass
+                    and a.attname = k.key and a.attnum > 0 and not a.attisdropped);
+  if v_cols is null then return 0; end if;
+  execute format('insert into public.%I (school_id, %s) select $2, %s from jsonb_populate_recordset(null::public.%I, $1)',
+                 p_table, v_cols, v_cols, p_table)
+    using p_rows, p_school;
+  get diagnostics v_count = row_count;
+  return v_count;
+end $$;
+
+create or replace function public.finish_import(p_school uuid, p_summary text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  update public.schools set importing = false where id = p_school and importing;
+  if not found then raise exception 'No backup is being brought in.' using errcode = 'P0002'; end if;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_DONE', left(coalesce(p_summary, ''), 200)
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
+create or replace function public.cancel_import(p_school uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.has_role(p_school, array['exec']) then
+    raise exception 'Only the Executive Director can bring in a backup.' using errcode = '42501';
+  end if;
+  if not coalesce((select s.importing from public.schools s where s.id = p_school), false) then
+    raise exception 'No backup is being brought in.' using errcode = 'P0002';
+  end if;
+  -- Everything here came from the backup being brought in: begin_import()
+  -- required the school to have no learners or money records of its own.
+  delete from public.marks where school_id = p_school;
+  delete from public.comments where school_id = p_school;
+  delete from public.conduct where school_id = p_school;
+  delete from public.payments where school_id = p_school;
+  delete from public.invoices where school_id = p_school;
+  delete from public.registers where school_id = p_school;
+  delete from public.notices where school_id = p_school;
+  delete from public.school_docs where school_id = p_school;
+  delete from public.fee_structures where school_id = p_school;
+  delete from public.learners where school_id = p_school;
+  delete from public.terms where school_id = p_school;
+  update public.schools set importing = false where id = p_school;
+  insert into public.audit_log (school_id, user_id, username, action, detail)
+    select p_school, auth.uid(), m.display_name, 'IMPORT_CANCELLED', ''
+      from public.memberships m where m.school_id = p_school and m.user_id = auth.uid();
+end $$;
+
 -- ── Privileges ───────────────────────────────────────────────────────────────
 -- Signed-out visitors get nothing. Signed-in users get table access that RLS
 -- then narrows; the ledger and audit trail are append-only.
@@ -531,9 +635,16 @@ revoke all on all tables in schema public from anon;
 revoke all on all functions in schema public from anon, public;
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on
-  public.schools, public.memberships, public.invites, public.learners, public.terms,
+  public.invites, public.learners, public.terms,
   public.fee_structures, public.invoices, public.marks, public.comments, public.registers,
   public.conduct, public.notices, public.school_docs to authenticated;
+-- Schools and staff: only these columns can be changed directly. The SMS
+-- balance, plan and import state change only through the platform's own
+-- functions, and people join only through create_school() or an invite.
+revoke insert, update, delete, truncate on public.schools, public.memberships from authenticated;
+grant select on public.schools, public.memberships to authenticated;
+grant update (name, settings) on public.schools to authenticated;
+grant update (role, display_name, assigned_classes, active), delete on public.memberships to authenticated;
 -- Supabase grants every privilege on new tables by default, so take back what
 -- the ledger and audit trail must never allow.
 grant select, insert on public.payments to authenticated;
@@ -543,5 +654,7 @@ revoke insert, update, delete, truncate on public.audit_log from authenticated;
 grant execute on function
   public.create_school(text, text), public.claim_invites(), public.void_payment(uuid, text, text),
   public.log_audit(uuid, text, text), public.my_role(uuid), public.has_role(uuid, text[]),
-  public.is_member(uuid), public.teacher_classes(uuid), public.can_see_class(uuid, text)
+  public.is_member(uuid), public.teacher_classes(uuid), public.can_see_class(uuid, text),
+  public.begin_import(uuid), public.import_rows(uuid, text, jsonb), public.finish_import(uuid, text),
+  public.cancel_import(uuid)
   to authenticated;

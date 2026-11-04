@@ -1698,6 +1698,7 @@ function initApp() {
   show('commentsCard', can('canAddAcademic'));
   show('adminImportLabel', can('canImport') && !ONLINE_EDITION);
   show('syncStatus', ONLINE_EDITION);
+  showOnlineImport();
 
   setupBindings();
   renderAll();
@@ -1813,6 +1814,103 @@ function openSetNewPassword() {
   });
 }
 
+/* Signed in, but not linked to any school yet: offer to start one. */
+function offerNewSchool() {
+  openModal({
+    title: 'Start your school on the portal',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Your email address is not linked to a school yet. If your school is joining the portal, set it up here and you become its Executive Director. If your school already uses the portal, ask its director to add you instead.</p>
+      <div class="field"><label for="nsName">School name</label><input class="input" id="nsName" placeholder="e.g. Kampala Hill Primary School"></div>
+      <div class="field"><label for="nsYou">Your name</label><input class="input" id="nsYou" placeholder="e.g. Sarah Namubiru"></div>
+      <div id="nsError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Not now</button><button class="btn btn-primary" id="nsCreate">Start the school</button>`,
+    onOpen(root) {
+      root.querySelector('#nsCreate').addEventListener('click', async () => {
+        const btn = root.querySelector('#nsCreate'); btn.disabled = true;
+        const res = await AUTH.createSchool(root.querySelector('#nsName').value, root.querySelector('#nsYou').value);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#nsError', res.error);
+        closeModal();
+        el('authError').style.display = 'none';
+        currentSession = res.session;
+        initApp();
+        toast(`${res.session.schoolName} is ready. Add your staff under Administration.`, 'success');
+      });
+    },
+  });
+}
+
+/* Bring a school's offline-edition backup into its new online school. Every
+   learner's bills and payments are checked against the backup before the
+   import is accepted; if anything differs it can be undone. */
+async function importOfflineBackup(file) {
+  if (!ONLINE_EDITION || !can('canManageSettings')) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch (_) { data = null; }
+  if (!data || !Array.isArray(data.students)) return toast('That file is not a portal backup.', 'error');
+  const backup = migrate(data);
+  ensureDefaultTerm(backup);
+  const seen = new Set(), problems = [];
+  backup.students.forEach(s => {
+    if (!ADMISSION_RE.test(String(s.id || ''))) problems.push(`"${s.id}" (${s.name}): admission numbers may only contain letters, numbers, / _ and -`);
+    else if (seen.has(String(s.id).toLowerCase())) problems.push(`"${s.id}" is used by more than one learner`);
+    seen.add(String(s.id).toLowerCase());
+  });
+  if (problems.length) {
+    return openModal({
+      title: 'Fix these learners first',
+      bodyHtml: `<p class="card-desc" style="margin-bottom:10px">Correct them in the offline edition, export a new backup and try again.</p><ul style="margin:0;padding-left:18px;font-size:13px">${problems.slice(0, 12).map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>${problems.length > 12 ? `<p class="card-desc">…and ${problems.length - 12} more.</p>` : ''}`,
+      footHtml: '<button class="btn btn-primary" data-modal-close>OK</button>',
+    });
+  }
+  const expected = SYNC.balancesOf(backup);
+  const live = backup.payments.filter(p => !p.void);
+  const ok = await confirmDialog({
+    title: 'Bring in the offline backup',
+    message: `${backup.students.length} learners, ${live.length} payments (${fmtMoney(live.reduce((a, p) => a + Number(p.amount || 0), 0))}), ${backup.invoices.length} bills and ${backup.terms.length} terms will be copied into ${schoolName()}. Terms or notices already entered here are replaced. Every learner's bills and payments are then checked against the backup.`,
+    confirmLabel: 'Bring in the backup',
+  });
+  if (!ok) return;
+  if (needsConnection('Bringing in a backup')) return;
+  openModal({ title: 'Bringing in the backup…', locked: true, bodyHtml: '<p class="card-desc" id="impProgress">Starting…</p>', footHtml: '' });
+  const say = text => { const p = el('impProgress'); if (p) p.textContent = text; };
+  let result;
+  try {
+    result = await SYNC.importBackup(backup, (done, total) => say(`Copied ${done} of ${total} records…`));
+  } catch (e) {
+    try { await SYNC.cancelImport(); } catch (_) {}
+    closeModal();
+    return toast('The backup was not brought in: ' + (e.message || e) + ' Nothing was kept; you can try again.', 'error');
+  }
+  say('Checking every learner\'s balance…');
+  await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
+  loadState();
+  const actual = SYNC.balancesOf(state);
+  const wrong = Object.keys(expected).filter(id => !actual[id] || actual[id].billed !== expected[id].billed || actual[id].paid !== expected[id].paid);
+  closeModal();
+  if (!wrong.length) {
+    await SYNC.finishImport(`${backup.students.length} learners, ${result.total} records, all balances checked`);
+    renderAll(); showOnlineImport();
+    return toast(`Done. All ${backup.students.length} learners' balances match the backup.${result.skipped ? ` ${result.skipped} records that belonged to no learner were left out.` : ''}`, 'success');
+  }
+  const undo = await confirmDialog({
+    title: 'Some balances do not match',
+    message: `${wrong.length} learner(s) do not match the backup, for example ${wrong.slice(0, 3).map(id => `${expected[id].name} (${id})`).join(', ')}. Undo the import so nothing is kept?`,
+    confirmLabel: 'Undo the import', danger: true,
+  });
+  if (undo) {
+    await SYNC.cancelImport();
+    await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
+    loadState(); renderAll(); showOnlineImport();
+    toast('The import was undone.', 'warn');
+  }
+}
+/* "Bring in data from the offline edition" is offered to the director of a
+   new online school that has no learners yet. */
+function showOnlineImport() {
+  const e = el('onlineImportLabel'); if (!e) return;
+  e.style.display = ONLINE_EDITION && can('canManageSettings') && !state.students.length ? '' : 'none';
+}
+
 /* Connect to the school database and pick up an earlier sign-in. */
 async function startOnline() {
   applyEditionTexts();
@@ -1834,6 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
   el('logoutBtn').addEventListener('click', handleLogout);
   if (el('forgotPwdBtn')) el('forgotPwdBtn').addEventListener('click', openForgotPassword);
   if (el('signUpBtn')) el('signUpBtn').addEventListener('click', openSignUp);
+  if (el('onlineImportInput')) el('onlineImportInput').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importOfflineBackup(f); });
   window.addEventListener('portal:password-recovery', openSetNewPassword);
   el('navBar').addEventListener('click', e => { const b = e.target.closest('.nav-tab'); if (b) switchTab(b.dataset.tab); });
   el('sessionExtendBtn').addEventListener('click', () => { AUTH.refreshSession(); updateSessionBar(); });

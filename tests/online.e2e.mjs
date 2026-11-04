@@ -218,6 +218,73 @@ try {
     assert(S.outbox.some(m => m.to === BURSAR && m.kind === 'reset'), 'no reset link sent');
   });
 
+  const HEAD = 'head@mbalehillside.ug';
+  await S.addUser(HEAD, 'Hillside2026');
+  let newSchool = null;
+
+  await step('a director with no school yet starts one from the sign-in screen', async () => {
+    await page.fill('#loginUsername', HEAD);
+    await page.fill('#loginPassword', 'Hillside2026');
+    await page.click('#loginBtn');
+    await page.waitForSelector('#nsName');
+    await page.fill('#nsName', 'Mbale Hillside School');
+    await page.fill('#nsYou', 'Moses Wanyama');
+    await page.click('#nsCreate');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    assert(await page.textContent('#roleChip') === 'Executive', 'role ' + await page.textContent('#roleChip'));
+    newSchool = (await one("select id from public.schools where name = 'Mbale Hillside School'")).id;
+    assert(newSchool, 'school not in the database');
+    await tab('admin');
+    assert(await page.isVisible('#onlineImportLabel'), 'import option not offered to a new school');
+  });
+
+  await step("the offline school's backup comes in and every balance is checked", async () => {
+    const termId = 'TRMa1';
+    const learner = (id, name, cls, fee, extra = {}) => Object.assign({ id, name, class: cls, level: 'Primary', guardian: '256772000111', fee, stream: '', gender: 'Female', boardingStatus: 'Day', bursaryPct: 0, academics: [], comments: {}, performanceNotes: [], injuryLog: [], athleteProfile: {}, feeComponents: [], createdAt: '2026-01-10' }, extra);
+    const bill = (id, studentId, total, extra = {}) => Object.assign({ id, studentId, termId, lines: [{ name: 'Tuition', amount: total }], bursaryPct: 0, gross: total, discount: 0, total, installments: [], createdAt: '2026-02-01' }, extra);
+    const pay = (id, studentId, amount, extra = {}) => Object.assign({ id, studentId, amount, method: 'Cash', reference: '', date: '2026-02-03', recordedBy: 'U003', recordedByName: 'Bursary Officer', ts: '2026-02-03T09:00:00.000Z', void: false }, extra);
+    const backup = {
+      version: 5,
+      settings: { schoolName: 'Mbale Hillside School', currency: 'UGX', motto: 'Rise and shine' },
+      terms: [{ id: termId, year: '2026', term: 'Term 1', startDate: '', endDate: '', isActive: true, openedAt: '2026-02-01T08:00:00.000Z' }],
+      students: [
+        learner('MHS/001', 'Achieng Mary', 'P.6', 450000, { academics: [{ id: 'AC1', termId, examSet: 'EOT', term: 'Term 1', subject: 'Mathematics', score: 81, date: '2026-04-01' }] }),
+        learner('MHS/002', 'Kato John', 'P.7', 500000, { bursaryPct: 20, gender: 'Male' }),
+        learner('MHS/003', 'Nabirye Ruth', 'P.3', 350000),
+      ],
+      invoices: [
+        bill('INV1', 'MHS/001', 450000),
+        bill('INV2', 'MHS/002', 400000, { lines: [{ name: 'Tuition', amount: 500000 }], bursaryPct: 20, gross: 500000, discount: 100000 }),
+        bill('INV3', 'MHS/003', 350000),
+        bill('INV0', 'MHS/003', 50000, { termId: null, lines: [{ name: 'Balance brought forward', amount: 50000 }] }),
+      ],
+      payments: [
+        pay('P1', 'MHS/001', 200000),
+        pay('P2', 'MHS/001', 50000, { void: true, voidReason: 'Entered twice', voidedBy: 'Executive Director', voidedAt: '2026-02-04T10:00:00.000Z' }),
+        pay('P3', 'MHS/002', 400000, { method: 'Mobile Money (MTN)' }),
+        pay('P4', 'GONE/001', 10000),   // a learner removed long ago: belongs to no one
+      ],
+      feeStructures: [], registers: [], conduct: [], programs: [], attendance: [], competitions: [], squads: [], feeComponents: [],
+      notices: [{ id: 'N1', title: 'Welcome back', body: 'Term starts Monday.', category: 'General', postedBy: 'Head Teacher', postedAt: '2026-02-01T08:00:00.000Z' }],
+    };
+    await page.setInputFiles('#onlineImportInput', { name: 'school-backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+    await page.click('#mdOk');
+    await page.waitForFunction(() => /balances match the backup/.test(document.getElementById('toastHost').textContent), null, { timeout: 30000 });
+    const msg = await page.textContent('#toastHost');
+    assert(/All 3 learners/.test(msg) && /1 records? that belonged to no learner/.test(msg), 'message: ' + msg);
+    const n = async t => Number((await one(`select count(*) as n from public.${t} where school_id = $1`, [newSchool])).n);
+    assert(await n('learners') === 3 && await n('invoices') === 4 && await n('payments') === 3 && await n('marks') === 1 && await n('notices') === 1,
+      `database: ${await n('learners')} learners, ${await n('invoices')} bills, ${await n('payments')} payments, ${await n('marks')} marks`);
+    const p2 = await one("select void, void_reason, recorded_by, recorded_by_name from public.payments where school_id = $1 and id = 'P2'", [newSchool]);
+    assert(p2.void === true && p2.void_reason === 'Entered twice' && p2.recorded_by === null && p2.recorded_by_name === 'Bursary Officer', 'reversal ' + JSON.stringify(p2));
+    const sch = await one('select importing, settings from public.schools where id = $1', [newSchool]);
+    assert(sch.importing === false && sch.settings.motto === 'Rise and shine', 'school ' + JSON.stringify(sch));
+    assert(Number((await one("select count(*) as n from public.audit_log where school_id = $1 and action = 'IMPORT_DONE'", [newSchool])).n) === 1, 'no IMPORT_DONE entry');
+    const balances = await app(() => window.KSA.state().students.map(s => [s.id, studentBalance(s)]));
+    assert(JSON.stringify(balances) === '[["MHS/001",250000],["MHS/002",0],["MHS/003",400000]]', 'balances ' + JSON.stringify(balances));
+    assert(!(await page.isVisible('#onlineImportLabel')), 'import still offered after the school has learners');
+  });
+
   await step('no runtime errors', async () => {
     assert(!errors.length, errors.join(' | '));
   });

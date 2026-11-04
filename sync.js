@@ -359,6 +359,61 @@ window.SYNC = (function () {
 
   window.addEventListener('online', () => { if (status === 'offline' || status === 'error') schedule(); });
 
+  /* ── Bringing in a school's offline backup ───────────────────────────── */
+  /* Older offline records can lack a date or time the database requires. */
+  function normalizeForImport(st) {
+    const today = new Date().toISOString().slice(0, 10);
+    (st.payments || []).forEach(p => {
+      if (!p.date) p.date = (p.ts || today).slice(0, 10);
+      if (!p.ts) p.ts = p.date + 'T00:00:00.000Z';
+    });
+    (st.notices || []).forEach(n => { if (!n.postedAt) n.postedAt = (n.date || today) + (n.date && n.date.length > 10 ? '' : 'T00:00:00.000Z'); });
+    (st.conduct || []).forEach(c => { if (!c.date) c.date = today; });
+    st.registers = (st.registers || []).filter(r => r.date && r.class);
+    return st;
+  }
+
+  /* Billed and paid per learner: what the balance check compares. */
+  function balancesOf(st) {
+    const out = {};
+    (st.students || []).forEach(s => { out[s.id] = { name: s.name, billed: 0, paid: 0 }; });
+    (st.invoices || []).forEach(i => { if (out[i.studentId]) out[i.studentId].billed += Math.round(num(i.total)); });
+    (st.payments || []).forEach(p => { if (!p.void && out[p.studentId]) out[p.studentId].paid += Math.round(num(p.amount)); });
+    return out;
+  }
+
+  async function importBackup(st, progress) {
+    const rows = rowsFromState(normalizeForImport(st));
+    // Records that point at a learner or term not in the backup cannot be
+    // filed; they are left out and counted.
+    let skipped = 0;
+    const learners = new Set(rows.learners.keys()), terms = new Set(rows.terms.keys());
+    const drop = (table, test) => rows[table].forEach((row, key) => { if (test(row)) { rows[table].delete(key); skipped++; } });
+    ['invoices', 'payments', 'marks', 'comments', 'conduct'].forEach(t => drop(t, r => !learners.has(r.learner_id)));
+    ['marks', 'comments', 'fee_structures'].forEach(t => drop(t, r => !terms.has(r.term_id)));
+    drop('invoices', r => r.term_id && !terms.has(r.term_id));
+
+    const begin = await sb.rpc('begin_import', { p_school: schoolId });
+    if (begin.error) throw begin.error;
+    const total = TABLES.reduce((a, t) => a + rows[t].size, 0);
+    let done = 0;
+    for (const table of TABLES) {
+      const list = [...rows[table].values()];
+      for (let i = 0; i < list.length; i += BATCH) {
+        const { error } = await sb.rpc('import_rows', { p_school: schoolId, p_table: table, p_rows: list.slice(i, i + BATCH) });
+        if (error) throw error;
+        done += Math.min(BATCH, list.length - i);
+        if (progress) progress(done, total);
+      }
+    }
+    const values = { settings: st.settings || {} };
+    const name = String((st.settings && st.settings.schoolName) || '').trim();
+    if (name.length >= 2) values.name = name.slice(0, 120);
+    const { error } = await sb.from('schools').update(values).eq('id', schoolId);
+    if (error) throw error;
+    return { total, skipped };
+  }
+
   return {
     attach(client) { sb = client; },
     detach() { clearTimeout(timer); timer = null; schoolId = null; role = null; snapshot = null; last = null; lastSettings = null; setStatus('idle'); },
@@ -375,6 +430,17 @@ window.SYNC = (function () {
       sb.rpc('log_audit', { p_school: schoolId, p_action: String(action).slice(0, 40), p_detail: String(detail || '').slice(0, 200) })
         .then(({ error }) => { if (error) console.warn('Audit entry not saved:', error.message); }, () => {});
     },
+    importBackup,
+    balancesOf,
+    async finishImport(summary) {
+      const { error } = await sb.rpc('finish_import', { p_school: schoolId, p_summary: String(summary || '').slice(0, 200) });
+      if (error) throw error;
+    },
+    async cancelImport() {
+      const { error } = await sb.rpc('cancel_import', { p_school: schoolId });
+      if (error) throw error;
+    },
+    role: () => role,
     // Exposed for the automated tests.
     _rowsFromState: rowsFromState,
     _stateFromRows: stateFromRows,

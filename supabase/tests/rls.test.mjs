@@ -162,7 +162,7 @@ await noEffect("a teacher cannot edit a learner's details", U.teacherS4, "update
 await noEffect('a teacher cannot give themselves more classes', U.teacherS4,
   "update public.memberships set assigned_classes = '{S.4,P.7}' where user_id = $1", [U.teacherS4.id]);
 await denied('a teacher cannot make themselves the director', U.teacherS4,
-  "insert into public.memberships (school_id, user_id, role) values ($1, $2, 'exec')", [A, U.teacherS4.id], RLS);
+  "insert into public.memberships (school_id, user_id, role) values ($1, $2, 'exec')", [A, U.teacherS4.id], PRIV);
 
 section('Money: the bursar records, nobody edits');
 await allowed('the bursar records a payment as themselves', U.bursar,
@@ -266,9 +266,55 @@ await noEffect('the administrator cannot change staff roles', U.admin,
   "update public.memberships set role = 'exec' where school_id = $1 and user_id = $2", [A, U.admin.id]);
 await allowed('the director updates school settings', U.exec, `update public.schools set settings = '{"motto":"Excel"}' where id = $1`, [A], 1);
 await noEffect('the administrator cannot change school settings', U.admin, `update public.schools set settings = '{}' where id = $1`, [A]);
+await denied('a director cannot top up their own SMS credits', U.exec, 'update public.schools set sms_credits = 100000 where id = $1', [A], PRIV);
+await denied("a director cannot change the school's plan", U.exec, "update public.schools set plan = 'enterprise' where id = $1", [A], PRIV);
+await denied('a director cannot switch on importing by hand', U.exec, 'update public.schools set importing = true where id = $1', [A], PRIV);
+await denied("a director cannot change a staff member's email", U.exec, "update public.memberships set email = 'x@y.z' where school_id = $1", [A], PRIV);
+await denied('nobody adds people to a school directly', U.exec,
+  "insert into public.memberships (school_id, user_id, role) values ($1, $2, 'admin')", [A, U.stranger.id], PRIV);
 await allowed('a director can create a second school', U.exec, "select public.create_school('Kampala Hill Annex', 'Sarah Namubiru')");
 await allowed('… and a third', U.exec, "select public.create_school('Kampala Hill Nursery', 'Sarah Namubiru')");
 await denied('… but not a fourth', U.exec, "select public.create_school('One Too Many', 'Sarah Namubiru')", [], /maximum number of schools/i);
+
+section('Bringing in an offline backup');
+const C = (await as(U.outsider, "select public.create_school('Lakeview Junior', 'John Okello') as id")).rows[0].id;
+await denied('only into a school with no learners or payments', U.outsider, 'select public.begin_import($1)', [B], /already has learners/i);
+await denied('only the director can start it', U.stranger, 'select public.begin_import($1)', [C], /Executive Director/i);
+await denied('nothing is brought in before it starts', U.outsider,
+  `select public.import_rows($1, 'terms', '[{"id":"T1","year":"2025","term":"Term 3"}]'::jsonb)`, [C], /Start bringing in/i);
+await as(U.outsider, "insert into public.terms (school_id, id, year, term) values ($1, 'AUTO', '2026', 'Term 1')", [C]);
+await allowed('the director starts bringing in a backup', U.outsider, 'select public.begin_import($1)', [C]);
+await sees("the new school's automatic first term makes way for the backup's", U.outsider, 'select count(*) as n from public.terms where school_id = $1', [C], 0);
+const backupRows = {
+  terms: [{ id: 'T25-3', year: '2025', term: 'Term 3', is_active: true }],
+  learners: [{ id: 'LJ/001', admission_no: 'LJ/001', name: 'Auma Grace', class: 'P.4', fee: 300000 },
+             { id: 'LJ/002', admission_no: 'LJ/002', name: 'Waiswa Tom', class: 'P.5', fee: 300000 }],
+  invoices: [{ id: 'INV1', learner_id: 'LJ/001', term_id: 'T25-3', gross: 300000, total: 300000 }],
+  payments: [{ id: 'P1', learner_id: 'LJ/001', amount: 100000, recorded_by: null, recorded_by_name: 'Bursar (offline)', void: false },
+             { id: 'P2', learner_id: 'LJ/001', amount: 50000, recorded_by: null, recorded_by_name: 'Bursar (offline)', void: true, void_reason: 'Duplicate' }],
+};
+for (const [table, rows] of Object.entries(backupRows)) {
+  const r = await allowed(`the backup's ${table} are brought in`, U.outsider, 'select public.import_rows($1, $2, $3::jsonb) as n', [C, table, JSON.stringify(rows)]);
+  if (r) check(`… all ${rows.length} of them`, Number(r.rows[0].n) === rows.length, `${r.rows[0].n} of ${rows.length}`);
+}
+await sees('reversed payments keep their reversal', U.outsider, "select count(*) as n from public.payments where school_id = $1 and void and void_reason = 'Duplicate'", [C], 1);
+await denied('records cannot be brought into another school', U.outsider,
+  `select public.import_rows($1, 'learners', '[{"id":"X","admission_no":"X","name":"X"}]'::jsonb)`, [B], /Start bringing in/i);
+await denied('only real record types are accepted', U.outsider, `select public.import_rows($1, 'audit_log', '[{}]'::jsonb)`, [C], /Unknown kind/i);
+await denied('nobody records new payments while a backup is coming in', U.outsider,
+  "insert into public.payments (school_id, id, learner_id, amount, recorded_by) values ($1, 'NEW', 'LJ/002', 1000, $2)", [C, U.outsider.id], RLS);
+await allowed('cancelling removes everything brought in', U.outsider, 'select public.cancel_import($1)', [C]);
+await sees('… learners', U.outsider, 'select count(*) as n from public.learners where school_id = $1', [C], 0);
+await sees('… and payments', U.outsider, 'select count(*) as n from public.payments where school_id = $1', [C], 0);
+await allowed('it can then be started again', U.outsider, 'select public.begin_import($1)', [C]);
+await as(U.outsider, 'select public.import_rows($1, $2, $3::jsonb)', [C, 'terms', JSON.stringify(backupRows.terms)]);
+await as(U.outsider, 'select public.import_rows($1, $2, $3::jsonb)', [C, 'learners', JSON.stringify(backupRows.learners)]);
+await allowed('the director finishes the import', U.outsider, "select public.finish_import($1, '2 learners')", [C]);
+await sees('the school is live again', U.outsider, 'select count(*) as n from public.schools where id = $1 and not importing', [C], 1);
+await denied('nothing more comes in after it finishes', U.outsider,
+  `select public.import_rows($1, 'learners', '[{"id":"Y","admission_no":"Y","name":"Y"}]'::jsonb)`, [C], /Start bringing in/i);
+await denied('a finished import cannot be cancelled', U.outsider, 'select public.cancel_import($1)', [C], /No backup/i);
+await sees('the import is in the audit trail', U.outsider, "select count(*) as n from public.audit_log where school_id = $1 and action in ('IMPORT_START','IMPORT_CANCELLED','IMPORT_DONE')", [C], 4);
 
 console.log(failures ? `\n${failures} check(s) failed.` : '\nAll checks passed.');
 process.exit(failures ? 1 : 0);

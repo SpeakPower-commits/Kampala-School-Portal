@@ -188,7 +188,11 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
         `select p.proargnames as names, pg_get_function_result(p.oid) as result from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = $1`, [fn]);
       if (!info.rows.length || !IDENT.test(fn)) throw httpError(404, 'PGRST202', `Could not find the function public.${fn}`);
       const args = body || {}, values = [], named = [];
-      for (const name of Object.keys(args)) { values.push(args[name] === null ? null : String(args[name])); named.push(`${q(name)} => $${values.length}`); }
+      for (const name of Object.keys(args)) {
+        const v = args[name];
+        values.push(v === null || v === undefined ? null : typeof v === 'object' ? JSON.stringify(v) : String(v));
+        named.push(`${q(name)} => $${values.length}`);
+      }
       const call = `public.${q(fn)}(${named.join(', ')})`;
       if (info.rows[0].result === 'void') { await asCaller(claims, tx => tx.query(`select ${call}`, values)); return { status: 204 }; }
       const r = await asCaller(claims, tx => tx.query(`select to_jsonb(${call}) as j`, values));
