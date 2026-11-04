@@ -1,0 +1,25 @@
+# Files in this repository that must never be published as part of the website.
+# Cloudflare reads this list when it uploads the portal's files (same syntax as
+# .gitignore). Everything not listed here is public.
+
+# Version control, tooling and secrets
+.git
+.github
+.gitignore
+.assetsignore
+.wrangler
+.dev.vars*
+.env*
+node_modules
+package.json
+package-lock.json
+wrangler.jsonc
+
+# Server code, database scripts and tests
+worker
+supabase
+tests
+
+# Documentation
+*.md
+LICENSE

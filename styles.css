@@ -210,6 +210,14 @@ textarea.input { resize: vertical; min-height: 62px; }
 .topbar-btn:hover { background: rgba(255,255,255,0.18); }
 .topbar-btn svg { width: 15px; height: 15px; }
 .topbar-btn.danger:hover { background: rgba(239,68,68,0.28); border-color: rgba(239,68,68,0.5); }
+/* Online edition: whether the latest changes have reached the school database. */
+.sync-pill {
+  font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+  background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.16);
+}
+.sync-pill.sync-offline { background: #fef3c7; color: #78350f; border-color: #fcd34d; }
+.sync-pill.sync-error { background: #fee2e2; color: #7f1d1d; border-color: #fca5a5; }
+.auth-links { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 14px; }
 
 .navbar { background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 62px; z-index: 55; }
 .navbar-inner { max-width: 1320px; margin: 0 auto; padding: 0 14px; display: flex; gap: 2px; overflow-x: auto; }

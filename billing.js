@@ -208,6 +208,7 @@ async function openNewTerm(f) {
     confirmLabel: 'Open term and bill learners',
   });
   if (!ok) return;
+  if (needsConnection('Opening a term')) return;
   state.terms.forEach(t => { t.isActive = false; });
   const term = { id: 'TRM' + uid().slice(0, 5), year, term: f.term, startDate: f.startDate || '', endDate: f.endDate || '', isActive: true, openedAt: nowISO() };
   state.terms.push(term);
@@ -218,12 +219,15 @@ async function openNewTerm(f) {
     });
   }
   state.students.forEach(billStudentForCurrentTerm);
-  saveState(); renderAll();
+  const saved = await saveOrWarn(`${termLabel(term)}`);
+  renderAll();
+  if (!saved) return;
   AUTH.audit('TERM_OPEN', `${termLabel(term)} · ${count} learners billed`);
   toast(`${termLabel(term)} is open and ${count} learners are billed.`, 'success');
 }
 function setActiveTerm(id) {
   if (!can('canManageTerms')) return toast('You do not have permission.', 'error');
+  if (needsConnection('Changing the current term')) return;
   state.terms.forEach(t => { t.isActive = (t.id === id); });
   saveState(); renderAll();
   toast('Current term changed.', 'success');
@@ -234,6 +238,7 @@ async function deleteTerm(id) {
   if (state.invoices.some(i => i.termId === id)) return toast('This term has bills. It cannot be removed.', 'error');
   if (state.students.some(s => (s.academics || []).some(a => a.termId === id))) return toast('This term has marks recorded. It cannot be removed.', 'error');
   if (!await confirmDialog({ title: 'Remove term', message: `Remove ${termLabel(t)}?`, confirmLabel: 'Remove', danger: true })) return;
+  if (needsConnection('Removing a term')) return;
   state.terms = state.terms.filter(x => x.id !== id);
   state.feeStructures = state.feeStructures.filter(fs => fs.termId !== id);
   if (!state.terms.some(x => x.isActive) && state.terms.length) termsInOrder().pop().isActive = true;
@@ -344,6 +349,7 @@ function openFeeStructureEditor(id) {
       form.addEventListener('input', totals);
       totals();
       root.querySelector('#fsSave').addEventListener('click', () => {
+        if (needsConnection('Saving a fee structure')) return;
         const d = read();
         if (!d.items.length) return toast('Add at least one fee item.', 'error');
         if (d.installments.length) {
@@ -365,6 +371,7 @@ async function deleteFeeStructure(id) {
   if (!can('canManageTerms')) return toast('You do not have permission.', 'error');
   const fs = state.feeStructures.find(x => x.id === id); if (!fs) return;
   if (!await confirmDialog({ title: 'Remove fee structure', message: `Remove the ${appliesToLabel(fs.appliesTo)} fee structure? Existing bills are not changed until you apply.`, confirmLabel: 'Remove', danger: true })) return;
+  if (needsConnection('Removing a fee structure')) return;
   state.feeStructures = state.feeStructures.filter(x => x.id !== id);
   saveState(); renderAll();
 }
@@ -373,8 +380,11 @@ async function applyFeeStructures() {
   const t = getCurrentTerm(); if (!t) return;
   const ok = await confirmDialog({ title: 'Re-bill this term', message: `Rebuild every learner's ${termLabel(t)} bill from the current fee structures? Payments already made are kept and re-allocated. Earlier terms are not changed.`, confirmLabel: 'Re-bill learners' });
   if (!ok) return;
+  if (needsConnection('Re-billing learners')) return;
   state.students.forEach(refreshCurrentInvoice);
-  saveState(); renderAll();
+  const saved = await saveOrWarn('The new bills');
+  renderAll();
+  if (!saved) return;
   AUTH.audit('TERM_REBILL', `${termLabel(t)} · ${state.students.length} learners`);
   toast(`${termLabel(t)} bills updated.`, 'success');
 }

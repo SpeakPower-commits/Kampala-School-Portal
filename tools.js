@@ -309,5 +309,5 @@ MODULES.push({
     takeDailySnapshot();
   },
   render() { applyBranding(); },
-  afterSave() { takeDailySnapshot(); },
+  afterSave() { if (!ONLINE_EDITION) takeDailySnapshot(); },   // online, the school database is backed up instead
 });
