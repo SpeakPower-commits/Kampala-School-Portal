@@ -166,6 +166,26 @@ try {
     assert(st.learners === 2 && st.payments === 1 && st.voided === true, 'after reload ' + JSON.stringify(st));
   });
 
+  await step('a payment whose reply is lost is kept and saved once, never doubled', async () => {
+    // The database stores the payment, then the reply is lost, as on a flaky connection.
+    let dropped = 0;
+    await page.route('**/rest/v1/payments*', async route => {
+      if (route.request().method() === 'POST' && !dropped) { dropped++; await route.fetch(); return route.abort('failed'); }
+      return route.continue();
+    });
+    try {
+      await tab('payments');
+      await page.selectOption('#paymentStudent', 'KHS/2026/001');
+      await page.fill('#paymentForm input[name="amount"]', '75000');
+      await page.click('#paymentForm button[type="submit"]');
+      await until(() => /Connection lost while saving/.test(document.getElementById('toastHost').textContent));
+    } finally { await page.unroute('**/rest/v1/payments*'); }
+    assert(await count('payments', 'and amount = 75000') === 1, 'the database did not keep the payment');
+    assert(await app(() => window.KSA.state().payments.some(p => p.amount === 75000)), 'the payment vanished from the screen');
+    await saved();   // the retry finds the payment already stored and does not add another
+    assert(await count('payments', 'and amount = 75000') === 1, 'payment doubled: ' + await count('payments', 'and amount = 75000'));
+  });
+
   await step('the director invites a teacher for S.4', async () => {
     await tab('admin');
     await page.click('#userMgmtCard summary');
@@ -214,12 +234,12 @@ try {
     await signIn(BURSAR, 'Bursar2026');
     await page.waitForSelector('#appShell', { state: 'visible' });
     assert(await page.textContent('#roleChip') === 'Bursary', 'role ' + await page.textContent('#roleChip'));
-    assert(await app(() => window.KSA.state().payments.length) === 1, 'bursar cannot see the ledger');
+    assert(await app(() => window.KSA.state().payments.length) === 2, 'bursar cannot see the ledger');
     await tab('payments');
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '100000');
     await page.click('#paymentForm button[type="submit"]');
-    await until(() => window.KSA.state().payments.length === 2 && SYNC.status().status === 'saved');
+    await until(() => window.KSA.state().payments.length === 3 && SYNC.status().status === 'saved');
     const p = await one('select recorded_by from public.payments where school_id = $1 and amount = 100000', [school]);
     assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
   });
@@ -298,6 +318,16 @@ try {
     const balances = await app(() => window.KSA.state().students.map(s => [s.id, studentBalance(s)]));
     assert(JSON.stringify(balances) === '[["MHS/001",250000],["MHS/002",0],["MHS/003",400000]]', 'balances ' + JSON.stringify(balances));
     assert(!(await page.isVisible('#onlineImportLabel')), 'import still offered after the school has learners');
+  });
+
+  await step('an interrupted import is offered again at sign-in, and payments resume', async () => {
+    await S.sql('update public.schools set importing = true where id = $1', [newSchool]);   // as if the tab had closed mid-import
+    await page.reload();
+    await page.waitForSelector('#impKeep');
+    await page.click('#impKeep');
+    await until(() => /import is finished/.test(document.getElementById('toastHost').textContent));
+    assert((await one('select importing from public.schools where id = $1', [newSchool])).importing === false, 'school still importing');
+    assert(Number((await one("select count(*) as n from public.audit_log where school_id = $1 and action = 'IMPORT_DONE'", [newSchool])).n) === 2, 'finish not recorded');
   });
 
   await step('no runtime errors', async () => {

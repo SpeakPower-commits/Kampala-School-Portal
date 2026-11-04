@@ -380,6 +380,13 @@ async function recordPayment(f) {
   state.payments.push(payment);
   recomputePaid();
   const saved = await persistNow();
+  if (!saved.ok && saved.offline) {
+    // The connection dropped mid-save, so the database may already have this
+    // payment. Keep it, with the same id, so it is saved (or matched) when the
+    // connection returns. Recording it again would count it twice.
+    renderAll();
+    return toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+  }
   if (!saved.ok) {
     state.payments = state.payments.filter(x => x !== payment);
     recomputePaid(); renderAll();
@@ -399,6 +406,12 @@ async function voidPayment(id, reason) {
   p.void = true; p.voidReason = (reason || '').trim(); p.voidedBy = currentSession.displayName; p.voidedAt = nowISO();
   recomputePaid();
   const saved = await persistNow();
+  if (!saved.ok && saved.offline) {
+    // As with recording: the reversal may already be stored, and repeating it
+    // is harmless, so keep it and let it be confirmed when the connection returns.
+    renderAll();
+    return toast('Connection lost while reversing the payment. The reversal is kept and will be saved automatically when the connection returns.', 'warn');
+  }
   if (!saved.ok) {
     p.void = false; p.voidReason = ''; p.voidedBy = ''; p.voidedAt = '';
     recomputePaid(); renderAll();
@@ -1699,6 +1712,7 @@ function initApp() {
   show('adminImportLabel', can('canImport') && !ONLINE_EDITION);
   show('syncStatus', ONLINE_EDITION);
   showOnlineImport();
+  if (ONLINE_EDITION && can('canManageSettings') && SYNC.importing()) setTimeout(resolveInterruptedImport, 0);
 
   setupBindings();
   renderAll();
@@ -1882,9 +1896,15 @@ async function importOfflineBackup(file) {
     return toast('The backup was not brought in: ' + (e.message || e) + ' Nothing was kept; you can try again.', 'error');
   }
   say('Checking every learner\'s balance…');
-  await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
-  loadState();
-  const actual = SYNC.balancesOf(state);
+  let actual;
+  try {
+    await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
+    loadState();
+    actual = SYNC.balancesOf(state);
+  } catch (e) {
+    closeModal();
+    return toast('The backup was copied, but the balances could not be checked: ' + (e.message || e) + ' Sign in again to finish or undo the import.', 'error');
+  }
   const wrong = Object.keys(expected).filter(id => !actual[id] || actual[id].billed !== expected[id].billed || actual[id].paid !== expected[id].paid);
   closeModal();
   if (!wrong.length) {
@@ -1892,17 +1912,44 @@ async function importOfflineBackup(file) {
     renderAll(); showOnlineImport();
     return toast(`Done. All ${backup.students.length} learners' balances match the backup.${result.skipped ? ` ${result.skipped} records that belonged to no learner were left out.` : ''}`, 'success');
   }
-  const undo = await confirmDialog({
-    title: 'Some balances do not match',
-    message: `${wrong.length} learner(s) do not match the backup, for example ${wrong.slice(0, 3).map(id => `${expected[id].name} (${id})`).join(', ')}. Undo the import so nothing is kept?`,
-    confirmLabel: 'Undo the import', danger: true,
+  const examples = wrong.slice(0, 3).map(id => `${expected[id].name} (${id})`).join(', ');
+  const choice = await chooseImportOutcome('Some balances do not match',
+    `${wrong.length} learner(s) do not match the backup, for example ${examples}. Undo the import to remove everything it brought in, or keep it and check those learners' accounts yourself.`);
+  await settleImport(choice, `${backup.students.length} learners; ${wrong.length} balance(s) differ from the backup`);
+}
+
+/* The director must either keep or undo an import: until then the database
+   pauses new payments for the school. */
+function chooseImportOutcome(title, message) {
+  return new Promise(resolve => {
+    openModal({
+      title, locked: true,
+      bodyHtml: `<p style="font-size:14px;color:var(--muted);margin:0">${escapeHtml(message)}</p>`,
+      footHtml: '<button class="btn btn-danger-solid" id="impUndo" type="button">Undo the import</button><button class="btn btn-primary" id="impKeep" type="button">Keep it and finish</button>',
+      onOpen(root) {
+        root.querySelector('#impUndo').addEventListener('click', () => { closeModal(); resolve('undo'); });
+        root.querySelector('#impKeep').addEventListener('click', () => { closeModal(); resolve('keep'); });
+      },
+    });
   });
-  if (undo) {
-    await SYNC.cancelImport();
+}
+async function settleImport(choice, summary) {
+  try {
+    if (choice === 'undo') await SYNC.cancelImport(); else await SYNC.finishImport(summary);
     await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
     loadState(); renderAll(); showOnlineImport();
-    toast('The import was undone.', 'warn');
+    toast(choice === 'undo' ? 'The import was undone.' : 'The import is finished. Check the learners whose balances differed.', 'warn');
+  } catch (e) {
+    toast('Could not finish the import: ' + (e.message || e) + ' Sign in again to finish or undo it.', 'error');
   }
+}
+/* An import that was interrupted (closed tab, lost connection) is offered
+   again to the director at sign-in, so the school is never left with
+   payments paused. */
+async function resolveInterruptedImport() {
+  const choice = await chooseImportOutcome('A backup import did not finish',
+    'Bringing in the offline backup was interrupted, so new payments are paused for this school. Keep what was brought in and finish, or undo it and bring the backup in again.');
+  await settleImport(choice, 'Finished after an interruption');
 }
 /* "Bring in data from the offline edition" is offered to the director of a
    new online school that has no learners yet. */

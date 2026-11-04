@@ -29,6 +29,7 @@ window.SYNC = (function () {
   let timer = null;
   let status = 'idle';
   let lastError = '';
+  let importing = false;     // an offline backup is part-way in (payments are paused)
 
   // What each role may write, mirroring the database's row-level security:
   //   rw  add, change and remove rows    u  change existing rows only
@@ -186,9 +187,10 @@ window.SYNC = (function () {
 
   async function loadSchool(id, roleName) {
     schoolId = id; role = roleName;
-    const { data: schools, error } = await sb.from('schools').select('id,name,settings').eq('id', id);
+    const { data: schools, error } = await sb.from('schools').select('id,name,settings,importing').eq('id', id);
     if (error) throw error;
     if (!schools.length) throw new Error('This school could not be found.');
+    importing = !!schools[0].importing;
     const [terms, learners, feeStructures, invoices, payments, marks, comments, registers, conduct, notices, docs] = await Promise.all([
       fetchAll('terms'), fetchAll('learners', q => q.is('deleted_at', null)), fetchAll('fee_structures'), fetchAll('invoices'),
       fetchAll('payments'), fetchAll('marks'), fetchAll('comments'), fetchAll('registers'), fetchAll('conduct'),
@@ -416,7 +418,7 @@ window.SYNC = (function () {
 
   return {
     attach(client) { sb = client; },
-    detach() { clearTimeout(timer); timer = null; schoolId = null; role = null; snapshot = null; last = null; lastSettings = null; setStatus('idle'); },
+    detach() { clearTimeout(timer); timer = null; schoolId = null; role = null; snapshot = null; last = null; lastSettings = null; importing = false; setStatus('idle'); },
     loadSchool,
     /* For app.js loadState(): the loaded school as JSON, or null before sign-in. */
     read() { return snapshot ? JSON.stringify(snapshot) : null; },
@@ -435,11 +437,14 @@ window.SYNC = (function () {
     async finishImport(summary) {
       const { error } = await sb.rpc('finish_import', { p_school: schoolId, p_summary: String(summary || '').slice(0, 200) });
       if (error) throw error;
+      importing = false;
     },
     async cancelImport() {
       const { error } = await sb.rpc('cancel_import', { p_school: schoolId });
       if (error) throw error;
+      importing = false;
     },
+    importing: () => importing,
     role: () => role,
     // Exposed for the automated tests.
     _rowsFromState: rowsFromState,
