@@ -1,4 +1,4 @@
-name: End-to-end tests
+name: Tests
 
 on:
   push:
@@ -15,10 +15,13 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Playwright and Chromium
+      - name: Install Playwright, Chromium and PGlite
         run: |
-          npm install --no-save playwright@1.48.2
+          npm install --no-save playwright@1.48.2 @electric-sql/pglite@0.5.15
           npx playwright install --with-deps chromium
+
+      - name: Database security tests (row-level security)
+        run: node supabase/tests/rls.test.mjs
 
       - name: Serve the app
         run: |
