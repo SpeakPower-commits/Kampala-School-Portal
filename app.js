@@ -1481,15 +1481,16 @@ function applySettings() {
    Modal system (confirm / prompt / generic)
    ========================================================================= */
 let modalResolver = null;
-function openModal({ title, bodyHtml, footHtml, wide, onOpen }) {
+function openModal({ title, bodyHtml, footHtml, wide, onOpen, locked }) {
   const host = el('modalHost');
-  host.innerHTML = `<div class="modal-overlay"><div class="modal ${wide ? 'modal-wide' : ''}" role="dialog" aria-modal="true">
-    <div class="modal-head"><div><h3>${title}</h3></div><button class="modal-close" data-modal-close aria-label="Close">${icon('x', 20)}</button></div>
+  // A locked modal (forced password change) cannot be dismissed by ✕, Escape or backdrop.
+  host.innerHTML = `<div class="modal-overlay"${locked ? ' data-locked' : ''}><div class="modal ${wide ? 'modal-wide' : ''}" role="dialog" aria-modal="true">
+    <div class="modal-head"><div><h3>${title}</h3></div>${locked ? '' : `<button class="modal-close" data-modal-close aria-label="Close">${icon('x', 20)}</button>`}</div>
     <div class="modal-body">${bodyHtml}</div>
     ${footHtml ? `<div class="modal-foot">${footHtml}</div>` : ''}
   </div></div>`;
   const overlay = host.querySelector('.modal-overlay');
-  overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeModal(); });
+  if (!locked) overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeModal(); });
   const root = host.querySelector('.modal');
   if (onOpen) onOpen(root);
   const focusable = root.querySelector('input, select, textarea, button');
@@ -1714,7 +1715,6 @@ async function handleLogin(e) {
   currentSession = res.session;
   el('loginPassword').value = '';
   initApp();
-  if (res.mustChangePassword) openChangePwd(true);
 }
 async function handleLogout() {
   if (!await confirmDialog({ title: 'Sign out', message: 'Sign out of the portal?', confirmLabel: 'Sign out' })) return;
@@ -1730,6 +1730,7 @@ function openChangePwd(forced) {
       <div class="field"><label>New password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="cpNew"><div class="pwd-meter"><span></span></div><div class="pwd-meter-label" id="pwdMeterLabel"></div></div>
       <div class="field"><label>Confirm new password</label><input class="input" type="password" id="cpConfirm"></div>
       <div id="cpError" class="auth-error" style="display:none"></div>`,
+    locked: !!forced,
     footHtml: forced ? `<button class="btn btn-primary btn-block" id="cpSave">Update password</button>` : `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="cpSave">Update password</button>`,
     onOpen(root) {
       // Re-point the strength meter (modal creates the elements).
@@ -1807,6 +1808,7 @@ function initApp() {
 
   if (el('attendanceDate')) el('attendanceDate').value = todayISO();
   switchTab(AUTH.getDefaultTab());
+  if (AUTH.mustChangePassword()) openChangePwd(true);
 }
 
 /* Throttle activity-based session refresh to once per minute. */
@@ -1826,7 +1828,7 @@ document.addEventListener('DOMContentLoaded', () => {
   el('navBar').addEventListener('click', e => { const b = e.target.closest('.nav-tab'); if (b) switchTab(b.dataset.tab); });
   el('sessionExtendBtn').addEventListener('click', () => { AUTH.refreshSession(); updateSessionBar(); });
   document.addEventListener('click', handleDelegatedClick);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('#modalHost [data-locked]')) closeModal(); });
   registerActivityRefresh();
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});

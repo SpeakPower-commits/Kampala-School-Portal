@@ -69,7 +69,8 @@ school-portal/
 ├── auth.js             Authentication module (PBKDF2 password hashing)
 ├── service-worker.js   Offline cache (network-first for app code)
 ├── manifest.json       PWA manifest
-└── icons/              App icons (PNG, 192 & 512)
+├── icon192.png         App icon (192×192)
+└── icon512.png         App icon (512×512)
 ```
 
 No build step, no bundler, no CDN. Everything is self-contained and works

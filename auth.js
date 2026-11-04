@@ -328,6 +328,14 @@ const AUTH = {
     return Math.max(0, Math.round((session.expiresAt - Date.now()) / 1000));
   },
 
+  /* True while the signed-in account still has to replace its password. */
+  mustChangePassword() {
+    const session = getSession();
+    if (!session) return false;
+    const user = loadUsers().find(u => u.id === session.userId);
+    return !!(user && user.mustChangePassword);
+  },
+
   validatePasswordStrength,
   ROLE_PERMISSIONS,
 };
