@@ -107,6 +107,13 @@ school-portal/
 ├── icon192.png         App icon (192×192)
 ├── icon512.png         App icon (512×512)
 ├── tests/e2e.js        End-to-end tests (run on every push by GitHub Actions)
+├── tests/online.e2e.mjs  End-to-end tests of the online edition
+│
+│   Online edition (shared school database)
+├── config.js           Which edition runs here (by web address) and the database address
+├── auth-online.js      Staff sign-in by email, invitations, password resets
+├── sync.js             Loads the school's data and saves only what changed
+├── vendor/supabase.js  Official Supabase client, pinned (see vendor/README.md)
 │
 │   Hosting on Cloudflare
 ├── wrangler.jsonc      Cloudflare Worker settings
@@ -114,10 +121,10 @@ school-portal/
 ├── _headers            Security headers for every page
 ├── .assetsignore       Repository files that are never published
 │
-│   Online edition (in progress)
 └── supabase/
     ├── migrations/     Database tables and row-level security
-    └── tests/          Database security tests (run on every push)
+    ├── tests/          Database security tests (run on every push)
+    └── dev/server.mjs  Local stand-in for Supabase, for tests and demos
 ```
 
 No build step, no bundler, no CDN. Everything is self-contained and works
@@ -260,10 +267,17 @@ npx playwright install chromium
 # (no Supabase account needed) and checks what each one can read and change
 node supabase/tests/rls.test.mjs
 
-# The app itself, in a real browser
+# The online edition against a local stand-in for Supabase (real Postgres in
+# WebAssembly with the real security rules, and the official Supabase client)
+node tests/online.e2e.mjs
+
+# The offline edition, in a real browser
 python3 -m http.server 8099 &
 node tests/e2e.js
 ```
+
+To try the online edition by hand, run `node supabase/dev/server.mjs` and open
+the address it prints.
 
 ---
 

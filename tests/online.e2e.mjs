@@ -1,0 +1,231 @@
+/*
+ * End-to-end tests for the ONLINE edition.
+ *
+ * Starts the local stand-in for Supabase (supabase/dev/server.mjs: real
+ * Postgres in WebAssembly with the real migrations and row-level security),
+ * then drives the portal in headless Chromium using the official supabase-js
+ * client. It covers signing in, loading a school, saving changes, payments and
+ * reversals, inviting staff, a teacher creating their own account, and what
+ * each role can and cannot see. It checks the database itself, not just the
+ * screen.
+ *
+ * Run from the repo root:
+ *   npm install --no-save playwright @electric-sql/pglite
+ *   npx playwright install chromium
+ *   node tests/online.e2e.mjs
+ *
+ * Exits with code 1 if any check fails.
+ */
+import { createRequire } from 'node:module';
+import { startStandIn } from '../supabase/dev/server.mjs';
+
+const require = createRequire(import.meta.url);
+let chromium;
+try { ({ chromium } = require('playwright')); } catch (_) { ({ chromium } = require('playwright-core')); }
+
+const results = [];
+const errors = [];
+async function step(name, fn) {
+  try { await fn(); results.push(true); console.log('PASS  ' + name); }
+  catch (e) { results.push(false); console.log('FAIL  ' + name + '\n      ' + String(e.message).split('\n')[0]); }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+
+// ── A school on the stand-in: a director, an invited bursar, one P.7 learner ──
+const S = await startStandIn({ port: 0 });
+const DIRECTOR = 'director@kampalahill.ug', BURSAR = 'bursar@kampalahill.ug', TEACHER = 'ruth.teacher@kampalahill.ug';
+const directorId = await S.addUser(DIRECTOR, 'Director2026');
+const school = (await S.sql("select public.create_school('Kampala Hill Primary & Secondary', 'Sarah Namubiru') as id", [], DIRECTOR)).rows[0].id;
+await S.sql("insert into public.invites (school_id, email, role, display_name) values ($1, $2, 'bursary', 'Grace Atim')", [school, BURSAR], DIRECTOR);
+const bursarId = await S.addUser(BURSAR, 'Bursar2026');
+await S.sql("insert into public.learners (school_id, id, admission_no, name, class, level) values ($1, 'KHP/007', 'KHP/007', 'Okello Peter', 'P.7', 'Primary')", [school], DIRECTOR);
+const one = async (text, params = []) => (await S.sql(text, params)).rows[0];
+const count = async (table, extra = '', params = []) => Number((await one(`select count(*) as n from public.${table} where school_id = $1 ${extra}`, [school, ...params])).n);
+
+const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+const context = await browser.newContext({ serviceWorkers: 'block' });
+const page = await context.newPage();
+page.setDefaultTimeout(10000);
+page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
+
+const tab = name => page.click(`.nav-tab[data-tab="${name}"]`);
+const app = fn => page.evaluate(fn);
+const saved = async () => { const r = await page.evaluate(() => SYNC.flush()); assert(r.ok, 'not saved: ' + r.error); };
+async function signIn(email, password) {
+  await page.fill('#loginUsername', email);
+  await page.fill('#loginPassword', password);
+  await page.click('#loginBtn');
+}
+async function signOut() {
+  await page.click('#logoutBtn');
+  await page.click('#mdOk');
+  await page.waitForSelector('#authScreen', { state: 'visible' });
+}
+
+try {
+  await step('the online edition opens on an email sign-in screen', async () => {
+    await page.goto(S.url + '/');
+    await page.waitForFunction(() => document.getElementById('loginBtn').textContent === 'Sign in');
+    assert(await app(() => PORTAL.edition) === 'online', 'edition is not online');
+    assert(await page.textContent('label[for="loginUsername"]') === 'Email address', 'label is not "Email address"');
+    assert(await page.isVisible('#signUpBtn') && await page.isVisible('#forgotPwdBtn'), 'account links missing');
+  });
+
+  await step('a wrong password is refused', async () => {
+    await signIn(DIRECTOR, 'wrong-password1');
+    await page.waitForSelector('#authError', { state: 'visible' });
+    assert(/Incorrect email or password/.test(await page.textContent('#authError')), await page.textContent('#authError'));
+  });
+
+  await step('the director signs in and the school opens', async () => {
+    await signIn(DIRECTOR, 'Director2026');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    assert(await page.textContent('#roleChip') === 'Executive', 'role chip ' + await page.textContent('#roleChip'));
+    assert(await page.textContent('#userName') === 'Sarah Namubiru', 'user name ' + await page.textContent('#userName'));
+    const names = await app(() => window.KSA.state().students.map(s => s.name));
+    assert(JSON.stringify(names) === '["Okello Peter"]', 'learners ' + JSON.stringify(names));
+    assert(await page.isVisible('#syncStatus'), 'save indicator hidden');
+    assert(!(await page.isVisible('#resetCard')) && !(await page.isVisible('#importLabel')), 'device-only tools shown online');
+  });
+
+  await step('registering a learner saves the learner, the term and the bill to the database', async () => {
+    await tab('admin');
+    await page.fill('#registerForm input[name="admissionNo"]', 'KHS/2026/001');
+    await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
+    await page.selectOption('#classSelect', 'S.4');
+    await page.fill('#registerForm input[name="guardian"]', '0772123456');
+    await page.fill('#registerForm input[name="fee"]', '600000');
+    await page.selectOption('#registerForm select[name="gender"]', 'Female');
+    await page.click('#registerForm button[type="submit"]');
+    await saved();
+    assert(await count('learners') === 2, 'learners in database: ' + await count('learners'));
+    assert(await count('terms') === 1, 'terms in database: ' + await count('terms'));
+    const bill = await one("select total, term_id from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(bill && Number(bill.total) === 600000 && bill.term_id, 'bill ' + JSON.stringify(bill));
+    assert(await page.textContent('#syncStatus') === 'All changes saved', 'indicator: ' + await page.textContent('#syncStatus'));
+  });
+
+  await step('a payment is stored in the database, signed by the director', async () => {
+    await tab('payments');
+    await page.selectOption('#paymentStudent', 'KHS/2026/001');
+    await page.fill('#paymentForm input[name="amount"]', '250000');
+    await page.fill('#paymentForm input[name="reference"]', 'MoMo TID 998877');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForFunction(() => window.KSA.state().payments.length === 1 && SYNC.status().status === 'saved');
+    const p = await one('select amount, recorded_by, recorded_by_name, method from public.payments where school_id = $1', [school]);
+    assert(p && Number(p.amount) === 250000, 'payment row ' + JSON.stringify(p));
+    assert(p.recorded_by === directorId && p.recorded_by_name === 'Sarah Namubiru', 'signed by ' + p.recorded_by_name);
+  });
+
+  await step('reversing a payment goes through the database and the audit trail', async () => {
+    await page.click('#paymentsTableBody button[data-act="voidPayment"]');
+    await page.fill('#mdInput', 'Entered twice');
+    await page.click('#mdOk');
+    await page.waitForFunction(() => window.KSA.state().payments[0].void && SYNC.status().status === 'saved');
+    const p = await one('select void, void_reason, voided_by from public.payments where school_id = $1', [school]);
+    assert(p.void === true && p.void_reason === 'Entered twice' && p.voided_by === 'Sarah Namubiru', 'void ' + JSON.stringify(p));
+    assert(await count('audit_log', "and action = 'PAYMENT_VOID'") === 1, 'no PAYMENT_VOID audit entry');
+    assert(await app(() => window.KSA.state().students.find(s => s.id === 'KHS/2026/001').paid) === 0, 'balance not restored');
+  });
+
+  await step('without internet, recording a payment is refused and nothing is saved', async () => {
+    await context.setOffline(true);
+    let msg;
+    try {
+      await page.selectOption('#paymentStudent', 'KHS/2026/001');
+      await page.fill('#paymentForm input[name="amount"]', '1000');
+      await page.click('#paymentForm button[type="submit"]');
+      await page.waitForFunction(() => /internet connection/.test(document.getElementById('toastHost').textContent));
+      msg = await page.textContent('#toastHost');
+    } finally { await context.setOffline(false); }
+    assert(/needs an internet connection/.test(msg), 'message: ' + msg);
+    assert(await app(() => window.KSA.state().payments.length) === 1, 'payment kept locally while offline');
+    assert(await count('payments') === 1, 'payment reached the database');
+  });
+
+  await step('after a reload the school opens again from the database', async () => {
+    await page.reload();
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    const st = await app(() => ({ learners: window.KSA.state().students.length, payments: window.KSA.state().payments.length, voided: window.KSA.state().payments[0] && window.KSA.state().payments[0].void }));
+    assert(st.learners === 2 && st.payments === 1 && st.voided === true, 'after reload ' + JSON.stringify(st));
+  });
+
+  await step('the director invites a teacher for S.4', async () => {
+    await tab('admin');
+    await page.click('#userMgmtCard summary');
+    assert(!(await page.isVisible('#editPassword')), 'password box shown online');
+    await page.fill('#editUsername', TEACHER);
+    await page.fill('#editDisplayName', 'Ruth Nakato');
+    await page.selectOption('#editRole', 'teacher');
+    await page.check('#editAssignedClasses input[value="S.4"]');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForFunction(() => /Invited/.test(document.getElementById('usersList').textContent));
+    const inv = await one('select role, assigned_classes from public.invites where school_id = $1 and email = $2', [school, TEACHER]);
+    assert(inv && inv.role === 'teacher' && JSON.stringify(inv.assigned_classes) === '["S.4"]', 'invite ' + JSON.stringify(inv));
+  });
+
+  await step('signing out leaves nothing of the school in memory', async () => {
+    await signOut();
+    assert(await app(() => window.KSA.state().students.length) === 0, 'learners still in memory');
+  });
+
+  await step('the teacher creates their own account and joins as an S.4 teacher', async () => {
+    await page.click('#signUpBtn');
+    await page.fill('#suEmail', TEACHER);
+    await page.fill('#suPwd', 'Teacher2026');
+    await page.fill('#suConfirm', 'Teacher2026');
+    await page.click('#suSave');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
+    assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    const names = await app(() => window.KSA.state().students.map(s => s.name));
+    assert(JSON.stringify(names) === '["Nakato Sarah"]', 'teacher sees ' + JSON.stringify(names));
+    assert(await app(() => window.KSA.state().payments.length + window.KSA.state().invoices.length) === 0, 'teacher received money records');
+  });
+
+  await step("the teacher's register reaches the database", async () => {
+    await tab('register');
+    await page.selectOption('#regClass', 'S.4');
+    await page.click('#registerRoster .reg-row[data-student="KHS/2026/001"] [data-set-status="A"]');
+    await page.click('#regSaveBtn');
+    await saved();
+    const reg = await one("select class, records from public.registers where school_id = $1", [school]);
+    assert(reg && reg.class === 'S.4' && reg.records.some(r => r.studentId === 'KHS/2026/001' && r.status === 'A'), 'register ' + JSON.stringify(reg));
+  });
+
+  await step('the bursar sees money but no marks, and records a payment', async () => {
+    await signOut();
+    await signIn(BURSAR, 'Bursar2026');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    assert(await page.textContent('#roleChip') === 'Bursary', 'role ' + await page.textContent('#roleChip'));
+    assert(await app(() => window.KSA.state().payments.length) === 1, 'bursar cannot see the ledger');
+    await tab('payments');
+    await page.selectOption('#paymentStudent', 'KHS/2026/001');
+    await page.fill('#paymentForm input[name="amount"]', '100000');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForFunction(() => window.KSA.state().payments.length === 2 && SYNC.status().status === 'saved');
+    const p = await one('select recorded_by from public.payments where school_id = $1 and amount = 100000', [school]);
+    assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
+  });
+
+  await step('"Forgot your password?" sends a reset link', async () => {
+    await signOut();
+    await page.click('#forgotPwdBtn');
+    await page.fill('#fpEmail', BURSAR);
+    await page.click('#fpSend');
+    await page.waitForFunction(() => !document.getElementById('fpEmail'));
+    assert(S.outbox.some(m => m.to === BURSAR && m.kind === 'reset'), 'no reset link sent');
+  });
+
+  await step('no runtime errors', async () => {
+    assert(!errors.length, errors.join(' | '));
+  });
+} finally {
+  await browser.close();
+  await S.close();
+}
+
+const passed = results.filter(Boolean).length;
+console.log(`\n${passed}/${results.length} online checks passed`);
+process.exit(passed === results.length ? 0 : 1);

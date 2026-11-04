@@ -158,7 +158,7 @@ create table public.invoices (
   discount     bigint not null default 0,
   total        bigint not null default 0 check (total >= 0),
   installments jsonb not null default '[]'::jsonb,
-  created_on   date not null default current_date,
+  created_on   date,                -- when the bill was raised (older offline records may not say)
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
   primary key (school_id, id),
@@ -199,7 +199,7 @@ create table public.marks (
   exam_set    text not null default 'EOT' check (exam_set in ('BOT','MOT','EOT')),
   subject     text not null check (length(trim(subject)) between 1 and 60),
   score       numeric(5,2) not null check (score between 0 and 100),
-  recorded_on date not null default current_date,
+  recorded_on date,                 -- when the mark was entered (older offline records may not say)
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
   primary key (school_id, id),

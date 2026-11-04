@@ -132,9 +132,19 @@ function can(permission) { return AUTH.can(permission); }
 function hasTab(tab) { return AUTH.hasTabAccess(tab); }
 
 /* ── Persistence ───────────────────────────────────────────────────────── */
+/* Where the school's data lives: this device (offline edition) or the school
+   database (online edition, through sync.js). Everything else is the same. */
+const ONLINE_EDITION = !!(window.PORTAL && window.PORTAL.online);
+const STORE = ONLINE_EDITION
+  ? { read: () => SYNC.read(), write: () => SYNC.schedule() }
+  : {
+      read: () => localStorage.getItem('kampala_school_portal_state'),
+      write: data => localStorage.setItem('kampala_school_portal_state', JSON.stringify(data)),
+    };
+
 function loadState() {
   try {
-    const raw = localStorage.getItem('kampala_school_portal_state');
+    const raw = STORE.read();
     state = raw ? migrate(JSON.parse(raw)) : freshState();
     if (!raw) state.programs = DEFAULT_PROGRAMS.map(p => ({ ...p }));
   } catch (_) {
@@ -147,7 +157,7 @@ function loadState() {
 }
 function saveState() {
   try {
-    localStorage.setItem('kampala_school_portal_state', JSON.stringify(state));
+    STORE.write(state);
     MODULES.forEach(m => { if (m.afterSave) try { m.afterSave(); } catch (_) {} });
     return true;
   } catch (err) {
@@ -156,6 +166,29 @@ function saveState() {
     return false;
   }
 }
+/* Save and wait for the result. Offline this is immediate; online it waits
+   until the school database has accepted the change. Used for money, where a
+   receipt must never be shown for a payment that was not stored. */
+async function persistNow() {
+  if (!ONLINE_EDITION) return saveState() ? { ok: true } : { ok: false, error: 'Could not save on this device.' };
+  saveState();
+  return SYNC.flush();
+}
+/* Money needs a connection in the online edition, so every office sees the
+   same balances. Returns true (and explains) when the action must wait. */
+/* Multi-row billing changes online: save, and say so plainly if the school
+   database did not take them (they are retried when the connection is back). */
+async function saveOrWarn(what) {
+  const saved = await persistNow();
+  if (!saved.ok) toast(`${what} is not saved yet: ${saved.error} It will be retried automatically.`, 'error');
+  return saved.ok;
+}
+function needsConnection(what) {
+  if (!ONLINE_EDITION || navigator.onLine) return false;
+  toast(`${what} needs an internet connection, so every office sees the same balances. Reconnect and try again.`, 'error');
+  return true;
+}
+
 function migrate(data) {
   if (!data || typeof data !== 'object') return freshState();
   if (!data.version) data.version = 1;
@@ -330,30 +363,48 @@ function updateStudent(id, f) {
   toast('Updated ' + s.name + '.', 'success');
 }
 
-function recordPayment(f) {
+async function recordPayment(f) {
   if (!can('canRecordPayment')) return toast('You do not have permission to record payments.', 'error');
   const s = state.students.find(x => x.id === f.studentId);
   if (!s) return toast('Choose a student first.', 'error');
   const amount = Number(f.amount);
   if (!amount || amount <= 0) return toast('Enter a valid amount.', 'error');
+  if (needsConnection('Recording a payment')) return;
   const date = f.date || todayISO();
-  state.payments.push({
+  const payment = {
     id: 'P' + uid(), studentId: s.id, amount, method: f.method || 'Cash',
     reference: (f.reference || '').trim(), date,
     recordedBy: currentSession.userId, recordedByName: currentSession.displayName,
     ts: nowISO(), void: false,
-  });
-  recomputePaid(); saveState(); renderAll();
+  };
+  state.payments.push(payment);
+  recomputePaid();
+  const saved = await persistNow();
+  if (!saved.ok) {
+    state.payments = state.payments.filter(x => x !== payment);
+    recomputePaid(); renderAll();
+    return toast('The payment was NOT recorded. ' + saved.error, 'error');
+  }
+  renderAll();
   AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${f.method || 'Cash'}`);
   toast('Recorded ' + fmtMoney(amount) + ' for ' + s.name + '.', 'success');
 }
 
-function voidPayment(id, reason) {
+async function voidPayment(id, reason) {
   if (!can('canVoidPayment')) return toast('You do not have permission to reverse payments.', 'error');
   const p = state.payments.find(x => x.id === id);
   if (!p || p.void) return;
+  if (ONLINE_EDITION && !(reason || '').trim()) return toast('Give a reason for the reversal.', 'error');
+  if (needsConnection('Reversing a payment')) return;
   p.void = true; p.voidReason = (reason || '').trim(); p.voidedBy = currentSession.displayName; p.voidedAt = nowISO();
-  recomputePaid(); saveState(); renderAll();
+  recomputePaid();
+  const saved = await persistNow();
+  if (!saved.ok) {
+    p.void = false; p.voidReason = ''; p.voidedBy = ''; p.voidedAt = '';
+    recomputePaid(); renderAll();
+    return toast('The payment was NOT reversed. ' + saved.error, 'error');
+  }
+  renderAll();
   AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)} · ${p.voidReason}`);
   toast('Payment reversed.', 'warn');
 }
@@ -363,7 +414,9 @@ async function deleteStudent(id) {
   const s = state.students.find(x => x.id === id); if (!s) return;
   const ok = await confirmDialog({
     title: 'Remove student',
-    message: `Remove ${s.name} (${s.id}) and all related payments, attendance and conduct records? This cannot be undone.`,
+    message: ONLINE_EDITION
+      ? `Remove ${s.name} (${s.id}) from the school's lists? Their bills and payments stay in the school's records.`
+      : `Remove ${s.name} (${s.id}) and all related payments, attendance and conduct records? This cannot be undone.`,
     confirmLabel: 'Remove student', danger: true,
   });
   if (!ok) return;
@@ -1180,11 +1233,16 @@ function renderUsersList() {
   const users = AUTH.getUsers();
   const colors = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
   const labels = { exec: 'Executive', admin: 'Administrator', bursary: 'Bursary', coach: 'Sports', teacher: 'Teacher' };
+  if (ONLINE_EDITION) {
+    box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || escapeHtml(u.role)}</span></div>${u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : ''}</div><div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited — not joined yet</span>' : (u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-neutral">Access off</span>')}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No staff yet. Add someone below.</p>';
+    return;
+  }
   box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">@${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || u.role}</span></div><div class="card-desc">Last sign-in: ${u.lastLogin ? u.lastLogin.slice(0, 16).replace('T', ' ') : 'Never'}${u.role === 'teacher' ? ' · Classes: ' + escapeHtml((u.assignedClasses || []).join(', ') || 'none yet') : ''}</div></div><div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Password reset</span>' : '<span class="badge badge-success">Active</span>'}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No user accounts found.</p>';
 }
 function loadUserForEdit(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
   el('editUserId').value = u.id; el('editUsername').value = u.username; el('editDisplayName').value = u.displayName; el('editRole').value = u.role; el('editPassword').value = '';
+  if (ONLINE_EDITION) el('editUsername').readOnly = true;   // an account's email cannot be changed here
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = (u.assignedClasses || []).includes(cb.value); });
   toggleAssignedClasses();
   el('userEditForm').closest('details').open = true;
@@ -1192,6 +1250,7 @@ function loadUserForEdit(userId) {
 }
 function clearUserEditForm() {
   ['editUserId', 'editUsername', 'editDisplayName', 'editPassword'].forEach(id => el(id).value = '');
+  el('editUsername').readOnly = false;
   el('editRole').value = 'admin';
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = false; });
   toggleAssignedClasses();
@@ -1214,7 +1273,7 @@ async function handleUserEditSubmit(e) {
   const displayName = el('editDisplayName').value.trim();
   const role = el('editRole').value;
   const password = el('editPassword').value;
-  if (!username || !displayName) return toast('Username and display name are required.', 'error');
+  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Email address and name are required.' : 'Username and display name are required.', 'error');
   const data = { username, displayName, role };
   data.assignedClasses = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
   if (role === 'teacher' && !data.assignedClasses.length) return toast('Tick at least one class for this teacher.', 'error');
@@ -1227,11 +1286,19 @@ async function handleUserEditSubmit(e) {
   }
   const res = await AUTH.upsertUser(data);
   if (!res.ok) return toast(res.error, 'error');
-  toast(id ? 'User updated.' : 'User created.', 'success');
+  if (ONLINE_EDITION && res.invited) toast(`${displayName} is invited. Ask them to open the portal, choose "First time here?" and use ${username}.`, 'success');
+  else toast(id ? 'User updated.' : 'User created.', 'success');
   clearUserEditForm(); renderUsersList(); renderAuditLog();
 }
 async function resetUserPwd(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
+  if (ONLINE_EDITION) {
+    if (!await confirmDialog({ title: 'Send a password-reset link', message: `Email a link to ${u.username} so ${u.displayName} can choose a new password?`, confirmLabel: 'Send link' })) return;
+    const sent = await AUTH.adminResetPassword(userId);
+    if (!sent.ok) return toast(sent.error, 'error');
+    renderAuditLog();
+    return toast(`Reset link sent to ${u.username}.`, 'success');
+  }
   const pwd = await promptDialog({ title: 'Reset password', label: `Temporary password for ${u.displayName} (min 8 chars, letters + numbers)`, type: 'text' });
   if (!pwd) return;
   const res = await AUTH.adminResetPassword(userId, pwd);
@@ -1241,10 +1308,13 @@ async function resetUserPwd(userId) {
 }
 async function confirmDeleteUser(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
-  if (!await confirmDialog({ title: 'Delete account', message: `Delete the account for ${u.displayName}? This cannot be undone.`, confirmLabel: 'Delete account', danger: true })) return;
-  const res = AUTH.deleteUser(userId);
+  const msg = ONLINE_EDITION
+    ? (u.pending ? `Cancel the invitation for ${u.displayName}?` : `Remove ${u.displayName} from the school? They will no longer be able to sign in to it.`)
+    : `Delete the account for ${u.displayName}? This cannot be undone.`;
+  if (!await confirmDialog({ title: ONLINE_EDITION ? 'Remove staff member' : 'Delete account', message: msg, confirmLabel: ONLINE_EDITION ? (u.pending ? 'Cancel invitation' : 'Remove') : 'Delete account', danger: true })) return;
+  const res = await AUTH.deleteUser(userId);
   if (!res.ok) return toast(res.error, 'error');
-  toast('Account deleted.', 'success'); renderUsersList(); renderAuditLog();
+  toast(ONLINE_EDITION ? 'Done.' : 'Account deleted.', 'success'); renderUsersList(); renderAuditLog();
 }
 function renderAuditLog() {
   const box = el('auditLogBody'); if (!box) return;
@@ -1506,6 +1576,7 @@ function startSessionTimer() { if (sessionTimer) clearInterval(sessionTimer); se
 
 function updateBackupBanner() {
   const banner = el('backupBanner'); if (!banner) return;
+  if (ONLINE_EDITION) { banner.style.display = 'none'; return; }
   let last = null;
   try { last = localStorage.getItem('ksa_last_backup'); } catch (_) {}
   if (!can('canExport')) { banner.style.display = 'none'; return; }
@@ -1523,7 +1594,11 @@ async function handleLogin(e) {
   btn.disabled = true; btn.textContent = 'Signing in…'; err.style.display = 'none';
   const res = await AUTH.login(el('loginUsername').value, el('loginPassword').value);
   btn.disabled = false; btn.textContent = 'Sign in';
-  if (!res.ok) { err.style.display = 'block'; err.textContent = res.error; return; }
+  if (!res.ok) {
+    err.style.display = 'block'; err.textContent = res.error;
+    if (res.noSchool && typeof offerNewSchool === 'function') offerNewSchool();
+    return;
+  }
   currentSession = res.session;
   el('loginPassword').value = '';
   initApp();
@@ -1532,6 +1607,7 @@ async function handleLogout() {
   if (!await confirmDialog({ title: 'Sign out', message: 'Sign out of the portal?', confirmLabel: 'Sign out' })) return;
   stopSessionTimer();
   AUTH.logout(); currentSession = null;
+  if (ONLINE_EDITION) { state = freshState(); closeModal(); }   // nothing of the school stays on a shared computer
   el('appShell').classList.remove('visible');
   el('authScreen').style.display = 'grid';
 }
@@ -1594,7 +1670,9 @@ function initApp() {
   document.documentElement.style.setProperty('--role', perms.color);
 
   el('exportBtn').style.display = can('canExport') ? '' : 'none';
-  el('importLabel').style.display = can('canImport') ? '' : 'none';
+  // Restoring a device backup, daily snapshots and "erase all data" belong to
+  // the offline edition; online, the school database is the record.
+  el('importLabel').style.display = can('canImport') && !ONLINE_EDITION ? '' : 'none';
 
   buildNav(perms.tabs);
 
@@ -1603,7 +1681,7 @@ function initApp() {
   show('regStudentCard', can('canRegisterStudent'));
   show('recPaymentCard', can('canRecordPayment'));
   show('addProgramCard', can('canAddProgram'));
-  show('resetCard', can('canReset'));
+  show('resetCard', can('canReset') && !ONLINE_EDITION);
   show('userMgmtCard', can('canManageUsers'));
   show('auditLogCard', can('canManageUsers'));
   show('settingsCard', can('canManageSettings'));
@@ -1614,11 +1692,12 @@ function initApp() {
   show('feeStructCard', can('canManageTerms'));
   show('bandsCard', can('canManageSettings'));
   show('importCard', can('canRegisterStudent'));
-  show('snapshotsBtn', can('canImport'));
+  show('snapshotsBtn', can('canImport') && !ONLINE_EDITION);
   show('exportDefaultersBtn2', can('canExport'));
   show('marksheetCard', can('canAddAcademic'));
   show('commentsCard', can('canAddAcademic'));
-  show('adminImportLabel', can('canImport'));
+  show('adminImportLabel', can('canImport') && !ONLINE_EDITION);
+  show('syncStatus', ONLINE_EDITION);
 
   setupBindings();
   renderAll();
@@ -1638,12 +1717,124 @@ function registerActivityRefresh() {
   }, { passive: true }));
 }
 
+/* =========================================================================
+   Online edition: sign-in extras and start-up (unused offline)
+   ========================================================================= */
+function applyEditionTexts() {
+  const edition = ONLINE_EDITION ? 'online' : 'offline';
+  document.querySelectorAll('[data-edition]').forEach(e => { e.style.display = e.dataset.edition === edition ? '' : 'none'; });
+  if (!ONLINE_EDITION) return;
+  const user = el('loginUsername');
+  user.type = 'email'; user.autocomplete = 'email'; user.name = 'email';
+  const label = document.querySelector('label[for="loginUsername"]'); if (label) label.textContent = 'Email address';
+  const sub = document.querySelector('.auth-card .auth-sub'); if (sub) sub.textContent = 'Sign in with the email address your school registered for you.';
+  // Staff are added by email address and choose their own password.
+  const uLabel = el('editUsername') && el('editUsername').previousElementSibling;
+  if (uLabel) uLabel.textContent = 'Email address';
+  if (el('editUsername')) { el('editUsername').type = 'email'; el('editUsername').placeholder = 'name@yourschool.ug'; }
+  if (el('editPassword')) el('editPassword').parentElement.style.display = 'none';
+  const desc = document.querySelector('#userMgmtCard .card-desc');
+  if (desc) desc.textContent = 'Staff who can sign in to this school. Add someone by email address; they then create their own password with "First time here?".';
+}
+
+function authModalError(root, id, message) { const e = root.querySelector(id); e.style.display = message ? 'block' : 'none'; e.textContent = message || ''; }
+
+function openSignUp() {
+  openModal({
+    title: 'Create your staff account',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Use the email address your school's director added for you. We will email you a link to confirm it.</p>
+      <div class="field"><label for="suEmail">Email address</label><input class="input" type="email" id="suEmail" autocomplete="email"></div>
+      <div class="field"><label for="suPwd">Choose a password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="suPwd" autocomplete="new-password"></div>
+      <div class="field"><label for="suConfirm">Confirm password</label><input class="input" type="password" id="suConfirm" autocomplete="new-password"></div>
+      <div id="suError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="suSave">Create account</button>`,
+    onOpen(root) {
+      const typed = el('loginUsername').value.trim(); if (typed) root.querySelector('#suEmail').value = typed;
+      root.querySelector('#suSave').addEventListener('click', async () => {
+        const email = root.querySelector('#suEmail').value.trim().toLowerCase();
+        const pwd = root.querySelector('#suPwd').value;
+        if (pwd !== root.querySelector('#suConfirm').value) return authModalError(root, '#suError', 'The passwords do not match.');
+        const btn = root.querySelector('#suSave'); btn.disabled = true;
+        const res = await AUTH.signUp(email, pwd);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#suError', res.error);
+        closeModal();
+        el('loginUsername').value = email;
+        if (res.confirmEmail) { toast(`Account created. Open the link we emailed to ${email}, then sign in.`, 'success'); return; }
+        el('loginPassword').value = pwd;
+        el('loginForm').requestSubmit();
+      });
+    },
+  });
+}
+
+function openForgotPassword() {
+  openModal({
+    title: 'Reset your password',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Enter your email address and we will send you a link to choose a new password.</p>
+      <div class="field"><label for="fpEmail">Email address</label><input class="input" type="email" id="fpEmail" autocomplete="email"></div>
+      <div id="fpError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="fpSend">Send link</button>`,
+    onOpen(root) {
+      const typed = el('loginUsername').value.trim(); if (typed) root.querySelector('#fpEmail').value = typed;
+      root.querySelector('#fpSend').addEventListener('click', async () => {
+        const email = root.querySelector('#fpEmail').value.trim();
+        const btn = root.querySelector('#fpSend'); btn.disabled = true;
+        const res = await AUTH.sendPasswordReset(email);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#fpError', res.error);
+        closeModal();
+        toast(`If ${email} has an account, a reset link is on its way. Check your email.`, 'success');
+      });
+    },
+  });
+}
+
+/* Shown after following a password-reset link from the email. */
+function openSetNewPassword() {
+  openModal({
+    title: 'Choose a new password',
+    locked: true,
+    bodyHtml: `<div class="field"><label for="npPwd">New password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="npPwd" autocomplete="new-password"></div>
+      <div class="field"><label for="npConfirm">Confirm new password</label><input class="input" type="password" id="npConfirm" autocomplete="new-password"></div>
+      <div id="npError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-primary btn-block" id="npSave">Save new password</button>`,
+    onOpen(root) {
+      root.querySelector('#npSave').addEventListener('click', async () => {
+        const pwd = root.querySelector('#npPwd').value;
+        if (pwd !== root.querySelector('#npConfirm').value) return authModalError(root, '#npError', 'The passwords do not match.');
+        const res = await AUTH.setNewPassword(pwd);
+        if (!res.ok) return authModalError(root, '#npError', res.error);
+        closeModal();
+        AUTH.logout();
+        toast('Password changed. Sign in with your new password.', 'success');
+      });
+    },
+  });
+}
+
+/* Connect to the school database and pick up an earlier sign-in. */
+async function startOnline() {
+  applyEditionTexts();
+  el('authScreen').style.display = 'grid';
+  const btn = el('loginBtn'), err = el('authError');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  let res;
+  try { res = await ONLINE.start(); } catch (e) { res = { signedIn: false, error: e.message }; }
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if (res.signedIn) { currentSession = AUTH.getSession(); initApp(); return; }
+  if (res.error) { err.style.display = 'block'; err.textContent = res.error; }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   if (el('brandCrest')) el('brandCrest').innerHTML = crestSVG();
   if (el('topCrest')) el('topCrest').innerHTML = crestSVG();
   el('loginForm').addEventListener('submit', handleLogin);
   el('changePwdBtn').addEventListener('click', () => openChangePwd(false));
   el('logoutBtn').addEventListener('click', handleLogout);
+  if (el('forgotPwdBtn')) el('forgotPwdBtn').addEventListener('click', openForgotPassword);
+  if (el('signUpBtn')) el('signUpBtn').addEventListener('click', openSignUp);
+  window.addEventListener('portal:password-recovery', openSetNewPassword);
   el('navBar').addEventListener('click', e => { const b = e.target.closest('.nav-tab'); if (b) switchTab(b.dataset.tab); });
   el('sessionExtendBtn').addEventListener('click', () => { AUTH.refreshSession(); updateSessionBar(); });
   document.addEventListener('click', handleDelegatedClick);
@@ -1669,6 +1860,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Show the school's own name, logo and colours on the sign-in screen.
   try { loadState(); applySettings(); applyBranding(); } catch (_) {}
 
+  if (ONLINE_EDITION) { startOnline(); return; }
   const session = AUTH.getSession();
   if (session) { currentSession = session; initApp(); }
   else el('authScreen').style.display = 'grid';

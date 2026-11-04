@@ -23,6 +23,9 @@ jobs:
       - name: Database security tests (row-level security)
         run: node supabase/tests/rls.test.mjs
 
+      - name: Online edition tests (local stand-in for Supabase)
+        run: node tests/online.e2e.mjs
+
       - name: Serve the app
         run: |
           python3 -m http.server 8099 &

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self'; base-uri 'none'; form-action 'self'">
 <meta name="theme-color" content="#0b5d3b">
 <meta name="description" content="Offline-first, role-based school management portal for Ugandan schools and academies.">
 <link rel="manifest" href="manifest.json">
@@ -48,7 +48,11 @@
         </div>
         <button class="btn btn-primary btn-block" type="submit" id="loginBtn">Sign in</button>
       </form>
-      <p class="auth-sub" style="margin-top:22px;font-size:12px">First-time setup? Sign in with the credentials supplied to your administrator. You will be asked to set a private password immediately.</p>
+      <div class="auth-links" data-edition="online" style="display:none">
+        <button class="btn btn-ghost btn-sm" type="button" id="forgotPwdBtn">Forgot your password?</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="signUpBtn">First time here? Create your account</button>
+      </div>
+      <p class="auth-sub" data-edition="offline" style="margin-top:22px;font-size:12px">First-time setup? Sign in with the credentials supplied to your administrator. You will be asked to set a private password immediately.</p>
     </div>
   </div>
 </div>
@@ -63,6 +67,7 @@
         <span class="t-sub" data-school-motto>Management Portal</span>
       </div>
       <div class="topbar-spacer"></div>
+      <span class="sync-pill" id="syncStatus" role="status" aria-live="polite" style="display:none"></span>
       <span class="role-chip" id="roleChip">—</span>
       <div class="topbar-user"><div class="u-name" id="userName">—</div><div class="u-role" id="userRole">—</div></div>
       <button class="topbar-btn" id="exportBtn" style="display:none" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="tb-label">Backup</span></button>
@@ -578,7 +583,10 @@
 <div id="toastHost"></div>
 <div id="modalHost"></div>
 
+<script src="config.js"></script>
 <script src="auth.js"></script>
+<script src="sync.js"></script>
+<script src="auth-online.js"></script>
 <script src="app.js"></script>
 <script src="billing.js"></script>
 <script src="academics.js"></script>
