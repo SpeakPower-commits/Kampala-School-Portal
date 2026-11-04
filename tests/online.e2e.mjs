@@ -52,6 +52,21 @@ page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/
 const tab = name => page.click(`.nav-tab[data-tab="${name}"]`);
 const app = fn => page.evaluate(fn);
 const saved = async () => { const r = await page.evaluate(() => SYNC.flush()); assert(r.ok, 'not saved: ' + r.error); };
+// Wait until a check run inside the page comes true. This polls with
+// page.evaluate instead of page.waitForFunction: some Playwright versions run
+// waitForFunction's check as eval inside the page, which the portal's
+// Content-Security-Policy (script-src 'self') rightly forbids.
+async function until(check, timeout = 10000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    let ok = false;
+    try { ok = await page.evaluate(check); }
+    catch (e) { if (!/context was destroyed|navigat/i.test(e.message)) throw e; }   // mid-navigation: try again
+    if (ok) return;
+    if (Date.now() > end) throw new Error('timed out waiting for: ' + String(check).slice(6, 110));
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
 async function signIn(email, password) {
   await page.fill('#loginUsername', email);
   await page.fill('#loginPassword', password);
@@ -66,7 +81,7 @@ async function signOut() {
 try {
   await step('the online edition opens on an email sign-in screen', async () => {
     await page.goto(S.url + '/');
-    await page.waitForFunction(() => document.getElementById('loginBtn').textContent === 'Sign in');
+    await until(() => document.getElementById('loginBtn').textContent === 'Sign in');
     assert(await app(() => PORTAL.edition) === 'online', 'edition is not online');
     assert(await page.textContent('label[for="loginUsername"]') === 'Email address', 'label is not "Email address"');
     assert(await page.isVisible('#signUpBtn') && await page.isVisible('#forgotPwdBtn'), 'account links missing');
@@ -112,7 +127,7 @@ try {
     await page.fill('#paymentForm input[name="amount"]', '250000');
     await page.fill('#paymentForm input[name="reference"]', 'MoMo TID 998877');
     await page.click('#paymentForm button[type="submit"]');
-    await page.waitForFunction(() => window.KSA.state().payments.length === 1 && SYNC.status().status === 'saved');
+    await until(() => window.KSA.state().payments.length === 1 && SYNC.status().status === 'saved');
     const p = await one('select amount, recorded_by, recorded_by_name, method from public.payments where school_id = $1', [school]);
     assert(p && Number(p.amount) === 250000, 'payment row ' + JSON.stringify(p));
     assert(p.recorded_by === directorId && p.recorded_by_name === 'Sarah Namubiru', 'signed by ' + p.recorded_by_name);
@@ -122,7 +137,7 @@ try {
     await page.click('#paymentsTableBody button[data-act="voidPayment"]');
     await page.fill('#mdInput', 'Entered twice');
     await page.click('#mdOk');
-    await page.waitForFunction(() => window.KSA.state().payments[0].void && SYNC.status().status === 'saved');
+    await until(() => window.KSA.state().payments[0].void && SYNC.status().status === 'saved');
     const p = await one('select void, void_reason, voided_by from public.payments where school_id = $1', [school]);
     assert(p.void === true && p.void_reason === 'Entered twice' && p.voided_by === 'Sarah Namubiru', 'void ' + JSON.stringify(p));
     assert(await count('audit_log', "and action = 'PAYMENT_VOID'") === 1, 'no PAYMENT_VOID audit entry');
@@ -136,7 +151,7 @@ try {
       await page.selectOption('#paymentStudent', 'KHS/2026/001');
       await page.fill('#paymentForm input[name="amount"]', '1000');
       await page.click('#paymentForm button[type="submit"]');
-      await page.waitForFunction(() => /internet connection/.test(document.getElementById('toastHost').textContent));
+      await until(() => /internet connection/.test(document.getElementById('toastHost').textContent));
       msg = await page.textContent('#toastHost');
     } finally { await context.setOffline(false); }
     assert(/needs an internet connection/.test(msg), 'message: ' + msg);
@@ -160,7 +175,7 @@ try {
     await page.selectOption('#editRole', 'teacher');
     await page.check('#editAssignedClasses input[value="S.4"]');
     await page.click('#userEditForm button[type="submit"]');
-    await page.waitForFunction(() => /Invited/.test(document.getElementById('usersList').textContent));
+    await until(() => /Invited/.test(document.getElementById('usersList').textContent));
     const inv = await one('select role, assigned_classes from public.invites where school_id = $1 and email = $2', [school, TEACHER]);
     assert(inv && inv.role === 'teacher' && JSON.stringify(inv.assigned_classes) === '["S.4"]', 'invite ' + JSON.stringify(inv));
   });
@@ -204,7 +219,7 @@ try {
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '100000');
     await page.click('#paymentForm button[type="submit"]');
-    await page.waitForFunction(() => window.KSA.state().payments.length === 2 && SYNC.status().status === 'saved');
+    await until(() => window.KSA.state().payments.length === 2 && SYNC.status().status === 'saved');
     const p = await one('select recorded_by from public.payments where school_id = $1 and amount = 100000', [school]);
     assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
   });
@@ -214,7 +229,7 @@ try {
     await page.click('#forgotPwdBtn');
     await page.fill('#fpEmail', BURSAR);
     await page.click('#fpSend');
-    await page.waitForFunction(() => !document.getElementById('fpEmail'));
+    await until(() => !document.getElementById('fpEmail'));
     assert(S.outbox.some(m => m.to === BURSAR && m.kind === 'reset'), 'no reset link sent');
   });
 
@@ -269,7 +284,7 @@ try {
     };
     await page.setInputFiles('#onlineImportInput', { name: 'school-backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
     await page.click('#mdOk');
-    await page.waitForFunction(() => /balances match the backup/.test(document.getElementById('toastHost').textContent), null, { timeout: 30000 });
+    await until(() => /balances match the backup/.test(document.getElementById('toastHost').textContent), 30000);
     const msg = await page.textContent('#toastHost');
     assert(/All 3 learners/.test(msg) && /1 records? that belonged to no learner/.test(msg), 'message: ' + msg);
     const n = async t => Number((await one(`select count(*) as n from public.${t} where school_id = $1`, [newSchool])).n);
