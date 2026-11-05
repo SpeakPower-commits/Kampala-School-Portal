@@ -218,7 +218,7 @@ try {
     await page.check('#smsSandbox');
     await page.click('#smsSettingsForm button[type="submit"]');
     await until(() => /SMS is set up/.test(document.getElementById('smsStatus').textContent));
-    assert(/UGX 5000/.test(await page.textContent('#smsStatus')), 'balance not shown: ' + await page.textContent('#smsStatus'));
+    assert(/UGX 5,000/.test(await page.textContent('#smsStatus')), 'balance not shown: ' + await page.textContent('#smsStatus'));
     const row = await one('select at_username, sender_id, key_hint, key_cipher from public.school_sms where school_id = $1', [school]);
     assert(row && row.at_username === 'sandbox' && row.sender_id === 'KHILL' && row.key_hint === '0001' && !row.key_cipher.includes('atsk_test'), JSON.stringify(row));
     assert(!(await page.inputValue('#smsApiKey')), 'the key stayed in the form');
@@ -347,6 +347,14 @@ try {
     assert(sms.length === 1 && sms[0].message === 'Visiting day is Saturday: Parents are welcome from 10am. - Kampala Hill Primary & Secondary', JSON.stringify(sms));
     await saved();
     assert(await count('notices', "and audience = 'all'") === 1, 'the notice is not marked for parents');
+  });
+
+  await step('the SMS log lists the three runs that went out, and not the preview that was changed', async () => {
+    await tab('admin', 'sms');
+    await until(() => document.querySelectorAll('#smsLogBody tr td:nth-child(2)').length === 3);
+    const log = await page.textContent('#smsLogBody');
+    assert(/Notice to guardians/.test(log) && /Fee reminders/.test(log) && /Absence messages · S\.4/.test(log), log);
+    assert(await count('sms_campaigns') === 3, 'runs in the database: ' + await count('sms_campaigns'));
   });
 
   // ── The parent portal, as a guardian would use it on their phone ──

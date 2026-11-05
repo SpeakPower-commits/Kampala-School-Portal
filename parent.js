@@ -141,8 +141,9 @@ function can() { return false; }
     const n = st => days.filter(x => x.rec.status === st).length;
     const absent = days.filter(x => x.rec.status === 'A');
     return `<div class="card card-pad p-card"><div class="card-title">${escapeHtml(termLabel(t))}</div>
-      <div class="p-att"><div><strong>${n('P') + n('L')}</strong><span>present</span></div><div><strong id="pAbsent">${n('A')}</strong><span>absent</span></div>
+      <div class="p-att"><div><strong>${n('P') + n('L')}</strong><span>of ${days.length} days present</span></div><div><strong id="pAbsent">${n('A')}</strong><span>absent</span></div>
         <div><strong>${n('L')}</strong><span>late</span></div><div><strong>${n('E')}</strong><span>excused</span></div></div>
+      ${n('L') ? '<p class="card-desc" style="margin-top:8px">Days marked late count as days present, as on the report card.</p>' : ''}
       ${absent.length ? `<div class="form-label" style="margin-top:14px">Days absent</div><p style="margin:4px 0 0">${absent.map(x => escapeHtml(x.date)).join(', ')}</p>`
         : '<p class="card-desc" style="margin-top:12px">No absences this term.</p>'}</div>`;
   }

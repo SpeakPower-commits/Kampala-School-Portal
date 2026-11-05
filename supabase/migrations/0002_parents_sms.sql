@@ -302,13 +302,22 @@ begin
   return jsonb_build_object('campaign_id', v_id, 'recipients', v_count, 'parts', v_parts, 'sample', v_sample, 'skipped', v_skipped);
 end $$;
 
+-- Stop a run. A preview that was never sent is removed with its messages, so
+-- the log shows only what went out; a run that had started stays, as stopped.
 create or replace function public.sms_cancel_campaign(p_campaign uuid) returns void
 language plpgsql security definer set search_path = '' as $$
+declare v_status text;
 begin
-  update public.sms_campaigns c set status = 'cancelled', finished_at = now()
+  select c.status into v_status from public.sms_campaigns c
    where c.id = p_campaign and c.status in ('draft','sending')
-     and ((c.created_by = auth.uid() and public.is_member(c.school_id)) or public.has_role(c.school_id, array['exec','admin']));
+     and ((c.created_by = auth.uid() and public.is_member(c.school_id)) or public.has_role(c.school_id, array['exec','admin']))
+   for update;
   if not found then raise exception 'That message run cannot be stopped.' using errcode = 'P0002'; end if;
+  if v_status = 'draft' then
+    delete from public.sms_campaigns where id = p_campaign;   -- messages go with it (on delete cascade)
+  else
+    update public.sms_campaigns set status = 'cancelled', finished_at = now() where id = p_campaign;
+  end if;
 end $$;
 
 create or replace function public.sms_remove_settings(p_school uuid) returns void

@@ -509,6 +509,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .wn-title { flex: 1; }
   .wn-desc { display: none; }
   .wn-item .btn { margin-top: 0; }
+  /* A report card on a phone screen: tighter marks table, and no blank
+     "Initials" column (that is for pen on the printed copy). Print is unchanged. */
+  .modal .rc-marks .rc-ini { display: none; }
+  .modal .rc-marks { font-size: 11px !important; }
+  .modal .rc-marks th, .modal .rc-marks td { padding: 4px 3px !important; }
+  .modal .rc-marks th { letter-spacing: 0; }
 }
 
 /* =========================================================================

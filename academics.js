@@ -383,10 +383,10 @@ function reportCardHtml(s, termId, opts = {}) {
       <td><strong>Name:</strong> ${escapeHtml(s.name)}</td><td><strong>Admission no.:</strong> ${escapeHtml(s.id)}</td><td><strong>Class:</strong> ${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</td></tr><tr>
       <td><strong>Gender:</strong> ${escapeHtml(s.gender || '—')}</td><td><strong>Section:</strong> ${isBoarder(s) ? 'Boarding' : 'Day'}</td><td>${s.unebIndexNo ? `<strong>UNEB index:</strong> ${escapeHtml(s.unebIndexNo)}` : ''}</td></tr></table>
     <div style="${h2}">ACADEMIC PERFORMANCE</div>
-    <table style="width:100%;border-collapse:collapse;font-size:11.5px;font-family:Arial,sans-serif">
-      <thead style="background:#eef3f0"><tr><th style="${td};text-align:left">Subject</th><th style="${td}">BOT</th><th style="${td}">MOT</th><th style="${td}">EOT</th><th style="${td}">Final</th><th style="${td}">Grade</th><th style="${td};text-align:left">Remark</th><th style="${td}">Initials</th></tr></thead>
-      <tbody>${r.results.map(x => `<tr><td style="${td}">${escapeHtml(x.subject)}</td><td style="${td};text-align:center">${cell(x.BOT)}</td><td style="${td};text-align:center">${cell(x.MOT)}</td><td style="${td};text-align:center">${cell(x.EOT)}</td><td style="${td};text-align:center;font-weight:700">${x.final}</td><td style="${td};text-align:center;font-weight:700">${escapeHtml(x.grade)}</td><td style="${td}">${escapeHtml(x.remark)}</td><td style="${td}"></td></tr>`).join('') || `<tr><td colspan="8" style="${td};text-align:center;color:#888">No marks recorded this term</td></tr>`}</tbody>
-    </table>
+    <div style="overflow-x:auto"><table class="rc-marks" style="width:100%;border-collapse:collapse;font-size:11.5px;font-family:Arial,sans-serif">
+      <thead style="background:#eef3f0"><tr><th style="${td};text-align:left">Subject</th><th style="${td}">BOT</th><th style="${td}">MOT</th><th style="${td}">EOT</th><th style="${td}">Final</th><th style="${td}">Grade</th><th style="${td};text-align:left">Remark</th><th class="rc-ini" style="${td}">Initials</th></tr></thead>
+      <tbody>${r.results.map(x => `<tr><td style="${td}">${escapeHtml(x.subject)}</td><td style="${td};text-align:center">${cell(x.BOT)}</td><td style="${td};text-align:center">${cell(x.MOT)}</td><td style="${td};text-align:center">${cell(x.EOT)}</td><td style="${td};text-align:center;font-weight:700">${x.final}</td><td style="${td};text-align:center;font-weight:700">${escapeHtml(x.grade)}</td><td style="${td}">${escapeHtml(x.remark)}</td><td class="rc-ini" style="${td}"></td></tr>`).join('') || `<tr><td colspan="8" style="${td};text-align:center;color:#888">No marks recorded this term</td></tr>`}</tbody>
+    </table></div>
     <table style="width:100%;font-size:12px;font-family:Arial,sans-serif;margin-top:6px"><tr>
       <td><strong>Average:</strong> ${r.avg}%</td><td><strong>Result:</strong> ${escapeHtml(r.label)}</td>
       <td><strong>Position in class:</strong> ${pos ? `${ordinal(pos.pos)} of ${pos.of}` : '—'}</td>
@@ -402,7 +402,7 @@ function reportCardHtml(s, termId, opts = {}) {
       <td><strong>Balance owed:</strong> <span style="color:${acct.balance ? '#b91c1c' : '#047857'};font-weight:700">${fmtMoney(acct.balance)}</span></td>
       <td><strong>Next term begins:</strong> ${escapeHtml(nextBegins || '—')}</td>
       <td><strong>Next term fees:</strong> ${nextFees ? fmtMoney(nextFees) : '—'}</td></tr></table>
-    <div style="margin-top:22px;display:flex;justify-content:space-between;font-size:11px;font-family:Arial,sans-serif"><div>____________________<br>Class teacher</div><div>____________________<br>Head teacher${state.settings.headTeacher ? '<br>' + escapeHtml(state.settings.headTeacher) : ''}</div><div>____________________<br>Parent / guardian</div></div>
+    <div style="margin-top:22px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;font-size:11px;font-family:Arial,sans-serif"><div>____________________<br>Class teacher</div><div>____________________<br>Head teacher${state.settings.headTeacher ? '<br>' + escapeHtml(state.settings.headTeacher) : ''}</div><div>____________________<br>Parent / guardian</div></div>
     <p style="font-size:9.5px;color:#666;font-family:Arial,sans-serif;margin-top:10px">Grading: ${bands.map(b => `${escapeHtml(b.grade)} ${b.min}+`).join(' · ')}. Final = end-of-term mark, or the average of earlier tests when there is no end-of-term mark.</p>
   </section>`;
 }

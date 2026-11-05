@@ -42,7 +42,16 @@ const SMS = (function () {
     catch (e) { return { configured: false, error: e.message }; }
     return cache;
   }
-  const accountLine = st => `${escapeHtml(st.username)}${st.sender_id ? ' · sender ' + escapeHtml(st.sender_id) : ''}${st.sandbox ? ' · <strong>sandbox (test only: nothing reaches real phones)</strong>' : ''} · balance ${escapeHtml(st.balance || 'unknown')}`;
+  // Africa's Talking gives the balance as e.g. "UGX 5000.0000".
+  const balanceText = b => {
+    const m = /^([A-Z]{3})\s*(-?\d+(?:\.\d+)?)$/.exec(String(b || '').trim());
+    return m ? m[1] + ' ' + Number(m[2]).toLocaleString('en-US', { maximumFractionDigits: 2 }) : (b || 'unknown');
+  };
+  const accountLine = st => [
+    st.sandbox ? "Africa's Talking <strong>sandbox</strong> (test only: nothing reaches real phones)" : "Africa's Talking account " + escapeHtml(st.username),
+    st.sender_id ? 'sender ' + escapeHtml(st.sender_id) : '',
+    'balance ' + escapeHtml(balanceText(st.balance)),
+  ].filter(Boolean).join(' · ');
 
   async function prepare(kind, options) {
     const { data, error } = await db().rpc('sms_create_campaign', { p_school: SYNC.schoolId(), p_kind: kind, p_options: options });
@@ -58,7 +67,7 @@ const SMS = (function () {
     const st = await status();
     if (!st.configured) {
       openModal({
-        title,
+        title: escapeHtml(title),
         bodyHtml: `<p>${st.error ? escapeHtml(st.error) : 'SMS is not set up for this school yet.'}</p>
           <p class="card-desc" style="margin-top:8px">${can('canManageSettings')
             ? "Add your school's Africa's Talking account under Administration → SMS."
@@ -86,12 +95,12 @@ const SMS = (function () {
     let sending = false;
     const summary = p => `<strong>${p.recipients}</strong> message${p.recipients === 1 ? '' : 's'} · ${p.parts} SMS page${p.parts === 1 ? '' : 's'}${p.skipped ? ` · ${p.skipped} learner${p.skipped === 1 ? ' has' : 's have'} no valid guardian number and ${p.skipped === 1 ? 'is' : 'are'} left out` : ''}`;
     openModal({
-      title, wide: true, locked: false,
+      title: escapeHtml(title), wide: true, locked: false,
       bodyHtml: `<p id="smsSummary">${summary(preview)}</p>
         <label class="check" style="margin:10px 0"><input type="checkbox" id="smsBoth" ${both ? 'checked' : ''}> Also send to the second guardian where there is one</label>
         <div class="form-label" style="margin-top:6px">First message</div>
         <div class="tile" id="smsSample" style="white-space:pre-wrap;font-size:13px">${escapeHtml(preview.sample)}</div>
-        <p class="card-desc" style="margin-top:8px">Account: ${accountLine(st)}</p>
+        <p class="card-desc" style="margin-top:8px">${accountLine(st)}</p>
         <div id="smsProgressWrap" style="display:none;margin-top:12px"><div class="bar"><span id="smsProgress" style="width:0%"></span></div><p class="card-desc" id="smsProgressText" style="margin-top:6px"></p></div>`,
       footHtml: `<button class="btn btn-ghost" id="smsCancel">Cancel</button><button class="btn btn-primary" id="smsSend">Send ${preview.recipients} SMS</button>`,
       onOpen(root) {
@@ -144,7 +153,7 @@ const SMS = (function () {
     box.innerHTML = '<span class="card-desc">Checking…</span>';
     const st = await status(true);
     box.innerHTML = st.configured
-      ? `${icon('check', 15)} <strong>SMS is set up.</strong> <span class="card-desc">Africa's Talking account ${accountLine(st)}${st.reachable === false ? ' · <span style="color:var(--danger)">Africa\'s Talking did not answer just now</span>' : ''}</span>`
+      ? `${icon('check', 15)} <strong>SMS is set up.</strong> <span class="card-desc">${accountLine(st)}${st.reachable === false ? ' · <span style="color:var(--danger)">Africa\'s Talking did not answer just now</span>' : ''}</span>`
       : `<strong>SMS is not set up.</strong> <span class="card-desc">${st.error ? escapeHtml(st.error) : "Fee reminders, absence alerts and notices can go out as SMS once the director adds the school's Africa's Talking account."}</span>`;
     const form = el('smsSettingsForm');
     if (form && st.configured) {
@@ -162,9 +171,10 @@ const SMS = (function () {
   async function loadLog() {
     const body = el('smsLogBody'); if (!body) return;
     const { data, error } = await db().from('sms_campaigns').select('created_at,kind,options,created_by_name,recipients,sent,failed,status')
-      .eq('school_id', SYNC.schoolId()).order('created_at', { ascending: false }).limit(30);
+      .eq('school_id', SYNC.schoolId()).neq('status', 'draft')   // a preview not yet sent is not a run
+      .order('created_at', { ascending: false }).limit(30);
     if (error) { body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(ONLINE.friendly(error))}</td></tr>`; return; }
-    const runs = (data || []).filter(c => c.status !== 'draft' || c.sent || c.failed);
+    const runs = data || [];
     body.innerHTML = runs.length ? runs.map(c => `<tr><td class="t-muted">${escapeHtml(String(c.created_at).slice(0, 16).replace('T', ' '))}</td>
       <td>${escapeHtml(KIND[c.kind] || c.kind)}${c.options && c.options.class ? ' · ' + escapeHtml(c.options.class) : ''}</td><td>${escapeHtml(c.created_by_name || '—')}</td>
       <td class="t-center">${Number(c.recipients)}</td><td class="t-center" style="color:var(--success)">${Number(c.sent)}</td>
@@ -182,7 +192,7 @@ const SMS = (function () {
         sender_id: el('smsSender').value.trim(), sandbox: el('smsSandbox').checked,
       } });
       el('smsApiKey').value = '';
-      toast(`SMS account saved. Balance: ${r.balance || 'unknown'}.`, 'success');
+      toast(`SMS account saved. Balance: ${balanceText(r.balance)}.`, 'success');
       renderAdmin();
     } catch (err) { toast(err.message, 'error'); }
     btn.disabled = false;

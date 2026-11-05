@@ -454,7 +454,13 @@ if (fees) {
 }
 await allowed('the teacher stops their own run', U.teacherS4, 'select public.sms_cancel_campaign($1)', [absent.campaign_id]);
 check('a stopped run sends nothing', (await asService('select public.sms_take_batch($1, 40) as b', [absent.campaign_id])).rows[0].b.stopped === true);
+check('a preview that was never sent leaves nothing behind', Number((await asService('select count(*) as n from public.sms_campaigns where id = $1', [absent.campaign_id])).rows[0].n) === 0
+  && Number((await asService('select count(*) as n from public.sms_messages where campaign_id = $1', [absent.campaign_id])).rows[0].n) === 0);
 await denied("the bursar cannot stop someone else's run", U.bursar, 'select public.sms_cancel_campaign($1)', [news.campaign_id], /cannot be stopped/i);
+await asService('select public.sms_take_batch($1, 1)', [news.campaign_id]);
+await allowed('the admin stops their run part-way through', U.admin, 'select public.sms_cancel_campaign($1)', [news.campaign_id]);
+check('… it stays in the log as stopped', (await asService('select status from public.sms_campaigns where id = $1', [news.campaign_id])).rows[0]?.status === 'cancelled');
+check('… and nothing more goes out', (await asService('select public.sms_take_batch($1, 40) as b', [news.campaign_id])).rows[0].b.stopped === true);
 
 const hook = (await asService("select public.sms_hook_lookup('+256 772 000 001') as h")).rows[0].h;
 check("a guardian's sign-in code goes through their school's account", hook && hook.school_id === A && hook.settings.username === 'kampalahill', JSON.stringify(hook));
