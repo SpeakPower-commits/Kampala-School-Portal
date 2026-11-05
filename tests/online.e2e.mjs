@@ -116,11 +116,14 @@ try {
     await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
     await page.selectOption('#classSelect', 'S.4');
     await page.fill('#registerForm input[name="guardian"]', '0772123456');
+    await page.fill('#registerForm input[name="guardian2"]', '0701234567');
     await page.fill('#registerForm input[name="fee"]', '600000');
     await page.selectOption('#registerForm select[name="gender"]', 'Female');
     await page.click('#registerForm button[type="submit"]');
     await saved();
     assert(await count('learners') === 2, 'learners in database: ' + await count('learners'));
+    const g = await one("select guardian_phone, guardian2_phone from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
+    assert(g.guardian_phone === '0772123456' && g.guardian2_phone === '0701234567', 'guardians in database: ' + JSON.stringify(g));
     assert(await count('terms') === 1, 'terms in database: ' + await count('terms'));
     const bill = await one("select total, term_id from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
     assert(bill && Number(bill.total) === 600000 && bill.term_id, 'bill ' + JSON.stringify(bill));

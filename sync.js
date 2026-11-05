@@ -65,7 +65,7 @@ window.SYNC = (function () {
       put('learners', s.id, {
         id: s.id, admission_no: s.id, name: s.name, class: s.class || '', stream: s.stream || '',
         level: s.level || 'Other', combination: s.combination || '', gender: s.gender || '',
-        boarding: s.boardingStatus || 'Day', guardian_phone: s.guardian || '', fee: Math.round(num(s.fee)),
+        boarding: s.boardingStatus || 'Day', guardian_phone: s.guardian || '', guardian2_phone: s.guardian2 || '', fee: Math.round(num(s.fee)),
         bursary_pct: num(s.bursaryPct), uneb_index: s.unebIndexNo || '', sen: s.senFlag || '',
         sport: s.sport || '', skill: s.skillLevel || '',
         extra: { performanceNotes: s.performanceNotes || [], injuryLog: s.injuryLog || [], athleteProfile: s.athleteProfile || {} },
@@ -130,7 +130,7 @@ window.SYNC = (function () {
       const x = l.extra || {};
       const s = {
         id: l.id, name: l.name, class: l.class, stream: l.stream, level: l.level, combination: l.combination,
-        guardian: l.guardian_phone, fee: num(l.fee), paid: 0, gender: l.gender, boardingStatus: l.boarding,
+        guardian: l.guardian_phone, guardian2: l.guardian2_phone || '', fee: num(l.fee), paid: 0, gender: l.gender, boardingStatus: l.boarding,
         unebIndexNo: l.uneb_index, senFlag: l.sen, sport: l.sport, skillLevel: l.skill, bursaryPct: num(l.bursary_pct),
         performanceNotes: x.performanceNotes || [], injuryLog: x.injuryLog || [], athleteProfile: x.athleteProfile || {},
         academics: [], comments: {}, feeComponents: [], createdAt: String(l.created_at || '').slice(0, 10),

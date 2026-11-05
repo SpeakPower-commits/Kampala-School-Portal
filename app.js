@@ -167,6 +167,9 @@ function skillBadge(level) {
   return `<span class="badge ${m[level] || 'badge-neutral'}">${escapeHtml(level || '—')}</span>`;
 }
 function phoneValid(raw) { return normalizePhone(raw).length >= 12; }
+/* The second guardian number is optional, but when given it must be real:
+   it lets that guardian sign in to the parent portal and receive SMS. */
+function secondGuardianOk(raw) { return !String(raw || '').trim() || phoneValid(raw); }
 
 /* =========================================================================
    Business logic
@@ -183,10 +186,11 @@ function registerStudent(f) {
     id = 'S' + uid().slice(0, 6);
   }
   if (!f.name || !f.name.trim()) return toast('Student name is required.', 'error');
+  if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
   state.students.push({
     id, name: f.name.trim(), class: (f.class || '').trim(), level: classifyLevel(f.class),
     combination: (f.combination || '').split(',').map(x => x.trim()).filter(Boolean).join(', '),
-    guardian: (f.guardian || '').trim(), fee: Number(f.fee) || 0, paid: 0, stream: (f.stream || '').trim(),
+    guardian: (f.guardian || '').trim(), guardian2: (f.guardian2 || '').trim(), fee: Number(f.fee) || 0, paid: 0, stream: (f.stream || '').trim(),
     sport: (f.sport || '').trim(), skillLevel: (f.skillLevel || '').trim(),
     gender: (f.gender || '').trim(), boardingStatus: (f.boardingStatus || 'Day').trim(),
     unebIndexNo: (f.unebIndexNo || '').trim(), senFlag: (f.senFlag || '').trim(),
@@ -203,11 +207,13 @@ function updateStudent(id, f) {
   if (!can('canEditStudents')) return toast('You do not have permission to edit students.', 'error');
   const s = state.students.find(x => x.id === id);
   if (!s) return toast('Student not found.', 'error');
+  if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
   s.name = (f.name || '').trim() || s.name;
   s.class = (f.class || '').trim() || s.class;
   s.level = classifyLevel(s.class);
   s.combination = (f.combination || '').split(',').map(x => x.trim()).filter(Boolean).join(', ');
   s.guardian = (f.guardian || '').trim();
+  s.guardian2 = (f.guardian2 || '').trim();
   s.fee = Number(f.fee) || 0;
   s.gender = (f.gender || '').trim();
   s.boardingStatus = (f.boardingStatus || 'Day').trim();
@@ -588,7 +594,7 @@ function renderStudentTable() {
         <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
         <td>${gender}</td>
         <td>${board}</td>
-        <td>${escapeHtml(s.guardian)}</td>
+        <td>${escapeHtml(s.guardian)}${s.guardian2 ? `<div class="card-desc">${escapeHtml(s.guardian2)}</div>` : ''}</td>
         <td>${sport}</td>
         <td class="t-num">${fmtMoney(fee)}${bursaryTag}</td>
         <td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(paid)}</td>
@@ -917,6 +923,7 @@ function openStudentEdit(studentId) {
         <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" value="${escapeHtml(s.stream || '')}" placeholder="e.g. East"></div>
         <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination)}"></div>
         <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" value="${escapeHtml(s.guardian)}"></div>
+        <div><label class="form-label">Second guardian <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" value="${escapeHtml(s.guardian2 || '')}"></div>
       </div>
       <div class="form-row">
         <div><label class="form-label">Termly tuition (${currency()})</label><input class="input" type="number" min="0" step="1000" name="fee" value="${s.fee}"></div>

@@ -38,13 +38,13 @@ function downloadCSV(filename, rows) {
 }
 
 /* ── Learner import ────────────────────────────────────────────────────── */
-const IMPORT_COLUMNS = ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'termly_fee', 'boarding', 'uneb_index', 'special_needs', 'sport', 'opening_balance'];
+const IMPORT_COLUMNS = ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'guardian2_phone', 'termly_fee', 'boarding', 'uneb_index', 'special_needs', 'sport', 'opening_balance'];
 
 function downloadImportTemplate() {
   downloadCSV('learners-import-template.csv', [
     IMPORT_COLUMNS,
-    ['KSA/2026/0001', 'Nakato Sarah', 'S.2', 'East', 'Female', '0772123456', '650000', 'Day', '', '', 'Netball', '0'],
-    ['', 'Okello John', 'P.6', '', 'Male', '0701234567', '450000', 'Boarding', '', '', '', '120000'],
+    ['KSA/2026/0001', 'Nakato Sarah', 'S.2', 'East', 'Female', '0772123456', '0701234567', '650000', 'Day', '', '', 'Netball', '0'],
+    ['', 'Okello John', 'P.6', '', 'Male', '0752345678', '', '450000', 'Boarding', '', '', '', '120000'],
   ]);
 }
 function normaliseClass(v) {
@@ -83,13 +83,14 @@ function validateImport(rows) {
     const errors = [];
     const rec = {
       admissionNo: get('admission_no'), name: get('name'), class: normaliseClass(get('class')), stream: get('stream'),
-      gender: normaliseGender(get('gender')), guardian: get('guardian_phone'), fee: parseAmount(get('termly_fee')),
+      gender: normaliseGender(get('gender')), guardian: get('guardian_phone'), guardian2: get('guardian2_phone'), fee: parseAmount(get('termly_fee')),
       boardingStatus: normaliseBoarding(get('boarding')), unebIndexNo: get('uneb_index'), senFlag: get('special_needs'),
       sport: get('sport'), opening: parseAmount(get('opening_balance')),
     };
     if (!rec.name) errors.push('name missing');
     if (!CLASS_OPTIONS.includes(rec.class)) errors.push(`class "${get('class')}" not recognised`);
     if (!phoneValid(rec.guardian)) errors.push('guardian phone not a valid Ugandan number');
+    if (rec.guardian2 && !phoneValid(rec.guardian2)) errors.push('second guardian phone not a valid Ugandan number');
     if (rec.gender === null) errors.push('gender must be Male or Female');
     if (rec.boardingStatus === null) errors.push('boarding must be Day, Boarding or Weekly');
     if (rec.fee === null) errors.push('termly fee is not a number');
@@ -134,7 +135,7 @@ function commitImport(recs) {
     const id = r.admissionNo || 'S' + uid().slice(0, 6);
     const s = {
       id, name: r.name, class: r.class, stream: r.stream, level: classifyLevel(r.class), combination: '',
-      guardian: r.guardian, fee: r.fee || 0, paid: 0, sport: r.sport, skillLevel: '', gender: r.gender || '',
+      guardian: r.guardian, guardian2: r.guardian2 || '', fee: r.fee || 0, paid: 0, sport: r.sport, skillLevel: '', gender: r.gender || '',
       boardingStatus: r.boardingStatus, unebIndexNo: r.unebIndexNo, senFlag: r.senFlag,
       performanceNotes: [], academics: [], bursaryPct: 0, feeComponents: [], injuryLog: [], athleteProfile: {}, comments: {},
       createdAt: todayISO(),
@@ -158,8 +159,8 @@ function exportLearnersCSV(onlyDefaulters) {
   let list = state.students.map(s => ({ s, a: studentAccount(s) }));
   if (onlyDefaulters) list = list.filter(x => x.a.balance > 0).sort((a, b) => b.a.balance - a.a.balance);
   downloadCSV(`${onlyDefaulters ? 'defaulters' : 'learners'}-${todayISO()}.csv`, [
-    ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'boarding', 'uneb_index', 'special_needs', 'sport', 'arrears', 'this_term_due', 'total_balance'],
-    ...list.map(({ s, a }) => [s.id, s.name, s.class, s.stream || '', s.gender, s.guardian, s.boardingStatus, s.unebIndexNo, s.senFlag, s.sport, a.arrears, a.currentDue, a.balance]),
+    ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'guardian2_phone', 'boarding', 'uneb_index', 'special_needs', 'sport', 'arrears', 'this_term_due', 'total_balance'],
+    ...list.map(({ s, a }) => [s.id, s.name, s.class, s.stream || '', s.gender, s.guardian, s.guardian2 || '', s.boardingStatus, s.unebIndexNo, s.senFlag, s.sport, a.arrears, a.currentDue, a.balance]),
   ]);
   toast(onlyDefaulters ? `Exported ${list.length} defaulters.` : `Exported ${list.length} learners.`, 'success');
 }
