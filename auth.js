@@ -59,6 +59,7 @@ const ROLE_PERMISSIONS = {
     canLogConduct: true, canManageTerms: true, canViewEMIS: true,
     canPostNotice: true, canManageCompetitions: true, canManageSquads: true,
     canMarkRegister: true, canHeadComment: true,
+    canPublishResults: true, canBroadcastSms: true, canViewSmsLog: true,
   },
   admin: {
     label: 'School Administrator', color: '#1d4ed8', badge: 'Administrator',
@@ -71,6 +72,7 @@ const ROLE_PERMISSIONS = {
     canLogConduct: true, canManageTerms: true, canViewEMIS: true,
     canPostNotice: true, canManageCompetitions: false, canManageSquads: false,
     canMarkRegister: true, canHeadComment: true,
+    canPublishResults: true, canBroadcastSms: true, canViewSmsLog: true,
   },
   bursary: {
     label: 'Bursary Officer', color: '#0b5d3b', badge: 'Bursary',
@@ -83,6 +85,7 @@ const ROLE_PERMISSIONS = {
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: false, canManageCompetitions: false, canManageSquads: false,
     canMarkRegister: false, canHeadComment: false,
+    canPublishResults: false, canBroadcastSms: false, canViewSmsLog: false,
   },
   coach: {
     label: 'Head of Sports', color: '#b45309', badge: 'Sports',
@@ -95,6 +98,7 @@ const ROLE_PERMISSIONS = {
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: true, canManageCompetitions: true, canManageSquads: true,
     canMarkRegister: false, canHeadComment: false,
+    canPublishResults: false, canBroadcastSms: false, canViewSmsLog: false,
   },
   teacher: {
     label: 'Teacher', color: '#0e7490', badge: 'Teacher',
@@ -107,6 +111,7 @@ const ROLE_PERMISSIONS = {
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: false, canManageCompetitions: false, canManageSquads: false,
     canMarkRegister: true, canHeadComment: false,
+    canPublishResults: false, canBroadcastSms: false, canViewSmsLog: false,
   },
 };
 

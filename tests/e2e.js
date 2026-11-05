@@ -63,7 +63,7 @@ async function tab(page, name, sub) {
   await page.goto(BASE, { waitUntil: 'networkidle' });
 
   await step('static assets resolve (service worker, icons, manifest)', async () => {
-    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/app.js', '/auth.js', '/styles.css']) {
+    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
       const res = await page.request.get(ORIGIN + new URL(BASE).pathname.replace(/[^/]*$/, '') + path.slice(1));
       assert(res.ok(), path + ' returned ' + res.status());
     }
@@ -130,12 +130,28 @@ async function tab(page, name, sub) {
     await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
     await page.selectOption('#classSelect', 'S.4');
     await page.fill('#registerForm input[name="guardian"]', '0772123456');
+    await page.fill('#registerForm input[name="guardian2"]', '0701 234 567');
     await page.fill('#registerForm input[name="fee"]', '600000');
     await page.selectOption('#registerForm select[name="gender"]', 'Female');
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(200);
     const count = await page.evaluate(() => window.KSA.state().students.length);
     assert(count === 1, 'expected 1 student, got ' + count);
+    const g2 = await page.evaluate(() => window.KSA.state().students[0].guardian2);
+    assert(g2 === '0701 234 567', 'second guardian = ' + g2);
+  });
+
+  await step('a second guardian number that is not a phone number is refused', async () => {
+    await page.fill('#registerForm input[name="name"]', 'Wrong Number');
+    await page.selectOption('#classSelect', 'P.5');
+    await page.fill('#registerForm input[name="guardian"]', '0772000999');
+    await page.fill('#registerForm input[name="guardian2"]', '12345');
+    await page.fill('#registerForm input[name="fee"]', '100000');
+    await page.selectOption('#registerForm select[name="gender"]', 'Male');
+    await page.click('#registerForm button[type="submit"]');
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => window.KSA.state().students.length) === 1, 'learner with a bad second number was saved');
+    assert(/second guardian number is not a valid/.test(await page.textContent('#toastHost')), 'no message about the second number');
   });
 
   await step('script-like admission number is rejected', async () => {
@@ -439,25 +455,28 @@ async function tab(page, name, sub) {
   await step('CSV import previews, rejects bad rows and adds opening balances', async () => {
     await tab(page, 'directory', 'import');
     const csv = [
-      'admission_no,name,class,stream,gender,guardian_phone,termly_fee,boarding,uneb_index,special_needs,sport,opening_balance',
-      'NPA/2026/050,Opio Daniel,s2,East,M,0772 555 111,"450,000",Day,,,,120000',
-      ',Bad Class,S.9,,F,0772555222,300000,Day,,,,0',
-      'NPA/2026/001,Duplicate Admission,S.1,,F,0772555333,300000,Day,,,,0',
-      ',=HYPERLINK(1),P.3,,F,0772555444,200000,Day,,,,0',
+      'admission_no,name,class,stream,gender,guardian_phone,guardian2_phone,termly_fee,boarding,uneb_index,special_needs,sport,opening_balance',
+      'NPA/2026/050,Opio Daniel,s2,East,M,0772 555 111,0701 555 222,"450,000",Day,,,,120000',
+      ',Bad Class,S.9,,F,0772555222,,300000,Day,,,,0',
+      'NPA/2026/001,Duplicate Admission,S.1,,F,0772555333,,300000,Day,,,,0',
+      ',Bad Second Number,P.4,,F,0772555666,12345,200000,Day,,,,0',
+      ',=HYPERLINK(1),P.3,,F,0772555444,,200000,Day,,,,0',
     ].join('\n');
     await page.setInputFiles('#importLearnersInput', { name: 'learners.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await page.waitForSelector('#importGo');
     assert(/Import 2 learners/.test(await page.textContent('#importGo')), 'expected 2 good rows');
+    assert(/second guardian phone not a valid/.test(await page.textContent('.modal')), 'bad second number not reported');
     await page.click('#importGo');
     await page.waitForTimeout(200);
-    const opio = await page.evaluate(() => { const s = state.students.find(x => x.id === 'NPA/2026/050'); return s && { cls: s.class, stream: s.stream, arrears: studentAccount(s).arrears }; });
-    assert(opio && opio.cls === 'S.2' && opio.stream === 'East' && opio.arrears === 120000, 'imported learner ' + JSON.stringify(opio));
+    const opio = await page.evaluate(() => { const s = state.students.find(x => x.id === 'NPA/2026/050'); return s && { cls: s.class, stream: s.stream, arrears: studentAccount(s).arrears, g2: s.guardian2 }; });
+    assert(opio && opio.cls === 'S.2' && opio.stream === 'East' && opio.arrears === 120000 && opio.g2 === '0701 555 222', 'imported learner ' + JSON.stringify(opio));
   });
 
-  await step('CSV export neutralises spreadsheet formulas', async () => {
+  await step('CSV export neutralises spreadsheet formulas and includes both guardians', async () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#exportLearnersBtn')]);
     const text = require('fs').readFileSync(await dl.path(), 'utf8');
     assert(text.includes("\"'=HYPERLINK(1)\""), 'formula not neutralised');
+    assert(text.split('\n')[0].includes('"guardian_phone","guardian2_phone"') && text.includes('"0701 555 222"'), 'second guardian missing from export');
   });
 
   await step('logo and school colour apply', async () => {

@@ -247,6 +247,31 @@ textarea.input { resize: vertical; min-height: 62px; }
 .subnav button:hover { color: var(--ink); border-color: var(--brand); }
 .subnav button[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
 
+/* Parent portal (parent.html): one column, made for phones */
+.p-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--brand); color: #fff; position: sticky; top: 0; z-index: 20; }
+.p-top .crest svg, .p-top .crest img { width: 34px; height: 34px; }
+.p-top-title { flex: 1; display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.p-top-title small { opacity: 0.85; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-main { max-width: 640px; margin: 0 auto; padding: 16px; }
+.p-card { margin-bottom: 12px; }
+.p-kid { display: block; width: 100%; text-align: left; cursor: pointer; margin-bottom: 12px; font: inherit; color: inherit; }
+.p-kid:hover { border-color: var(--brand); }
+.p-kid-name { font-size: 17px; font-weight: 700; color: var(--ink); }
+.p-kid-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.p-bal { font-weight: 700; }
+.p-bal.owe { color: var(--danger); }
+.p-bal.clear { color: var(--success); }
+.p-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+.p-table td { padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.p-table td.t-num { text-align: right; padding-left: 10px; }
+.p-total td { font-weight: 700; }
+.p-att { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; text-align: center; }
+.p-att strong { display: block; font-size: 22px; color: var(--ink); }
+.p-att span { font-size: 12px; color: var(--muted); }
+.p-code { font-size: 22px; letter-spacing: 0.3em; text-align: center; }
+.p-foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0; }
+.p-report { overflow-x: auto; }
+
 /* What's new (dashboard) */
 .whats-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
 .wn-item { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; }
@@ -484,6 +509,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .wn-title { flex: 1; }
   .wn-desc { display: none; }
   .wn-item .btn { margin-top: 0; }
+  /* A report card on a phone screen: tighter marks table, and no blank
+     "Initials" column (that is for pen on the printed copy). Print is unchanged. */
+  .modal .rc-marks .rc-ini { display: none; }
+  .modal .rc-marks { font-size: 11px !important; }
+  .modal .rc-marks th, .modal .rc-marks td { padding: 4px 3px !important; }
+  .modal .rc-marks th { letter-spacing: 0; }
 }
 
 /* =========================================================================

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#0b5d3b">
+<meta name="description" content="Parent portal: your child's school fees, receipts, report cards, attendance and school notices.">
+<link rel="icon" href="icon192.png">
+<link rel="apple-touch-icon" href="icon192.png">
+<link rel="stylesheet" href="styles.css">
+<title>Parent portal</title>
+</head>
+<body class="parent-page">
+
+<header class="p-top no-print">
+  <span class="crest" id="pCrest"></span>
+  <div class="p-top-title"><strong>Parent portal</strong><small id="pWho">Fees, report cards and attendance</small></div>
+  <button class="topbar-btn" id="pSignOut" type="button" style="display:none">Sign out</button>
+</header>
+
+<main class="p-main no-print">
+  <!-- Not available on this address (the offline edition) -->
+  <section class="card card-pad p-card" id="pOffline" style="display:none">
+    <div class="card-title">The parent portal is not available here</div>
+    <p class="card-desc">Your school will share the address of its parent portal with you.</p>
+  </section>
+
+  <!-- Sign in with the phone number the school has for you -->
+  <section class="card card-pad p-card" id="pSignIn" style="display:none">
+    <div class="card-title">Sign in</div>
+    <p class="card-desc">Use the phone number the school has for you. We will send you a 6-digit code by SMS.</p>
+    <form id="pPhoneForm" class="form-grid" style="margin-top:14px">
+      <div><label class="form-label" for="pPhone">Your phone number</label><input class="input" id="pPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0772 123 456" required></div>
+      <button class="btn btn-primary btn-block" type="submit" id="pSendCode">Send me a code</button>
+    </form>
+    <form id="pCodeForm" class="form-grid" style="margin-top:14px;display:none">
+      <p class="card-desc" id="pCodeNote"></p>
+      <div><label class="form-label" for="pCode">6-digit code</label><input class="input p-code" id="pCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required></div>
+      <button class="btn btn-primary btn-block" type="submit" id="pVerify">Sign in</button>
+      <button class="btn btn-ghost btn-block" type="button" id="pChangeNumber">Use a different number</button>
+    </form>
+    <div class="auth-error" id="pError" style="display:none;margin-top:12px" role="alert"></div>
+  </section>
+
+  <!-- Signed in -->
+  <section id="pHome" style="display:none">
+    <div id="pChildren"></div>
+  </section>
+  <section id="pChild" style="display:none">
+    <button class="btn btn-ghost btn-sm" type="button" id="pBack">← All my children</button>
+    <div class="card card-pad p-card" id="pChildHead" style="margin-top:10px"></div>
+    <nav class="subnav" id="pTabs" role="tablist" aria-label="Sections" style="margin-top:14px">
+      <button type="button" role="tab" data-ptab="fees">Fees</button>
+      <button type="button" role="tab" data-ptab="results">Results</button>
+      <button type="button" role="tab" data-ptab="attendance">Attendance</button>
+      <button type="button" role="tab" data-ptab="notices">Notices</button>
+    </nav>
+    <div id="pTabBody"></div>
+  </section>
+  <p class="p-foot">Something wrong? Contact the school; only they can change the details they hold.</p>
+</main>
+
+<div id="printArea"></div>
+<div id="toastHost"></div>
+<div id="modalHost"></div>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="core.js"></script>
+<script src="sync.js"></script>
+<script src="billing.js"></script>
+<script src="academics.js"></script>
+<script src="parent.js"></script>
+</body>
+</html>

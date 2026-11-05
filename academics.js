@@ -361,8 +361,10 @@ function nextTermFees(s, next) {
 function reportCardHtml(s, termId, opts = {}) {
   const t = termById(termId);
   const r = studentTermResult(s, termId);
-  const pos = classPositions(termId, s.class)[s.id];
-  const streamPos = s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null;
+  // The parent portal holds one child, not the class, so it passes the
+  // positions frozen when the results were published.
+  const pos = opts.position !== undefined ? opts.position : classPositions(termId, s.class)[s.id];
+  const streamPos = opts.streamPosition !== undefined ? opts.streamPosition : (s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null);
   const att = daysPresent(s, t);
   const acct = studentAccount(s);
   const next = nextTermOf(t);
@@ -381,10 +383,10 @@ function reportCardHtml(s, termId, opts = {}) {
       <td><strong>Name:</strong> ${escapeHtml(s.name)}</td><td><strong>Admission no.:</strong> ${escapeHtml(s.id)}</td><td><strong>Class:</strong> ${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</td></tr><tr>
       <td><strong>Gender:</strong> ${escapeHtml(s.gender || '—')}</td><td><strong>Section:</strong> ${isBoarder(s) ? 'Boarding' : 'Day'}</td><td>${s.unebIndexNo ? `<strong>UNEB index:</strong> ${escapeHtml(s.unebIndexNo)}` : ''}</td></tr></table>
     <div style="${h2}">ACADEMIC PERFORMANCE</div>
-    <table style="width:100%;border-collapse:collapse;font-size:11.5px;font-family:Arial,sans-serif">
-      <thead style="background:#eef3f0"><tr><th style="${td};text-align:left">Subject</th><th style="${td}">BOT</th><th style="${td}">MOT</th><th style="${td}">EOT</th><th style="${td}">Final</th><th style="${td}">Grade</th><th style="${td};text-align:left">Remark</th><th style="${td}">Initials</th></tr></thead>
-      <tbody>${r.results.map(x => `<tr><td style="${td}">${escapeHtml(x.subject)}</td><td style="${td};text-align:center">${cell(x.BOT)}</td><td style="${td};text-align:center">${cell(x.MOT)}</td><td style="${td};text-align:center">${cell(x.EOT)}</td><td style="${td};text-align:center;font-weight:700">${x.final}</td><td style="${td};text-align:center;font-weight:700">${escapeHtml(x.grade)}</td><td style="${td}">${escapeHtml(x.remark)}</td><td style="${td}"></td></tr>`).join('') || `<tr><td colspan="8" style="${td};text-align:center;color:#888">No marks recorded this term</td></tr>`}</tbody>
-    </table>
+    <div style="overflow-x:auto"><table class="rc-marks" style="width:100%;border-collapse:collapse;font-size:11.5px;font-family:Arial,sans-serif">
+      <thead style="background:#eef3f0"><tr><th style="${td};text-align:left">Subject</th><th style="${td}">BOT</th><th style="${td}">MOT</th><th style="${td}">EOT</th><th style="${td}">Final</th><th style="${td}">Grade</th><th style="${td};text-align:left">Remark</th><th class="rc-ini" style="${td}">Initials</th></tr></thead>
+      <tbody>${r.results.map(x => `<tr><td style="${td}">${escapeHtml(x.subject)}</td><td style="${td};text-align:center">${cell(x.BOT)}</td><td style="${td};text-align:center">${cell(x.MOT)}</td><td style="${td};text-align:center">${cell(x.EOT)}</td><td style="${td};text-align:center;font-weight:700">${x.final}</td><td style="${td};text-align:center;font-weight:700">${escapeHtml(x.grade)}</td><td style="${td}">${escapeHtml(x.remark)}</td><td class="rc-ini" style="${td}"></td></tr>`).join('') || `<tr><td colspan="8" style="${td};text-align:center;color:#888">No marks recorded this term</td></tr>`}</tbody>
+    </table></div>
     <table style="width:100%;font-size:12px;font-family:Arial,sans-serif;margin-top:6px"><tr>
       <td><strong>Average:</strong> ${r.avg}%</td><td><strong>Result:</strong> ${escapeHtml(r.label)}</td>
       <td><strong>Position in class:</strong> ${pos ? `${ordinal(pos.pos)} of ${pos.of}` : '—'}</td>
@@ -400,7 +402,7 @@ function reportCardHtml(s, termId, opts = {}) {
       <td><strong>Balance owed:</strong> <span style="color:${acct.balance ? '#b91c1c' : '#047857'};font-weight:700">${fmtMoney(acct.balance)}</span></td>
       <td><strong>Next term begins:</strong> ${escapeHtml(nextBegins || '—')}</td>
       <td><strong>Next term fees:</strong> ${nextFees ? fmtMoney(nextFees) : '—'}</td></tr></table>
-    <div style="margin-top:22px;display:flex;justify-content:space-between;font-size:11px;font-family:Arial,sans-serif"><div>____________________<br>Class teacher</div><div>____________________<br>Head teacher${state.settings.headTeacher ? '<br>' + escapeHtml(state.settings.headTeacher) : ''}</div><div>____________________<br>Parent / guardian</div></div>
+    <div style="margin-top:22px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;font-size:11px;font-family:Arial,sans-serif"><div>____________________<br>Class teacher</div><div>____________________<br>Head teacher${state.settings.headTeacher ? '<br>' + escapeHtml(state.settings.headTeacher) : ''}</div><div>____________________<br>Parent / guardian</div></div>
     <p style="font-size:9.5px;color:#666;font-family:Arial,sans-serif;margin-top:10px">Grading: ${bands.map(b => `${escapeHtml(b.grade)} ${b.min}+`).join(' · ')}. Final = end-of-term mark, or the average of earlier tests when there is no end-of-term mark.</p>
   </section>`;
 }
@@ -487,6 +489,53 @@ Object.assign(ACTIONS, {
   academic: d => openAcademic(d.id),
   reportCard: d => openReportCard(d.id, d.term),
 });
+/* ── Publishing results to parents (online edition) ────────────────────── */
+/* Parents see a term's marks, comments and report cards only once it is
+   published. Positions need the whole class, which a parent's view does not
+   have, so they are frozen here at publishing, as on the printed cards. */
+function renderPublishBox() {
+  const box = el('publishStatus'); if (!box || !ONLINE_EDITION) return;
+  const t = termById(el('rcTerm') && el('rcTerm').value);
+  if (!t) { box.textContent = 'Choose a term above.'; return; }
+  box.textContent = t.resultsPublished
+    ? `${termLabel(t)} is published: parents can see marks, positions, comments and report cards in the parent portal.`
+    : `${termLabel(t)} is not published: parents cannot see this term's marks yet.`;
+  el('publishBtn').textContent = t.resultsPublished ? 'Publish again (after changes)' : 'Publish this term to parents';
+  el('unpublishBtn').style.display = t.resultsPublished ? '' : 'none';
+}
+async function publishResults() {
+  if (!ONLINE_EDITION || !can('canPublishResults')) return toast('You do not have permission.', 'error');
+  const termId = el('rcTerm').value, t = termById(termId);
+  if (!t) return toast('Choose a term.', 'error');
+  const learners = state.students.filter(s => studentTermResult(s, termId).results.length);
+  if (!learners.length) return toast(`No marks have been entered for ${termLabel(t)} yet.`, 'error');
+  if (!await confirmDialog({ title: 'Publish results to parents', message: `Parents will see ${termLabel(t)} marks, class positions, comments and the report card for ${learners.length} learner${learners.length === 1 ? '' : 's'}. Positions are fixed as they are now; publish again after any changes.`, confirmLabel: 'Publish' })) return;
+  const saved = await SYNC.flush();
+  if (!saved.ok) return toast('Your latest marks have not reached the school database yet. Check the connection and try again.', 'error');
+  const byClass = {};
+  const rows = learners.map(s => {
+    const r = studentTermResult(s, termId);
+    const cp = (byClass[s.class] = byClass[s.class] || classPositions(termId, s.class))[s.id];
+    const sp = s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null;
+    return { learner_id: s.id, position: cp ? cp.pos : null, out_of: cp ? cp.of : null,
+      stream_position: sp ? sp.pos : null, stream_out_of: sp ? sp.of : null, average: r.avg, result: r.label };
+  });
+  const { data, error } = await ONLINE.client().rpc('publish_results', { p_school: SYNC.schoolId(), p_term: termId, p_rows: rows });
+  if (error) return toast(ONLINE.friendly(error), 'error');
+  t.resultsPublished = true;   // the database already says so; sync.js never writes this flag
+  renderPublishBox();
+  toast(`${termLabel(t)} results published to parents for ${data} learner${data === 1 ? '' : 's'}.`, 'success');
+}
+async function unpublishResults() {
+  const termId = el('rcTerm').value, t = termById(termId);
+  if (!t || !await confirmDialog({ title: 'Withdraw results', message: `Parents will no longer see ${termLabel(t)} marks and report cards.`, confirmLabel: 'Withdraw', danger: true })) return;
+  const { error } = await ONLINE.client().rpc('unpublish_results', { p_school: SYNC.schoolId(), p_term: termId });
+  if (error) return toast(ONLINE.friendly(error), 'error');
+  t.resultsPublished = false;
+  renderPublishBox();
+  toast(`${termLabel(t)} results withdrawn.`, 'success');
+}
+
 MODULES.push({
   name: 'academics',
   setup() {
@@ -503,8 +552,11 @@ MODULES.push({
     on('cmSaveBtn', 'click', saveComments);
     on('rcClass', 'change', renderAcademicControls);
     on('rcPrintBtn', 'click', printClassReports);
+    on('rcTerm', 'change', renderPublishBox);
+    on('publishBtn', 'click', publishResults);
+    on('unpublishBtn', 'click', unpublishResults);
     on('bandsSaveBtn', 'click', saveBands);
     on('bandsResetBtn', 'click', resetBands);
   },
-  render() { renderAcademicControls(); renderBandsForm(); },
+  render() { renderAcademicControls(); renderBandsForm(); renderPublishBox(); },
 });
