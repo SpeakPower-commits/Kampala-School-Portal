@@ -376,7 +376,8 @@ function saveAttendance(programId, date, records) {
   state.attendance = state.attendance.filter(a => !(a.programId === programId && a.date === date));
   state.attendance.push({ id: 'ATT' + uid().slice(0, 5), programId, date, records });
   saveState(); renderAll();
-  toast('Attendance saved for ' + date + '.', 'success');
+  const missed = records.filter(r => !r.present).map(r => (state.students.find(s => s.id === r.studentId) || {}).name).filter(Boolean);
+  toast(`Session saved for ${fmtDay(date)}: ${records.length - missed.length} came${missed.length ? ', missed: ' + missed.join(', ') : ', nobody missed'}.`, 'success');
 }
 
 async function setBursary(studentId) {
@@ -482,11 +483,10 @@ function renderAll() {
   guard(renderSportFilter);
   guard(renderSportOptions);
   guard(renderPerformanceTable);
-  guard(renderAcademicTable);
-  guard(renderSubjectList);
   guard(renderAttendanceProgramSelect);
   guard(renderAttendanceRoster);
   guard(renderAttendanceTable);
+  guard(renderSessionList);
   guard(renderBursaryTable);
   guard(renderConductTable);
   guard(renderStatisticalReports);
@@ -495,7 +495,7 @@ function renderAll() {
   guard(renderSquadsGrid);
   guard(renderAthleteProfiles);
   guard(renderNotices);
-  guard(renderWhatsNew);
+  guard(renderTodaysJobs);
   if (can('canManageUsers')) { guard(renderUsersList); guard(renderAuditLog); }
   if (can('canManageSettings')) guard(renderSettingsForm);
   MODULES.forEach(m => { if (m.render) guard(m.render); });
@@ -592,11 +592,11 @@ function renderStudentTable() {
       const board = s.boardingStatus === 'Boarding' ? '<span class="badge badge-purple">Boarding</span>' : s.boardingStatus === 'Weekly' ? '<span class="badge badge-info">Weekly</span>' : '<span class="badge badge-neutral">Day</span>';
       const bursaryTag = (s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '') + (acct.arrears > 0 ? `<div class="card-desc" style="color:var(--danger)">+${fmtMoney(acct.arrears)} arrears</div>` : '');
       const senTag = s.senFlag ? `<div class="card-desc" style="color:#6d28d9">SEN: ${escapeHtml(s.senFlag)}</div>` : '';
-      const editBtn = can('canEditStudents') ? `<button class="btn-icon" title="Edit" data-act="editStudent" data-id="${escapeHtml(s.id)}">${icon('edit', 15)}</button>` : '';
-      const delBtn = can('canDeleteStudents') ? `<button class="btn-icon" title="Remove" data-act="deleteStudent" data-id="${escapeHtml(s.id)}">${icon('trash', 15)}</button>` : '';
+      const editBtn = can('canEditStudents') ? `<button class="btn btn-outline btn-xs" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit</button>` : '';
+      const delBtn = can('canDeleteStudents') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteStudent" data-id="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">Remove</button>` : '';
       return `<tr>
         <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
-        <td style="font-weight:600">${escapeHtml(s.name)}${senTag}</td>
+        <td style="font-weight:600">${learnerLink(s.id, s.name)}${senTag}</td>
         <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
         <td>${gender}</td>
         <td>${board}</td>
@@ -606,9 +606,7 @@ function renderStudentTable() {
         <td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(paid)}</td>
         <td>${status}</td>
         <td><div class="row-actions">
-          <button class="btn-icon" title="Report card" data-act="reportCard" data-id="${escapeHtml(s.id)}">${icon('file', 15)}</button>
-          <button class="btn-icon" title="Fee receipt" data-act="feeReceipt" data-id="${escapeHtml(s.id)}">${icon('printer', 15)}</button>
-          <button class="btn-icon" title="SMS guardian" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 15)}</button>
+          <button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>
           ${editBtn}${delBtn}
         </div></td>
       </tr>`;
@@ -653,23 +651,67 @@ function renderPaymentsTable() {
   }
 }
 
+/* A programme's athletes: its own list, or, until the coach edits it, the
+   learners whose primary sport is the programme's sport. */
+function programAthletes(p) {
+  if (Array.isArray(p.athleteIds)) return p.athleteIds.map(id => state.students.find(s => s.id === id)).filter(Boolean);
+  return state.students.filter(s => (s.sport || '').toLowerCase() === (p.sport || '').toLowerCase() && s.sport);
+}
 function renderPrograms() {
   const grid = el('programsGrid'); if (!grid) return;
   if (!state.programs.length) { grid.innerHTML = '<div class="empty">No programs yet.</div>'; return; }
   grid.innerHTML = state.programs.map(p => {
-    const enrolled = state.students.filter(s => (s.sport || '').toLowerCase() === (p.sport || '').toLowerCase()).length;
+    const athletes = programAthletes(p).sort((a, b) => a.name.localeCompare(b.name));
     const days = (p.days || []).map(d => `<span class="badge badge-info">${escapeHtml(d)}</span>`).join(' ') || '<span class="t-muted" style="font-size:12px">No schedule</span>';
     const reqs = (p.requirements || []).length ? '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--muted)">' + p.requirements.map(r => `<li>${escapeHtml(r)}</li>`).join('') + '</ul>' : '<p class="card-desc" style="margin-top:6px">No requirements listed</p>';
-    const del = can('canAddProgram') ? `<button class="btn-icon" title="Remove" data-act="deleteProgram" data-id="${escapeHtml(p.id)}">${icon('trash', 15)}</button>` : '';
+    const del = can('canAddProgram') ? `<button class="btn-icon" title="Remove this programme" aria-label="Remove ${escapeHtml(p.name)}" data-act="deleteProgram" data-id="${escapeHtml(p.id)}">${icon('trash', 15)}</button>` : '';
+    const names = athletes.slice(0, 8).map(s => learnerLink(s.id, s.name)).join(', ') + (athletes.length > 8 ? ` <span class="card-desc">+ ${athletes.length - 8} more</span>` : '');
+    const edit = can('canAddProgram') ? `<button class="btn btn-outline btn-xs" type="button" data-act="programAthletes" data-id="${escapeHtml(p.id)}" style="margin-top:8px">Add or remove athletes</button>` : '';
     return `<div class="tile">
       <div style="display:flex;justify-content:space-between;gap:8px">
         <div><div style="font-weight:700">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.sport)} · Coach ${escapeHtml(p.coach)}</div></div>${del}
       </div>
       <div class="pill-list" style="margin-top:9px">${days}</div>
+      <div class="form-label" style="margin-top:11px;margin-bottom:2px">Athletes (${athletes.length})</div>
+      <div style="font-size:13px;line-height:1.7">${athletes.length ? names : '<span class="card-desc">No athletes yet.</span>'}</div>${edit}
       <div class="form-label" style="margin-top:11px;margin-bottom:2px">Requirements</div>${reqs}
-      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);margin-top:11px;padding-top:9px;font-size:12.5px"><span class="t-muted">Enrolled</span><span style="font-weight:700;color:var(--brand)">${enrolled}</span></div>
     </div>`;
   }).join('');
+}
+/* Tick the learners in a programme. Saving makes the programme's own list. */
+function openProgramAthletes(programId) {
+  if (!can('canAddProgram')) return toast('You do not have permission.', 'error');
+  const p = state.programs.find(x => x.id === programId); if (!p) return;
+  const inProg = new Set(programAthletes(p).map(s => s.id));
+  const learners = [...state.students].sort((a, b) => (CLASS_OPTIONS.indexOf(a.class) - CLASS_OPTIONS.indexOf(b.class)) || a.name.localeCompare(b.name));
+  const classes = [...new Set(learners.map(s => s.class))];
+  openModal({
+    title: 'Athletes in ' + escapeHtml(p.name), wide: true,
+    bodyHtml: `<p class="card-desc" style="margin:0 0 10px">Tick every learner who trains in ${escapeHtml(p.name)}. A learner can be in more than one programme.</p>
+      <div class="form-row" style="margin-bottom:10px"><div><label class="form-label" for="paClass">Class</label><select class="input" id="paClass"><option value="">All classes</option>${classes.map(c => `<option>${escapeHtml(c)}</option>`).join('')}</select></div>
+        <div><label class="form-label" for="paSearch">Search</label><input class="input" id="paSearch" type="search" placeholder="Name"></div></div>
+      <div class="reg-summary" id="paCount"></div>
+      <div class="scroll-box" id="paList" style="max-height:380px">${learners.map(s => `<label class="roster-item pa-row" data-class="${escapeHtml(s.class)}" data-name="${escapeHtml(s.name.toLowerCase())}" style="cursor:pointer">
+        <div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.sport ? ' · ' + escapeHtml(s.sport) : ''}</div></div>
+        <input type="checkbox" class="pa-tick" value="${escapeHtml(s.id)}" ${inProg.has(s.id) ? 'checked' : ''} aria-label="${escapeHtml(s.name)} trains in ${escapeHtml(p.name)}"></label>`).join('')}</div>`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="paSave">Save athletes</button>',
+    onOpen(root) {
+      const count = () => { root.querySelector('#paCount').textContent = `${root.querySelectorAll('.pa-tick:checked').length} athletes ticked`; };
+      const filter = () => {
+        const c = root.querySelector('#paClass').value, q = root.querySelector('#paSearch').value.trim().toLowerCase();
+        root.querySelectorAll('.pa-row').forEach(r => { r.style.display = (!c || r.dataset.class === c) && (!q || r.dataset.name.includes(q)) ? '' : 'none'; });
+      };
+      root.querySelector('#paClass').addEventListener('change', filter);
+      root.querySelector('#paSearch').addEventListener('input', filter);
+      root.querySelector('#paList').addEventListener('change', count);
+      count();
+      root.querySelector('#paSave').addEventListener('click', () => {
+        p.athleteIds = [...root.querySelectorAll('.pa-tick:checked')].map(x => x.value);
+        saveState(); renderAll(); closeModal();
+        toast(`${p.name} now has ${p.athleteIds.length} athlete${p.athleteIds.length === 1 ? '' : 's'}.`, 'success');
+      });
+    },
+  });
 }
 
 function renderPerformanceTable() {
@@ -680,7 +722,7 @@ function renderPerformanceTable() {
     const notes = s.performanceNotes || [];
     const latest = notes[notes.length - 1];
     return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
+      <td style="font-weight:600">${learnerLink(s.id, s.name)}</td>
       <td>${escapeHtml(s.class)}</td>
       <td>${escapeHtml(s.sport)}</td>
       <td>${skillBadge(s.skillLevel)}</td>
@@ -694,40 +736,80 @@ function renderPerformanceTable() {
 function renderAttendanceProgramSelect() {
   const sel = el('attendanceProgram'); if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">Select a program…</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.sport)})</option>`).join('');
+  sel.innerHTML = '<option value="">Choose a programme…</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.sport)})</option>`).join('');
   if (cur) sel.value = cur;
+  const f = el('sessProgram');
+  if (f) { const c = f.value; f.innerHTML = '<option value="">All programmes</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join(''); if (c) f.value = c; }
+  if (el('attendanceDate') && !el('attendanceDate').value) el('attendanceDate').value = todayISO();
 }
+/* Training attendance: the same tap-a-name list as the class register. */
 function renderAttendanceRoster() {
   const roster = el('attendanceRoster'); if (!roster) return;
   const programId = el('attendanceProgram').value;
-  const date = el('attendanceDate').value;
-  if (!programId) { roster.innerHTML = '<div class="empty">Select a program to load enrolled athletes.</div>'; return; }
+  const date = el('attendanceDate').value || todayISO();
+  if (!programId) { roster.innerHTML = '<div class="empty">Choose a programme to list its athletes.</div>'; renderTrainingSummary(); return; }
   const program = state.programs.find(p => p.id === programId);
-  const athletes = state.students.filter(s => (s.sport || '').toLowerCase() === (program.sport || '').toLowerCase());
-  if (!athletes.length) { roster.innerHTML = '<div class="empty">No athletes enrolled for this sport.</div>'; return; }
+  const athletes = program ? programAthletes(program).sort((a, b) => a.name.localeCompare(b.name)) : [];
+  if (!athletes.length) { roster.innerHTML = '<div class="empty">No athletes in this programme yet. Add them under Sports → Programmes.</div>'; renderTrainingSummary(); return; }
   const existing = state.attendance.find(a => a.programId === programId && a.date === date);
   const presentMap = {};
   if (existing) (existing.records || []).forEach(r => { presentMap[r.studentId] = r.present; });
   roster.innerHTML = athletes.map(s => {
-    const present = presentMap[s.id] !== false;
-    return `<label class="roster-item" style="cursor:pointer">
-      <div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.level)}</div></div>
-      <span class="check"><span class="att-state" data-for="${escapeHtml(s.id)}" style="font-size:12px;font-weight:600;color:${present ? 'var(--success)' : 'var(--faint)'}">${present ? 'Present' : 'Absent'}</span>
-      <input type="checkbox" class="att-toggle" data-student="${escapeHtml(s.id)}" ${present ? 'checked' : ''}></span>
-    </label>`;
+    const st = presentMap[s.id] === false ? 'A' : 'P';
+    return `<div class="roster-item reg-row" data-student="${escapeHtml(s.id)}" data-status="${st}">
+      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</div></div>
+      <div class="seg seg-words" role="radiogroup" aria-label="Training attendance for ${escapeHtml(s.name)}">${[['P', 'Present'], ['A', 'Absent']].map(([k, label]) => `<button type="button" role="radio" aria-checked="${k === st}" class="${k === st ? 'on-' + k : ''}" data-set-att="${k}">${label}</button>`).join('')}</div>
+    </div>`;
   }).join('');
+  const note = el('trainingNote');
+  if (note) note.textContent = existing ? 'This session was saved before. Change anyone and press Save session to update it.' : 'Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.';
+  renderTrainingSummary();
 }
+function renderTrainingSummary() {
+  const box = el('trainSummary'); if (!box) return;
+  const rows = [...document.querySelectorAll('#attendanceRoster .reg-row')];
+  if (!rows.length) { box.style.display = 'none'; return; }
+  const missed = rows.filter(r => r.dataset.status === 'A').map(r => escapeHtml((state.students.find(s => s.id === r.dataset.student) || {}).name || ''));
+  box.style.display = '';
+  box.innerHTML = `<strong>${rows.length}</strong> athlete${rows.length === 1 ? '' : 's'} · <span class="t-ok">${rows.length - missed.length} present</span> · `
+    + (missed.length ? `<span class="t-bad">${missed.length} missed: ${missed.join(', ')}</span>` : '<span class="t-ok">nobody missed</span>');
+}
+function setAttendanceRow(row, st) {
+  row.dataset.status = st;
+  row.querySelectorAll('[data-set-att]').forEach(b => { const on = b.dataset.setAtt === st; b.className = on ? 'on-' + st : ''; b.setAttribute('aria-checked', on); });
+  renderTrainingSummary();
+}
+/* Sessions: every training session, with the names of who missed it. */
+function renderSessionList() {
+  const box = el('sessionList'); if (!box) return;
+  const f = el('sessProgram') ? el('sessProgram').value : '';
+  const list = state.attendance.filter(a => !f || a.programId === f).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  box.innerHTML = list.length ? list.map(a => {
+    const p = state.programs.find(x => x.id === a.programId) || { name: 'Programme removed' };
+    const recs = a.records || [];
+    const missed = recs.filter(r => !r.present).map(r => state.students.find(s => s.id === r.studentId)).filter(Boolean);
+    const change = can('canMarkAttendance') && p.id ? `<button class="btn btn-outline btn-xs" type="button" data-act="openSession" data-id="${escapeHtml(a.programId)}" data-date="${escapeHtml(a.date)}">Change</button>` : '';
+    return `<div class="abs-item"><div class="abs-head"><div><strong>${escapeHtml(fmtDay(a.date))}</strong> · <strong>${escapeHtml(p.name)}</strong> · <span class="card-desc">${recs.length - missed.length} of ${recs.length} came</span></div>${change}</div>
+      <div class="abs-names">${missed.length ? `<span class="abs-label t-bad">Missed:</span> ${missed.map(s => learnerLink(s.id, s.name)).join(', ')}` : '<span class="t-ok">Everyone came.</span>'}</div></div>`;
+  }).join('') : '<div class="empty">No training sessions recorded yet.</div>';
+}
+/* Who attends training: each athlete's sessions, rate and the dates missed. */
 function renderAttendanceTable() {
   const body = el('attendanceTableBody'); if (!body) return;
-  const athletes = state.students.filter(s => s.sport);
-  if (!athletes.length || !state.attendance.length) { body.innerHTML = '<tr><td colspan="5" class="empty">No sessions recorded yet.</td></tr>'; return; }
+  // Athletes with at least one session recorded.
+  const ids = new Set();
+  state.attendance.forEach(a => (a.records || []).forEach(r => ids.add(r.studentId)));
+  const athletes = state.students.filter(s => ids.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!athletes.length || !state.attendance.length) { body.innerHTML = '<tr><td colspan="6" class="empty">No sessions recorded yet.</td></tr>'; return; }
   body.innerHTML = athletes.map(s => {
     const att = studentAttendance(s.id);
+    const missed = state.attendance.filter(a => (a.records || []).some(r => r.studentId === s.id && !r.present)).map(a => a.date).sort().reverse();
     const color = att.rate >= 75 ? 'var(--success)' : att.rate >= 50 ? 'var(--warn)' : 'var(--danger)';
-    return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.sport)}</td><td class="t-center">${att.total}</td><td class="t-center">${att.present}</td><td class="t-center" style="font-weight:700;color:${color}">${att.rate}%</td></tr>`;
+    const progs = state.programs.filter(p => programAthletes(p).some(x => x.id === s.id)).map(p => p.name).join(', ') || s.sport || '—';
+    return `<tr><td style="font-weight:600">${learnerLink(s.id, s.name)}</td><td>${escapeHtml(progs)}</td><td class="t-center">${att.total}</td><td class="t-center">${att.present}</td><td class="t-center" style="font-weight:700;color:${color}">${att.total ? att.rate + '%' : '—'}</td>
+      <td>${missed.length ? `<span class="t-bad">${missed.slice(0, 4).map(d => escapeHtml(fmtDay(d, false))).join(', ')}</span>${missed.length > 4 ? ` <span class="card-desc">+ ${missed.length - 4} more</span>` : ''}` : '<span class="t-ok">None</span>'}</td></tr>`;
   }).join('');
 }
-
 function renderBursaryTable() {
   const body = el('bursaryTableBody'); if (!body) return;
   const athletes = state.students.filter(s => s.sport);
@@ -738,7 +820,7 @@ function renderBursaryTable() {
     const badge = eligible ? '<span class="badge badge-success">Eligible</span>' : '<span class="badge badge-neutral">Below threshold</span>';
     const action = can('canAwardBursary') ? `<button class="btn btn-gold btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Award</button>` : (s.bursaryPct > 0 ? `<span style="color:var(--warn);font-weight:700">${s.bursaryPct}%</span>` : '—');
     return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
+      <td style="font-weight:600">${learnerLink(s.id, s.name)}</td>
       <td class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.level)}</td>
       <td>${escapeHtml(s.sport)} ${skillBadge(s.skillLevel)}</td>
       <td class="t-center">${att.rate}% <span class="card-desc">(${att.present}/${att.total})</span></td>
@@ -870,10 +952,6 @@ function renderSportOptions() {
   const sports = Array.from(new Set([...SPORT_OPTIONS, ...state.programs.map(p => p.sport)])).sort();
   sel.innerHTML = '<option value="">— None —</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   if (cur) sel.value = cur;
-}
-function renderSubjectList() {
-  const dl = el('subjectList'); if (!dl) return;
-  dl.innerHTML = Array.from(new Set([...PRIMARY_SUBJECTS, ...O_LEVEL_SUBJECTS, ...A_LEVEL_SUBJECTS])).sort().map(s => `<option value="${escapeHtml(s)}"></option>`).join('');
 }
 function renderStudentSelects() {
   const fill = (id, label) => {
@@ -1068,7 +1146,7 @@ function renderAthleteProfiles() {
   if (apf) { const sports = [...new Set(state.students.filter(s => s.sport).map(s => s.sport))].sort(); const cur = apf.value; apf.innerHTML = '<option value="">All Sports</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); apf.value = cur; }
   const athletes = state.students.filter(s => s.sport && (!filter || (s.sport || '').toLowerCase() === filter));
   const ic = { Fit: 'badge-success', 'Minor Knock': 'badge-warn', Injured: 'badge-danger', Recovering: 'badge-warn' };
-  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
+  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${learnerLink(s.id, s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit details</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
 }
 
 /* ── Notices ───────────────────────────────────────────────────────────── */
@@ -1234,8 +1312,8 @@ const TAB_LABELS = {
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
   directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
-  register: [['daily', 'Daily register'], ['recent', 'Recent registers']],
-  academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
+  register: [['daily', 'Take register'], ['recent', 'Who was absent'], ['sheet', 'Term sheet']],
+  academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
   reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
@@ -1281,39 +1359,33 @@ function showSub(tab, sub) {
   MODULES.forEach(m => { if (m.onSub) { try { m.onSub(tab, chosen); } catch (err) { console.error(err); } } });
 }
 
-/* ── What's new (dashboard) ────────────────────────────────────────────── */
-/* Points directors at the capabilities added in this release. Hiding it is
-   remembered on this device only. */
-const WHATS_NEW_RELEASE = '2026-11';
-const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
-const WHATS_NEW = [
-  ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
-  ['academics/marksheet', 'Academics', 'Class mark sheet', "Enter a whole class's marks for one subject on one screen."],
-  ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
-  ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
-  ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
-  ['payments/bursaries', 'Fees', 'Bursaries for any learner', 'Needs-based, staff, academic or sports bursaries. The bill adjusts itself.'],
-  ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
-  ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
-  ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
-  ['admin/sms', 'Administration', 'SMS to parents', "Fee reminders, absence alerts and notices by SMS through your school's own Africa's Talking account."],,
+/* ── Today's jobs (dashboard) ──────────────────────────────────────────── */
+/* The everyday tasks this person can do, one tap each:
+   [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
+const TODAYS_JOBS = [
+  ['register/daily', "Take today's register", 'Tap the children who are not here', () => can('canMarkRegister')],
+  ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => hasTab('register')],
+  ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
+  ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
+  ['payments/record', 'Record a payment', 'The receipt prints straight away', () => can('canRecordPayment')],
+  ['payments/dashboard', 'Who owes fees', 'Balances, defaulters and reminders', () => hasTab('payments')],
+  ['sports/training', 'Mark training', 'Who came and who missed', () => can('canMarkAttendance')],
+  ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
 ];
-function whatsNewHidden() {
-  try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
-}
-function renderWhatsNew() {
-  const card = el('whatsNewCard'), list = el('whatsNewList');
+function renderTodaysJobs() {
+  const card = el('jobsCard'), list = el('jobsList');
   if (!card || !list) return;
-  const items = WHATS_NEW.filter(([to]) => { const [tab, sub] = to.split('/'); return hasTab(tab) && allowedSubs(tab).some(s => s[0] === sub); });
-  card.style.display = items.length && !whatsNewHidden() ? '' : 'none';
-  list.innerHTML = items.map(([to, where, title, desc]) => `<div class="wn-item">
-      <div class="wn-where">${escapeHtml(where)}</div><div class="wn-title">${escapeHtml(title)}</div><div class="wn-desc">${escapeHtml(desc)}</div>
-      <button class="btn btn-outline btn-xs" type="button" data-act="goto" data-to="${escapeHtml(to)}">Open ${icon('right', 13)}</button>
-    </div>`).join('');
-}
-function hideWhatsNew() {
-  try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_RELEASE); } catch (_) {}
-  const card = el('whatsNewCard'); if (card) card.style.display = 'none';
+  const jobs = TODAYS_JOBS.filter(([to, , , ok]) => {
+    if (!ok()) return false;
+    if (to.startsWith('act:')) return true;
+    const [tab, sub] = to.split('/');
+    return hasTab(tab) && allowedSubs(tab).some(x => x[0] === sub);
+  });
+  card.style.display = jobs.length ? '' : 'none';
+  list.innerHTML = jobs.map(([to, label, hint]) => {
+    const go = to.startsWith('act:') ? `data-act="${escapeHtml(to.slice(4))}"` : `data-act="goto" data-to="${escapeHtml(to)}"`;
+    return `<button class="job" type="button" ${go}><span class="job-label">${escapeHtml(label)}</span><span class="job-hint">${escapeHtml(hint)}</span></button>`;
+  }).join('');
 }
 
 /* =========================================================================
@@ -1328,9 +1400,16 @@ Object.assign(ACTIONS, {
   editStudent: d => openStudentEdit(d.id),
   deleteStudent: d => deleteStudent(d.id),
   notes: d => openNotes(d.id),
-  academic: d => openAcademic(d.id),
   voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
   deleteProgram: d => deleteProgram(d.id),
+  programAthletes: d => openProgramAthletes(d.id),
+  // From Sessions: open that session on the list above, ready to change.
+  openSession: d => {
+    switchTab('sports', 'training');
+    el('attendanceProgram').value = d.id;
+    el('attendanceDate').value = d.date;
+    renderAttendanceRoster();
+  },
   deleteConduct: d => deleteConduct(d.id),
   setBursary: d => setBursary(d.id),
   setActiveTerm: d => setActiveTerm(d.id),
@@ -1345,7 +1424,6 @@ Object.assign(ACTIONS, {
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
   goto: d => { const [tab, sub] = String(d.to || '').split('/'); switchTab(tab, sub); },
-  dismissWhatsNew: () => hideWhatsNew(),
 });
 function handleDelegatedClick(e) {
   const modalClose = e.target.closest('[data-modal-close]');
@@ -1389,19 +1467,17 @@ function setupBindings() {
   on('saveAttendanceBtn', 'click', () => {
     const programId = el('attendanceProgram').value;
     const date = el('attendanceDate').value || todayISO();
-    if (!programId) return toast('Choose a program first.', 'error');
-    const boxes = document.querySelectorAll('#attendanceRoster .att-toggle');
-    if (!boxes.length) return toast('No athletes to mark.', 'error');
-    saveAttendance(programId, date, Array.from(boxes).map(cb => ({ studentId: cb.dataset.student, present: cb.checked })));
+    if (!programId) return toast('Choose a programme first.', 'error');
+    if (date > todayISO()) return toast('You cannot mark a session for a future date.', 'error');
+    const rows = document.querySelectorAll('#attendanceRoster .reg-row');
+    if (!rows.length) return toast('No athletes to mark.', 'error');
+    saveAttendance(programId, date, Array.from(rows).map(r => ({ studentId: r.dataset.student, present: r.dataset.status !== 'A' })));
   });
-
-  // Live present/absent labels in the roster.
-  const roster = el('attendanceRoster');
-  if (roster) roster.addEventListener('change', e => {
-    if (!e.target.classList.contains('att-toggle')) return;
-    const lbl = roster.querySelector(`.att-state[data-for="${CSS.escape(e.target.dataset.student)}"]`);
-    if (lbl) { lbl.textContent = e.target.checked ? 'Present' : 'Absent'; lbl.style.color = e.target.checked ? 'var(--success)' : 'var(--faint)'; }
+  on('attendanceRoster', 'click', e => {
+    const b = e.target.closest('[data-set-att]'); if (!b) return;
+    setAttendanceRow(b.closest('.reg-row'), b.dataset.setAtt);
   });
+  on('sessProgram', 'change', renderSessionList);
 
   // Export / import (header + admin)
   ['exportBtn', 'adminExportBtn'].forEach(id => on(id, 'click', exportLedger));
@@ -1574,7 +1650,6 @@ function initApp() {
   show('auditLogCard', can('canManageUsers'));
   show('settingsCard', can('canManageSettings'));
   show('conductFormCard', can('canLogConduct'));
-  show('academicFormCard', can('canAddAcademic'));
   show('perfFormCard', can('canLogPerformance'));
   show('termMgmtCard', can('canManageTerms'));
   show('feeStructCard', can('canManageTerms'));

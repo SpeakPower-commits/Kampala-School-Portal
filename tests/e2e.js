@@ -51,6 +51,20 @@ async function tab(page, name, sub) {
   await page.click(`.nav-tab[data-tab="${name}"]`);
   if (sub) await page.click(`#subNav [data-sub="${sub}"]`);
 }
+// Academics → Enter marks: one subject for a class, as a teacher does it.
+async function enterMarks(page, cls, subject, scores) {
+  await tab(page, 'academics', 'marks');
+  await page.selectOption('#msClass', cls);
+  await page.selectOption('#msSubject', subject);
+  for (const [id, score] of Object.entries(scores)) await page.fill(`#markSheetRoster .ms-score[data-student="${id}"]`, String(score));
+  await page.click('#msSaveBtn');
+  await page.waitForTimeout(120);
+}
+async function classResults(page, cls) {
+  await tab(page, 'academics', 'results');
+  await page.selectOption('#crClass', cls);
+  return (await page.textContent('#classResults')).replace(/\s+/g, ' ');
+}
 
 (async () => {
   const launch = { args: ['--no-sandbox'] };
@@ -63,7 +77,7 @@ async function tab(page, name, sub) {
   await page.goto(BASE, { waitUntil: 'networkidle' });
 
   await step('static assets resolve (service worker, icons, manifest)', async () => {
-    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
+    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/learner.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
       const res = await page.request.get(ORIGIN + new URL(BASE).pathname.replace(/[^/]*$/, '') + path.slice(1));
       assert(res.ok(), path + ' returned ' + res.status());
     }
@@ -199,16 +213,11 @@ async function tab(page, name, sub) {
   });
 
   await step('O-Level aggregate shows for a sitting', async () => {
-    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['Mathematics', '82'], ['English Language', '75'], ['Physics', '68']]) {
-      await page.selectOption('#academicStudent', 'NPA/2026/001');
-      await page.selectOption('#academicForm select[name="examSet"]', 'EOT');
-      await page.fill('#academicForm input[name="subject"]', subj);
-      await page.fill('#academicForm input[name="score"]', score);
-      await page.click('#academicForm button[type="submit"]');
-      await page.waitForTimeout(120);
+      await enterMarks(page, 'S.4', subj, { 'NPA/2026/001': score });
     }
-    assert(/Aggregate/.test(await page.textContent('#academicTableBody')), 'no aggregate shown');
+    const text = await classResults(page, 'S.4');
+    assert(/Aggregate/.test(text) && /Mathematics/.test(text), 'no aggregate shown: ' + text);
   });
 
   await step('switching to competency grading re-grades entries', async () => {
@@ -216,8 +225,7 @@ async function tab(page, name, sub) {
     await page.selectOption('#setGrading', 'cbc');
     await page.click('#settingsForm button[type="submit"]');
     await page.waitForTimeout(150);
-    await tab(page, 'academics', 'marks');
-    assert(/competency/.test(await page.textContent('#academicTableBody')), 'competency grades not shown');
+    assert(/competency/.test(await classResults(page, 'S.4')), 'competency grades not shown');
   });
 
   await step('financial actions are audited', async () => {
@@ -232,8 +240,13 @@ async function tab(page, name, sub) {
   await step('report card prints with school name and result', async () => {
     await tab(page, 'directory', 'list');
     await page.evaluate(() => { window.print = () => {}; });
-    await page.click('#studentTableBody button[data-act="reportCard"]');
+    // Open the learner from the list, then Marks → Print report card.
+    await page.click('#studentTableBody button[data-act="learner"]');
+    await page.waitForSelector('.modal #learnerBody');
+    await page.click('.modal [data-lsec="marks"]');
+    await page.click('.modal [data-act="reportCard"]');
     await page.waitForTimeout(150);
+    await page.click('.modal [data-modal-close]');
     const doc = await page.textContent('#printArea');
     assert(/NAKAWA PROGRESSIVE ACADEMY/i.test(doc), 'report card missing school name');
     assert(/competency|Aggregate/i.test(doc), 'report card missing academic result');
@@ -329,17 +342,23 @@ async function tab(page, name, sub) {
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     secondId = await page.evaluate(() => state.students.find(s => s.name === 'Mugisha Brian').id);
-    await tab(page, 'academics', 'marksheet');
+    // Enter marks lists the class as soon as the class and subject are chosen,
+    // and shows the grade as a score is typed.
+    await tab(page, 'academics', 'marks');
+    assert(!(await page.$('#msLoadBtn')), 'the Load class button is still there');
     await page.selectOption('#msClass', 'S.4');
-    await page.fill('#msSubject', 'Biology');
-    await page.click('#msLoadBtn');
+    await page.selectOption('#msSubject', 'Biology');
+    assert(await page.$$eval('#markSheetRoster .ms-score', n => n.length) === 2, 'class not listed');
     await page.fill('#markSheetRoster .ms-score[data-student="NPA/2026/001"]', '77');
+    assert(/^[A-Z]\d?$|^[A-E]$|^D\d$|^C\d$/.test((await page.textContent('#markSheetRoster .ms-row:has([data-student="NPA/2026/001"]) .ms-grade')).trim()), 'grade not shown while typing');
+    assert(/1 of 2 marked/.test(await page.textContent('#msCounter')), 'counter: ' + await page.textContent('#msCounter'));
     await page.fill(`#markSheetRoster .ms-score[data-student="${secondId}"]`, '60');
     await page.click('#msSaveBtn');
     await page.waitForTimeout(150);
     const pos = await page.evaluate(() => classPositions(getCurrentTerm().id, 'S.4'));
     assert(pos['NPA/2026/001'].pos === 1 && pos[secondId].pos === 2 && pos[secondId].of === 2, 'positions ' + JSON.stringify(pos));
-    assert(/1 \/ 2/.test(await page.textContent('#academicTableBody')), 'position not shown in results table');
+    const res = await classResults(page, 'S.4');
+    assert(/1st\s*Nakato Sarah/.test(res) && /2nd\s*Mugisha Brian/.test(res) && /Biology/.test(res), 'positions not shown in class results: ' + res);
   });
 
   await step('Primary uses PLE grading: four subjects, aggregate and division', async () => {
@@ -352,13 +371,8 @@ async function tab(page, name, sub) {
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);
-    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['English Language', '85'], ['Mathematics', '72'], ['Science', '66'], ['Social Studies', '58']]) {
-      await page.selectOption('#academicStudent', pid);
-      await page.fill('#academicForm input[name="subject"]', subj);
-      await page.fill('#academicForm input[name="score"]', score);
-      await page.click('#academicForm button[type="submit"]');
-      await page.waitForTimeout(100);
+      await enterMarks(page, 'P.7', subj, { [pid]: score });
     }
     const label = await page.evaluate(id => studentTermResult(state.students.find(s => s.id === id), getCurrentTerm().id).label, pid);
     assert(label === 'Aggregate 11 · Division I', 'PLE result = ' + label);
@@ -392,6 +406,18 @@ async function tab(page, name, sub) {
     await tab(page, 'academics', 'reportcards');
     await page.selectOption('#rcClass', 'S.4');
     await page.fill('#rcNextBegins', '2027-05-24');
+    // Every child is listed with View and Print; the big button says what it prints.
+    assert(await page.textContent('#rcPrintBtn') === 'Print all 2 report cards for S.4', 'button: ' + await page.textContent('#rcPrintBtn'));
+    const listed = (await page.textContent('#rcList')).replace(/\s+/g, ' ');
+    assert(/Mugisha Brian/.test(listed) && /Nakato Sarah/.test(listed), 'list: ' + listed);
+    await page.click(`#rcList [data-act="previewReport"][data-id="${secondId}"]`);
+    await page.waitForSelector('.modal .report-card');
+    const shown = await page.textContent('.modal .report-card');
+    assert(/Mugisha Brian/.test(shown) && !/Nakato Sarah/.test(shown) && /2027-05-24/.test(shown), 'preview is not that child\'s card');
+    await page.click('.modal [data-modal-close]');
+    await page.click(`#rcList [data-act="reportCard"][data-id="${secondId}"]`);
+    await page.waitForTimeout(150);
+    assert(await page.$$eval('#printArea .report-card', n => n.length) === 1 && /Mugisha Brian/.test(await page.textContent('#printArea')), 'Print did not print just that child');
     await page.click('#rcPrintBtn');
     await page.waitForTimeout(150);
     const cards = await page.$$eval('#printArea .report-card', n => n.length);
@@ -406,6 +432,9 @@ async function tab(page, name, sub) {
     await tab(page, 'register', 'daily');
     await page.selectOption('#regClass', 'S.4');
     await page.click(`#registerRoster .reg-row[data-student="${secondId}"] [data-set-status="A"]`);
+    const line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/2 learners · 1 present · 1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
+    assert(await page.textContent(`#registerRoster .reg-row[data-student="${secondId}"] .on-A`) === 'Absent', 'the button does not say Absent');
     await page.click('#regSaveBtn');
     await page.waitForTimeout(150);
     const rec = await page.evaluate(id => state.registers[0].records.find(r => r.studentId === id).status, secondId);
@@ -421,21 +450,59 @@ async function tab(page, name, sub) {
     assert(/Registers marked\s*1 \/ 2/.test(text), 'registers marked: ' + text);
     assert(/Present\s*1 \(50%\)/.test(text) && /Absent\s*1/.test(text), 'counts: ' + text);
     assert(/Not marked yet: P\.7/.test(text), 'unmarked class missing: ' + text);
+    assert(/Absent today\s*S\.4:\s*Mugisha Brian/.test(text), 'absent child not named: ' + text);
   });
 
-  await step("What's new opens the right sub-tab and stays hidden once dismissed", async () => {
-    assert(await page.isVisible('#whatsNewCard'), "What's new not shown");
-    const items = await page.$$eval('#whatsNewList [data-to]', bs => bs.map(b => b.dataset.to));
-    for (const to of ['register/daily', 'payments/terms', 'payments/bursaries', 'admin/staff']) assert(items.includes(to), `missing ${to} in ${items.join(' ')}`);
-    await page.click('#whatsNewList [data-to="payments/terms"]');
-    assert(await page.isVisible('#termMgmtCard') && !(await page.isVisible('#recPaymentCard')), 'did not land on Fees → Terms');
-    const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
-    assert(active === 'Terms & fee structures', 'active sub-tab: ' + active);
+  await step("Today's jobs open the right screens", async () => {
     await tab(page, 'overview');
-    await page.click('[data-act="dismissWhatsNew"]');
-    await page.reload({ waitUntil: 'networkidle' });
-    await page.waitForSelector('#appShell', { state: 'visible' });
-    assert(await page.isVisible('#attTodayCard') && !(await page.isVisible('#whatsNewCard')), "What's new came back after a reload");
+    assert(await page.isVisible('#jobsCard'), "Today's jobs not shown");
+    const jobs = await page.$$eval('#jobsList .job', bs => bs.map(b => b.dataset.to || 'act:' + b.dataset.act));
+    for (const to of ['register/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    await page.click('#jobsList [data-to="academics/reportcards"]');
+    assert(await page.isVisible('#rcList') && !(await page.isVisible('#markSheetRoster')), 'did not land on Academics → Report cards');
+    const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
+    assert(active === 'Report cards', 'active sub-tab: ' + active);
+    await tab(page, 'overview');
+    await page.click('#jobsList [data-act="absentToday"]');
+    const today = await page.evaluate(() => todayISO());
+    assert(await page.isVisible('#absenceList') && await page.inputValue('#absFrom') === today && await page.inputValue('#absTo') === today, 'Who is absent today did not open on today');
+  });
+
+  await step('Who was absent names the child, and "Change this register" opens that register', async () => {
+    await tab(page, 'register', 'recent');
+    const list = (await page.textContent('#absenceList')).replace(/\s+/g, ' ');
+    assert(/S\.4/.test(list) && /1 of 2 present/.test(list) && /Absent: Mugisha Brian/.test(list), 'list: ' + list);
+    assert(/Mugisha Brian \(1 day\)/.test(await page.textContent('#absTop')), 'most-absent line missing');
+    await page.click('#absenceList [data-act="openRegister"]');
+    assert(await page.isVisible('#registerRoster') && !(await page.isVisible('#absenceList')), 'did not open Take register');
+    assert(await page.inputValue('#regClass') === 'S.4', 'class not loaded');
+    const st = await page.getAttribute(`#registerRoster .reg-row[data-student="${secondId}"]`, 'data-status');
+    assert(st === 'A', 'the saved status is not shown: ' + st);
+  });
+
+  await step('the term sheet shows each child by day, like the paper register, with totals', async () => {
+    await tab(page, 'register', 'sheet');
+    await page.selectOption('#tsClass', 'S.4');
+    const rows = await page.$$eval('#termSheet .ts tbody tr', trs => trs.map(tr => [...tr.cells].map(td => td.textContent.trim())));
+    const brian = rows.find(r => r[0] === 'Mugisha Brian');
+    assert(rows.length === 2 && brian, 'rows: ' + JSON.stringify(rows));
+    // name, today's cell, present, absent, rate
+    assert(JSON.stringify(brian) === '["Mugisha Brian","✗","0","1","0%"]', 'Brian: ' + JSON.stringify(brian));
+    assert(await page.$eval('#termSheet tfoot tr', tr => tr.cells[1].textContent.trim()) === '1', 'absent-that-day total');
+    assert(await page.$eval(`#termSheet .ts tbody tr:has-text("Mugisha Brian")`, tr => tr.classList.contains('ts-low')), 'low attendance not marked');
+  });
+
+  await step("a child's name opens their learner page, with the dates absent", async () => {
+    await tab(page, 'register', 'recent');
+    await page.click(`#absenceList [data-act="learner"][data-id="${secondId}"]`);
+    await page.waitForSelector('.modal #learnerBody');
+    try {
+      await page.click('.modal [data-lsec="attendance"]');
+      const today = await page.evaluate(() => fmtDay(todayISO()));
+      const absent = await page.textContent('.modal #learnerBody .lp-row:has(.lp-label:text-is("Days absent"))');
+      assert(absent.includes(today), 'dates absent: ' + absent);
+      for (const sec of ['marks', 'fees', 'sports', 'discipline']) assert(await page.isVisible(`.modal [data-lsec="${sec}"]`), sec + ' section missing for the director');
+    } finally { await page.click('.modal [data-modal-close]'); }
   });
 
   await step('a teacher account can be limited to chosen classes', async () => {
@@ -526,6 +593,30 @@ async function tab(page, name, sub) {
     await page.click('#programForm button[type="submit"]');
     await page.waitForTimeout(150);
     assert(/Football U-16/.test(await page.textContent('#programsGrid')), 'programme not added from Sports → Programmes');
+    // The coach puts athletes in the programme by name.
+    const [a1, a2] = await page.evaluate(() => state.students.filter(s => s.class === 'S.4').slice(0, 2).map(s => ({ id: s.id, name: s.name })));
+    const progId = await page.evaluate(() => state.programs.find(p => p.name === 'Football U-16').id);
+    await page.click(`#programsGrid [data-act="programAthletes"][data-id="${progId}"]`);
+    await page.waitForSelector('.modal #paList');
+    await page.check(`.modal .pa-tick[value="${a1.id}"]`);
+    await page.check(`.modal .pa-tick[value="${a2.id}"]`);
+    await page.click('#paSave');
+    await page.waitForTimeout(150);
+    const card = await page.$eval(`#programsGrid [data-id="${progId}"][data-act="programAthletes"]`, b => b.closest('.tile').textContent.replace(/\s+/g, ' '));
+    assert(card.includes('Athletes (2)') && card.includes(a1.name) && card.includes(a2.name), 'athletes not listed on the programme: ' + card);
+    // A session: tap Absent for one athlete; the line, the sessions list and who-attends name them.
+    await page.click('#subNav [data-sub="training"]');
+    await page.selectOption('#attendanceProgram', progId);
+    assert(await page.inputValue('#attendanceDate') === await page.evaluate(() => todayISO()), 'session date is not today');
+    await page.click(`#attendanceRoster .reg-row[data-student="${a2.id}"] [data-set-att="A"]`);
+    assert((await page.textContent('#trainSummary')).includes('1 missed: ' + a2.name), 'running line: ' + await page.textContent('#trainSummary'));
+    await page.click('#saveAttendanceBtn');
+    await page.waitForTimeout(150);
+    const sessions = (await page.textContent('#sessionList')).replace(/\s+/g, ' ');
+    assert(sessions.includes('Football U-16') && sessions.includes('1 of 2 came') && sessions.includes('Missed: ' + a2.name), 'sessions: ' + sessions);
+    const today = await page.evaluate(() => fmtDay(todayISO(), false));
+    const row = await page.$eval('#attendanceTableBody', b => [...b.rows].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | '));
+    assert(row.includes(a2.name) && row.includes(today), 'who attends: ' + row);
   });
 
   await step('signing in right after someone signs out keeps you signed in', async () => {
@@ -604,11 +695,11 @@ async function tab(page, name, sub) {
     await tab(page, 'register');
     const classes = await page.$$eval('#regClass option', o => o.map(x => x.value).filter(Boolean));
     assert(JSON.stringify(classes) === '["S.4"]', 'teacher classes ' + JSON.stringify(classes));
-    const learners = await page.$$eval('#academicStudent option', o => o.map(x => x.textContent).filter(t => t !== 'Choose…'));
-    assert(learners.length && learners.every(t => /S\.4/.test(t)), 'teacher sees other classes: ' + learners.join(' | '));
     await tab(page, 'academics');
+    const markClasses = await page.$$eval('#msClass option', o => o.map(x => x.value).filter(Boolean));
+    assert(JSON.stringify(markClasses) === '["S.4"]', 'teacher can enter marks for other classes: ' + JSON.stringify(markClasses));
     const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.dataset.sub));
-    assert(JSON.stringify(subs) === '["marks","marksheet","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
+    assert(JSON.stringify(subs) === '["marks","results","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
   });
 
   /* ───────────────────────── Migration from v4 ───────────────────────── */

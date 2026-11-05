@@ -98,6 +98,24 @@ function uid() {
 }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function nowISO() { return new Date().toISOString(); }
+/* Dates are kept as YYYY-MM-DD (UTC, like todayISO). addDaysISO('2026-11-05', -6)
+   is '2026-10-30'; fmtDay('2026-11-05') is 'Thu 5 Nov 2026' (no year if year=false). */
+function addDaysISO(iso, n) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+/* A learner's name that opens their learner page (learner.js). */
+function learnerLink(id, name) {
+  return `<button type="button" class="link-btn" data-act="learner" data-id="${escapeHtml(id)}">${escapeHtml(name)}</button>`;
+}
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDay(iso, year = true) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso || '')) return iso || '';
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00Z');
+  return `${DAY_NAMES[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]}${year ? ' ' + d.getUTCFullYear() : ''}`;
+}
 function currency() { return (state.settings && state.settings.currency) || 'UGX'; }
 function fmtMoney(n) { return currency() + ' ' + Number(n || 0).toLocaleString('en-UG'); }
 function escapeHtml(s) {

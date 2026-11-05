@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v3.5.0
+### Offline-first school administration for Ugandan schools & academies — v3.6.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -23,11 +23,16 @@ device.
 - **Know who owes what.** A finance dashboard with this term's collection rate,
   arrears, collections by payment method, fees by class and the top defaulters,
   each one tap away from an SMS or WhatsApp reminder.
-- **Report cards in minutes.** A class mark sheet for each subject, beginning /
-  mid / end-of-term marks, class and stream positions, PLE aggregates and
-  divisions, teacher comments — then print the whole class, one page per learner.
-- **Daily class register.** Present, absent, late or excused, with one-tap
-  messages to the guardians of absent learners.
+- **Report cards in minutes.** Enter a whole class's marks for a subject on one
+  screen (the grade shows as you type), see the class results with positions,
+  PLE aggregates and divisions, write comments, then view or print one child's
+  card or the whole class, one page per learner.
+- **Daily class register, with names.** Tap Present, Absent, Late or Excused for
+  each child; the screen names who is absent as you go. "Who was absent" and a
+  term sheet like the paper register show exactly which child missed which day,
+  and the Dashboard names today's absent children.
+- **One page per learner.** Tap any child's name to see their attendance (with
+  the dates absent), marks and report card, fees, sports and discipline.
 - **Parent portal (online edition).** Parents sign in on their phone with a
   code sent by SMS and see their children's fees and receipts, published report
   cards, attendance and school notices. They see only their own children.
@@ -56,10 +61,10 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 
 | Module | Sub-tabs |
 |--------|----------|
-| **Dashboard** | Fees at a glance, today's class attendance, and what's new |
+| **Dashboard** | Today's jobs (one tap each), fees at a glance, and today's attendance with the absent children's names |
 | **Students** | All students · Admit a student · Import from Excel |
-| **Attendance** | Daily register (every class, every morning) · Recent registers |
-| **Academics** | Enter marks · Mark sheet · Comments · Report cards · Grading scales |
+| **Attendance** | Take register · Who was absent · Term sheet |
+| **Academics** | Enter marks · Class results · Comments · Report cards · Grading scales |
 | **Fees** | Record payment · Fees dashboard · Terms & fee structures · Bursaries |
 | **Sports** | Programmes · Training attendance · Competitions & squads · Athletes · Bursary candidates |
 | **Discipline** | Conduct log, with messages to guardians |
@@ -107,11 +112,52 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 | When | Where | What |
 |------|-------|------|
 | Start of term | Fees → Terms & fee structures | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
-| Every morning | Attendance → Daily register | Each class teacher calls the register; message the guardians of absent learners. The Dashboard shows which classes are still to be marked. |
+| Every morning | Attendance → Take register | Each class teacher calls the register; message the guardians of absent learners. The Dashboard names the absent children and shows which classes are still to be marked. |
 | Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, and print the receipt. |
 | Weekly | Fees → Fees dashboard | Review the collection rate and top defaulters; send **Fee reminders**. |
-| Test / exam time | Academics → Mark sheet | Enter a subject for the whole class (beginning, mid or end of term). |
-| End of term | Academics → Comments, then Report cards | Write comments, then **Print class** for report cards. |
+| Test / exam time | Academics → Enter marks | Enter a subject for the whole class (beginning, mid or end of term). |
+| End of term | Academics → Comments, then Report cards | Write comments, check **Class results**, then view or print each card, or **Print all** for the class. |
+
+## How to: the daily jobs
+
+**Take the register** (class teacher, every morning)
+1. **Attendance → Take register.** Choose the class (and stream). Everyone starts as Present.
+2. Tap **Absent**, **Late** or **Excused** for each child who is not here. The line above the
+   list names them as you go.
+3. Press **Save register**. The absent children are listed with SMS and WhatsApp buttons for
+   their guardians.
+
+**See which child was absent**
+- **Dashboard:** "Absent today" names them, class by class.
+- **Attendance → Who was absent:** every register, with names. Pick a class and dates.
+  **Change this register** corrects one.
+- **Attendance → Term sheet:** the class like the paper register, with ✓ and ✗ per day and
+  each child's totals. Press **Print** for the file.
+- Tap a child's name for their page, which lists the dates they were absent.
+
+**Enter marks** (subject teacher)
+1. **Academics → Enter marks.** Choose the class, the subject and the exam.
+2. Type each child's score. The grade shows as you type, and Enter moves to the next child.
+3. Press **Save marks**.
+
+**Report cards** (end of term)
+1. **Academics → Class results:** check every child's marks, average and position.
+2. **Academics → Comments:** write the comments (or **Suggest for blanks**), then **Save comments**.
+3. **Academics → Report cards:** choose the class and term, and fill in "Printed on every card".
+   - **View** shows one child's card.
+   - **Print** prints it.
+   - **Print all … report cards** prints the class, one page per child.
+
+**Sports training** (head of sports)
+1. Once per programme: **Sports → Programmes → Add or remove athletes**. Tick the learners
+   who train in it.
+2. Each session: **Sports → Training attendance.** Choose the programme, tap **Absent** for each
+   athlete who did not come, and press **Save session**.
+3. **Sessions** names who missed each session. **Who attends training** shows each athlete's
+   rate and the dates they missed.
+
+**Everything about one child:** tap their name anywhere (Students, registers, results, report
+cards, sports) for their details, attendance, marks, fees, sports and discipline.
 
 > The four seed accounts (`exec`, `admin`, `bursary`, `coach`) exist only to
 > bootstrap the first sign-in. Change every password immediately and create
@@ -128,8 +174,9 @@ school-portal/
 ├── core.js             Shared helpers: formatting, icons, dialogs, printing (staff app and parent portal)
 ├── app.js              Core: learners, payments, sports, conduct, UI shell
 ├── billing.js          Terms, fee structures, bills, arrears, receipts, finance dashboard
-├── academics.js        Grading scales, marks, positions, comments, report cards
-├── register.js         Daily class register
+├── academics.js        Grading scales, marks, class results, comments, report cards
+├── register.js         Class register, who was absent, term sheet
+├── learner.js          One page per learner: attendance, marks, fees, sports
 ├── tools.js            CSV import/export, logo & colours, daily snapshots
 ├── auth.js             Authentication and roles (PBKDF2 password hashing)
 ├── service-worker.js   Offline cache (network-first for app code)
@@ -370,4 +417,4 @@ the address it prints.
 
 ---
 
-**Version:** 3.5.0 · **License:** MIT — free for any school.
+**Version:** 3.6.0 · **License:** MIT — free for any school.

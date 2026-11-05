@@ -317,11 +317,10 @@ try {
     await signIn(DIRECTOR, 'Director2026');
     await page.waitForSelector('#appShell', { state: 'visible' });
     await tab('academics', 'marks');
-    await page.selectOption('#academicStudent', 'KHS/2026/001');
-    await page.selectOption('#academicForm select[name="examSet"]', 'EOT');
-    await page.fill('#academicForm input[name="subject"]', 'Mathematics');
-    await page.fill('#academicForm input[name="score"]', '82');
-    await page.click('#academicForm button[type="submit"]');
+    await page.selectOption('#msClass', 'S.4');
+    await page.selectOption('#msSubject', 'Mathematics');
+    await page.fill('#markSheetRoster .ms-score[data-student="KHS/2026/001"]', '82');
+    await page.click('#msSaveBtn');
     await saved();
     await tab('academics', 'reportcards');
     await until(() => /is not published/.test(document.getElementById('publishStatus').textContent));
@@ -355,6 +354,21 @@ try {
     const log = await page.textContent('#smsLogBody');
     assert(/Notice to guardians/.test(log) && /Fee reminders/.test(log) && /Absence messages · S\.4/.test(log), log);
     assert(await count('sms_campaigns') === 3, 'runs in the database: ' + await count('sms_campaigns'));
+  });
+
+  await step("a programme's athletes, chosen by name, reach the database", async () => {
+    await tab('sports', 'programmes');
+    await page.fill('#programForm input[name="name"]', 'Netball A');
+    await page.fill('#programForm input[name="sport"]', 'Netball');
+    await page.click('#programForm button[type="submit"]');
+    await saved();
+    const id = await app(() => window.KSA.state().programs.find(p => p.name === 'Netball A').id);
+    await page.click(`#programsGrid [data-act="programAthletes"][data-id="${id}"]`);
+    await page.check('.modal .pa-tick[value="KHS/2026/001"]');
+    await page.click('#paSave');
+    await saved();
+    const doc = await one("select data from public.school_docs where school_id = $1 and collection = 'programs' and id = $2", [school, id]);
+    assert(doc && JSON.stringify(doc.data.athleteIds) === '["KHS/2026/001"]', JSON.stringify(doc));
   });
 
   // ── The parent portal, as a guardian would use it on their phone ──

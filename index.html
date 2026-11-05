@@ -88,10 +88,10 @@
 
     <!-- DASHBOARD -->
     <section id="panel-overview" class="panel">
-      <div class="card card-pad" id="whatsNewCard" style="display:none">
-        <div class="card-head"><div><div class="card-title">What's new in your portal</div><p class="card-desc">All of this is ready to use. Tap Open to go straight to it.</p></div>
-          <button class="btn btn-ghost btn-sm" type="button" data-act="dismissWhatsNew">Got it, hide this</button></div>
-        <div class="whats-new" id="whatsNewList"></div>
+      <div class="card card-pad" id="jobsCard" style="display:none">
+        <div class="card-title">Today's jobs</div>
+        <p class="card-desc">The everyday tasks, one tap each.</p>
+        <div class="jobs" id="jobsList" style="margin-top:12px"></div>
       </div>
       <div class="grid grid-2">
         <div class="card card-pad" id="attTodayCard">
@@ -175,65 +175,73 @@
       </div>
     </section>
 
-    <!-- ATTENDANCE: the daily class register -->
+    <!-- ATTENDANCE: take register · who was absent · term sheet -->
     <section id="panel-register" class="panel">
       <div class="card card-pad" data-sub="daily">
-        <div class="card-head"><div><div class="card-title">Class register</div><p class="card-desc" id="registerNote">Everyone starts as present. Tap A, L or E to change a learner.</p></div>
+        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.</p></div>
           <div class="pill-list" id="registerToday"></div></div>
         <div class="form-row" style="align-items:end">
           <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
-          <div><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
+          <div id="regStreamWrap"><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
           <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
-          <div class="toolbar"><button class="btn btn-outline" id="regAllPresentBtn" type="button">All present</button><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
         </div>
-        <p class="card-desc" style="margin:10px 0 6px"><strong>P</strong> present · <strong>A</strong> absent · <strong>L</strong> late · <strong>E</strong> excused</p>
-        <div class="scroll-box" id="registerRoster" style="max-height:520px"></div>
+        <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
+        <div class="toolbar" style="margin-top:12px"><button class="btn btn-outline" id="regAllPresentBtn" type="button">Mark everyone present</button><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
         <div id="registerAbsentees" style="margin-top:14px"></div>
       </div>
       <div class="card card-pad" data-sub="recent">
-        <div class="card-title">Recent registers</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>Class</th><th class="t-center">Present</th><th class="t-center">Absent</th><th class="t-center">Rate</th><th>Marked by</th><th></th></tr></thead><tbody id="registerHistoryBody"></tbody></table></div>
+        <div class="card-title">Who was absent</div>
+        <p class="card-desc">Every register taken, with the names of the children who were absent, late or excused. Tap a name to see that child's attendance.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="absClass">Class</label><select class="input" id="absClass"></select></div>
+          <div><label class="form-label" for="absFrom">From</label><input class="input" id="absFrom" type="date"></div>
+          <div><label class="form-label" for="absTo">To</label><input class="input" id="absTo" type="date"></div>
+        </div>
+        <div id="absTop" style="margin-top:12px"></div>
+        <div id="absenceList" style="margin-top:4px"></div>
+      </div>
+      <div class="card card-pad" data-sub="sheet">
+        <div class="card-head"><div><div class="card-title">Term attendance sheet</div><p class="card-desc">Like the paper register: one line per child, one column per day a register was taken, with each child's totals.</p></div>
+          <button class="btn btn-outline btn-sm" id="tsPrintBtn" type="button">Print</button></div>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="tsClass">Class</label><select class="input" id="tsClass"></select></div>
+          <div id="tsStreamWrap"><label class="form-label" for="tsStream">Stream</label><select class="input" id="tsStream"></select></div>
+          <div><label class="form-label" for="tsMonth">Period</label><select class="input" id="tsMonth"></select></div>
+        </div>
+        <div id="termSheet" style="margin-top:12px"></div>
       </div>
     </section>
 
-    <!-- ACADEMICS: enter marks · mark sheet · comments · report cards · grading scales -->
+    <!-- ACADEMICS: enter marks · class results · comments · report cards · grading scales -->
     <section id="panel-academics" class="panel">
-      <div class="card card-pad" id="academicFormCard" data-sub="marks">
-        <div class="card-title">Record subject score</div>
-        <p class="card-desc">Grades follow the Uganda curriculum and your selected O-Level grading mode.</p>
-        <form id="academicForm" class="form-row" style="margin-top:14px;align-items:end">
-          <div><label class="form-label">Student</label><select class="input" name="studentId" id="academicStudent" required><option value="">Choose…</option></select></div>
-          <div><label class="form-label">Term</label><select class="input" name="termId" id="academicTerm"></select></div>
-          <div><label class="form-label">Exam</label><select class="input" name="examSet"><option value="BOT">Beginning of term</option><option value="MOT">Mid-term</option><option value="EOT" selected>End of term</option></select></div>
-          <div><label class="form-label">Subject</label><input class="input" name="subject" list="subjectList" required placeholder="Mathematics"><datalist id="subjectList"></datalist></div>
-          <div><label class="form-label">Score (%)</label><input class="input" name="score" type="number" min="0" max="100" required></div>
-          <div><button class="btn btn-primary btn-block" type="submit">Add score</button></div>
-        </form>
-      </div>
-      <div class="card card-pad" data-sub="marks">
-        <div class="card-head"><div class="card-title">Results &amp; positions</div>
-          <div class="toolbar"><select class="input" id="academicTermFilter" style="width:auto" aria-label="Term"></select>
-          <select class="input" id="academicLevelFilter" style="width:auto" aria-label="Level"><option value="">All levels</option><option>Primary</option><option>O Level</option><option>A Level</option></select></div>
-        </div>
-        <div class="table-wrap"><table><thead><tr><th>Learner</th><th>Class</th><th class="t-center">Subjects</th><th class="t-center">Average</th><th>Result</th><th class="t-center">Position</th><th></th></tr></thead><tbody id="academicTableBody"></tbody></table></div>
-      </div>
-      <div class="card card-pad" id="marksheetCard" data-sub="marksheet">
-        <div class="card-title">Class mark sheet</div>
-        <p class="card-desc">Enter one subject's marks for a whole class at once.</p>
+      <div class="card card-pad" id="marksheetCard" data-sub="marks">
+        <div class="card-title">Enter marks</div>
+        <p class="card-desc">1 Choose the class · 2 choose the subject and the exam · 3 type each child's score (the grade shows as you type) · 4 press Save marks. Leave the box empty for a child with no mark.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="msClass">Class</label><select class="input" id="msClass"></select></div>
-          <div><label class="form-label" for="msStream">Stream</label><select class="input" id="msStream"></select></div>
-          <div><label class="form-label" for="msTerm">Term</label><select class="input" id="msTerm"></select></div>
+          <div id="msStreamWrap"><label class="form-label" for="msStream">Stream</label><select class="input" id="msStream"></select></div>
+          <div><label class="form-label" for="msSubject">Subject</label><select class="input" id="msSubject"></select></div>
           <div><label class="form-label" for="msExam">Exam</label><select class="input" id="msExam"><option value="BOT">Beginning of term</option><option value="MOT">Mid-term</option><option value="EOT" selected>End of term</option></select></div>
-          <div><label class="form-label" for="msSubject">Subject</label><input class="input" id="msSubject" list="subjectList" placeholder="Mathematics"></div>
-          <div><button class="btn btn-outline btn-block" id="msLoadBtn" type="button">Load class</button></div>
+          <div><label class="form-label" for="msTerm">Term</label><select class="input" id="msTerm"></select></div>
         </div>
-        <div class="scroll-box" id="markSheetRoster" style="margin-top:12px;max-height:460px"><div class="empty">Choose a class and a subject to load the mark sheet.</div></div>
+        <div class="reg-summary" id="msCounter" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="markSheetRoster" style="margin-top:12px;max-height:560px"><div class="empty">Choose a class to start.</div></div>
         <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="msSaveBtn" type="button">Save marks</button></div>
+      </div>
+      <div class="card card-pad" data-sub="results">
+        <div class="card-head"><div><div class="card-title">Class results</div><p class="card-desc">Every child's mark in every subject, with the average, the result and the position in class. Tap a name for that child's page, or Report card to see it.</p></div>
+          <button class="btn btn-outline btn-sm" id="crPrintBtn" type="button">Print class results</button></div>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="crClass">Class</label><select class="input" id="crClass"></select></div>
+          <div id="crStreamWrap"><label class="form-label" for="crStream">Stream</label><select class="input" id="crStream"></select></div>
+          <div><label class="form-label" for="crTerm">Term</label><select class="input" id="crTerm"></select></div>
+        </div>
+        <div id="classResults" style="margin-top:12px"><div class="empty">Choose a class to see its results.</div></div>
       </div>
       <div class="card card-pad" id="commentsCard" data-sub="comments">
         <div class="card-title">Report-card comments</div>
-        <p class="card-desc">Class-teacher and head-teacher remarks for each learner.</p>
+        <p class="card-desc">1 Choose the class · 2 write a comment for each child (or press Suggest for blanks) · 3 press Save comments. They are printed on the report cards.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="cmClass">Class</label><select class="input" id="cmClass"></select></div>
           <div><label class="form-label" for="cmTerm">Term</label><select class="input" id="cmTerm"></select></div>
@@ -242,16 +250,22 @@
         <div id="commentRoster" style="margin-top:12px"><div class="empty">Choose a class to write report-card comments.</div></div>
       </div>
       <div class="card card-pad" data-sub="reportcards">
-        <div class="card-title">Print report cards</div>
-        <p class="card-desc">One page per learner, with marks, position, attendance, comments and fees.</p>
+        <div class="card-title">Report cards</div>
+        <p class="card-desc">Choose the class and the term. Every child is listed: View shows that child's report card on the screen, Print prints it, and the green button prints the whole class, one page per child.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="rcClass">Class</label><select class="input" id="rcClass"></select></div>
-          <div><label class="form-label" for="rcStream">Stream</label><select class="input" id="rcStream"></select></div>
+          <div id="rcStreamWrap"><label class="form-label" for="rcStream">Stream</label><select class="input" id="rcStream"></select></div>
           <div><label class="form-label" for="rcTerm">Term</label><select class="input" id="rcTerm"></select></div>
-          <div><label class="form-label" for="rcNextBegins">Next term begins</label><input class="input" id="rcNextBegins" type="date"></div>
-          <div><label class="form-label" for="rcNextFees">Next term fees <span class="opt">(optional)</span></label><input class="input" id="rcNextFees" type="number" min="0" placeholder="From fee structure"></div>
-          <div><button class="btn btn-primary btn-block" id="rcPrintBtn" type="button">Print class</button></div>
         </div>
+        <div class="tile" style="margin-top:12px">
+          <div style="font-weight:700;margin-bottom:8px">Printed on every card</div>
+          <div class="form-row">
+            <div><label class="form-label" for="rcNextBegins">Next term begins</label><input class="input" id="rcNextBegins" type="date"></div>
+            <div><label class="form-label" for="rcNextFees">Next term fees <span class="opt">(optional)</span></label><input class="input" id="rcNextFees" type="number" min="0" placeholder="From fee structure"></div>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" id="rcPrintBtn" type="button" disabled>Print all report cards</button></div>
+        <div id="rcList" style="margin-top:6px"></div>
         <div class="tile" id="publishBox" style="display:none;margin-top:14px">
           <div style="font-weight:700">Results for parents</div>
           <p class="card-desc" id="publishStatus" style="margin:4px 0 10px"></p>
@@ -371,16 +385,24 @@
       </div>
       <div class="card card-pad" id="trainingFormCard" data-sub="training">
         <div class="card-title">Mark training attendance</div>
-        <div class="form-row" style="margin-top:12px">
-          <div><label class="form-label">Program</label><select class="input" id="attendanceProgram"><option value="">Choose…</option></select></div>
-          <div><label class="form-label">Session date</label><input class="input" id="attendanceDate" type="date"></div>
-          <div style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-block" id="saveAttendanceBtn" type="button">Save session</button></div>
+        <p class="card-desc" id="trainingNote">Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="attendanceProgram">Programme</label><select class="input" id="attendanceProgram"><option value="">Choose a programme…</option></select></div>
+          <div><label class="form-label" for="attendanceDate">Session date</label><input class="input" id="attendanceDate" type="date"></div>
         </div>
-        <div class="scroll-box" id="attendanceRoster" style="margin-top:14px"><div class="empty">Select a program to load enrolled athletes.</div></div>
+        <div class="reg-summary" id="trainSummary" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="attendanceRoster" style="margin-top:8px;max-height:520px"><div class="empty">Choose a programme to list its athletes.</div></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="saveAttendanceBtn" type="button">Save session</button></div>
       </div>
       <div class="card card-pad" data-sub="training">
-        <div class="card-title">Training attendance rates</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Student</th><th>Sport</th><th class="t-center">Sessions</th><th class="t-center">Present</th><th class="t-center">Rate</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
+        <div class="card-head"><div><div class="card-title">Sessions</div><p class="card-desc">Every training session, with the names of the athletes who missed it.</p></div>
+          <select class="input" id="sessProgram" style="width:auto" aria-label="Programme"></select></div>
+        <div id="sessionList"></div>
+      </div>
+      <div class="card card-pad" data-sub="training">
+        <div class="card-title">Who attends training</div>
+        <p class="card-desc">Each athlete's sessions, how many they came to, and the dates they missed.</p>
+        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Athlete</th><th>Programme</th><th class="t-center">Sessions</th><th class="t-center">Came</th><th class="t-center">Rate</th><th>Missed</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
       </div>
       <div class="card card-pad" data-sub="competitions">
         <div class="card-head"><div><div class="card-title">Competitions &amp; tournaments</div><p class="card-desc">USSSA, FEASSSA and inter-school results.</p></div>
@@ -622,6 +644,7 @@
 <script src="billing.js"></script>
 <script src="academics.js"></script>
 <script src="register.js"></script>
+<script src="learner.js"></script>
 <script src="tools.js"></script>
 <script src="sms.js"></script>
 </body>
