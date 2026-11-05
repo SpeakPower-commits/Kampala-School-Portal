@@ -588,6 +588,30 @@ async function classResults(page, cls) {
     await page.click('#programForm button[type="submit"]');
     await page.waitForTimeout(150);
     assert(/Football U-16/.test(await page.textContent('#programsGrid')), 'programme not added from Sports → Programmes');
+    // The coach puts athletes in the programme by name.
+    const [a1, a2] = await page.evaluate(() => state.students.filter(s => s.class === 'S.4').slice(0, 2).map(s => ({ id: s.id, name: s.name })));
+    const progId = await page.evaluate(() => state.programs.find(p => p.name === 'Football U-16').id);
+    await page.click(`#programsGrid [data-act="programAthletes"][data-id="${progId}"]`);
+    await page.waitForSelector('.modal #paList');
+    await page.check(`.modal .pa-tick[value="${a1.id}"]`);
+    await page.check(`.modal .pa-tick[value="${a2.id}"]`);
+    await page.click('#paSave');
+    await page.waitForTimeout(150);
+    const card = await page.$eval(`#programsGrid [data-id="${progId}"][data-act="programAthletes"]`, b => b.closest('.tile').textContent.replace(/\s+/g, ' '));
+    assert(card.includes('Athletes (2)') && card.includes(a1.name) && card.includes(a2.name), 'athletes not listed on the programme: ' + card);
+    // A session: tap Absent for one athlete; the line, the sessions list and who-attends name them.
+    await page.click('#subNav [data-sub="training"]');
+    await page.selectOption('#attendanceProgram', progId);
+    assert(await page.inputValue('#attendanceDate') === await page.evaluate(() => todayISO()), 'session date is not today');
+    await page.click(`#attendanceRoster .reg-row[data-student="${a2.id}"] [data-set-att="A"]`);
+    assert((await page.textContent('#trainSummary')).includes('1 missed: ' + a2.name), 'running line: ' + await page.textContent('#trainSummary'));
+    await page.click('#saveAttendanceBtn');
+    await page.waitForTimeout(150);
+    const sessions = (await page.textContent('#sessionList')).replace(/\s+/g, ' ');
+    assert(sessions.includes('Football U-16') && sessions.includes('1 of 2 came') && sessions.includes('Missed: ' + a2.name), 'sessions: ' + sessions);
+    const today = await page.evaluate(() => fmtDay(todayISO(), false));
+    const row = await page.$eval('#attendanceTableBody', b => [...b.rows].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | '));
+    assert(row.includes(a2.name) && row.includes(today), 'who attends: ' + row);
   });
 
   await step('signing in right after someone signs out keeps you signed in', async () => {

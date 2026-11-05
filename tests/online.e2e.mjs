@@ -356,6 +356,21 @@ try {
     assert(await count('sms_campaigns') === 3, 'runs in the database: ' + await count('sms_campaigns'));
   });
 
+  await step("a programme's athletes, chosen by name, reach the database", async () => {
+    await tab('sports', 'programmes');
+    await page.fill('#programForm input[name="name"]', 'Netball A');
+    await page.fill('#programForm input[name="sport"]', 'Netball');
+    await page.click('#programForm button[type="submit"]');
+    await saved();
+    const id = await app(() => window.KSA.state().programs.find(p => p.name === 'Netball A').id);
+    await page.click(`#programsGrid [data-act="programAthletes"][data-id="${id}"]`);
+    await page.check('.modal .pa-tick[value="KHS/2026/001"]');
+    await page.click('#paSave');
+    await saved();
+    const doc = await one("select data from public.school_docs where school_id = $1 and collection = 'programs' and id = $2", [school, id]);
+    assert(doc && JSON.stringify(doc.data.athleteIds) === '["KHS/2026/001"]', JSON.stringify(doc));
+  });
+
   // ── The parent portal, as a guardian would use it on their phone ──
   const pp = await context.newPage();
   pp.setDefaultTimeout(10000);

@@ -385,16 +385,24 @@
       </div>
       <div class="card card-pad" id="trainingFormCard" data-sub="training">
         <div class="card-title">Mark training attendance</div>
-        <div class="form-row" style="margin-top:12px">
-          <div><label class="form-label">Program</label><select class="input" id="attendanceProgram"><option value="">Choose…</option></select></div>
-          <div><label class="form-label">Session date</label><input class="input" id="attendanceDate" type="date"></div>
-          <div style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-block" id="saveAttendanceBtn" type="button">Save session</button></div>
+        <p class="card-desc" id="trainingNote">Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="attendanceProgram">Programme</label><select class="input" id="attendanceProgram"><option value="">Choose a programme…</option></select></div>
+          <div><label class="form-label" for="attendanceDate">Session date</label><input class="input" id="attendanceDate" type="date"></div>
         </div>
-        <div class="scroll-box" id="attendanceRoster" style="margin-top:14px"><div class="empty">Select a program to load enrolled athletes.</div></div>
+        <div class="reg-summary" id="trainSummary" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="attendanceRoster" style="margin-top:8px;max-height:520px"><div class="empty">Choose a programme to list its athletes.</div></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="saveAttendanceBtn" type="button">Save session</button></div>
       </div>
       <div class="card card-pad" data-sub="training">
-        <div class="card-title">Training attendance rates</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Student</th><th>Sport</th><th class="t-center">Sessions</th><th class="t-center">Present</th><th class="t-center">Rate</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
+        <div class="card-head"><div><div class="card-title">Sessions</div><p class="card-desc">Every training session, with the names of the athletes who missed it.</p></div>
+          <select class="input" id="sessProgram" style="width:auto" aria-label="Programme"></select></div>
+        <div id="sessionList"></div>
+      </div>
+      <div class="card card-pad" data-sub="training">
+        <div class="card-title">Who attends training</div>
+        <p class="card-desc">Each athlete's sessions, how many they came to, and the dates they missed.</p>
+        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Athlete</th><th>Programme</th><th class="t-center">Sessions</th><th class="t-center">Came</th><th class="t-center">Rate</th><th>Missed</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
       </div>
       <div class="card card-pad" data-sub="competitions">
         <div class="card-head"><div><div class="card-title">Competitions &amp; tournaments</div><p class="card-desc">USSSA, FEASSSA and inter-school results.</p></div>

@@ -17,12 +17,9 @@ const LEARNER_SECTIONS = [
   ['discipline', 'Discipline', () => hasTab('conduct')],
 ];
 
-/* The sports programmes a learner is in: the programme's athlete list, or,
-   for a programme without one yet, the learners whose primary sport it is. */
+/* The sports programmes a learner is in (programAthletes is in app.js). */
 function learnerProgrammes(s) {
-  return (state.programs || []).filter(p => Array.isArray(p.athleteIds)
-    ? p.athleteIds.includes(s.id)
-    : !!s.sport && (p.sport || '').toLowerCase() === s.sport.toLowerCase());
+  return (state.programs || []).filter(p => programAthletes(p).some(x => x.id === s.id));
 }
 
 const lpRow = (label, value) => `<div class="lp-row"><div class="lp-label">${label}</div><div>${value}</div></div>`;
