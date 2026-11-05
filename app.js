@@ -5,7 +5,7 @@
 'use strict';
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const PAGE_SIZE = 25;
 
 const DEFAULT_SETTINGS = {
@@ -35,12 +35,17 @@ const PAYMENT_METHODS = ['Cash', 'Mobile Money (MTN)', 'Mobile Money (Airtel)', 
 let state = freshState();
 let currentSession = null;
 let studentPage = 1;
+/* Feature modules (billing.js, academics.js, register.js, tools.js) register
+   here: { name, setup(), render(), afterSave() }. */
+const MODULES = [];
+let bindingsReady = false;
 
 function freshState() {
   return {
     version: SCHEMA_VERSION, settings: { ...DEFAULT_SETTINGS },
     students: [], payments: [], attendance: [], conduct: [], programs: [],
     competitions: [], squads: [], notices: [], terms: [], feeComponents: [],
+    invoices: [], feeStructures: [], registers: [],
   };
 }
 
@@ -51,6 +56,7 @@ const ICONS = {
   academics: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
   payments: '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   sports: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  register: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><polyline points="9 14 11 16 15 12"/>',
   attendance: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="9 15 11 17 15 13"/>',
   competitions: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
   bursary: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
@@ -126,21 +132,33 @@ function can(permission) { return AUTH.can(permission); }
 function hasTab(tab) { return AUTH.hasTabAccess(tab); }
 
 /* ── Persistence ───────────────────────────────────────────────────────── */
+/* Where the school's data lives: this device (offline edition) or the school
+   database (online edition, through sync.js). Everything else is the same. */
+const ONLINE_EDITION = !!(window.PORTAL && window.PORTAL.online);
+const STORE = ONLINE_EDITION
+  ? { read: () => SYNC.read(), write: () => SYNC.schedule() }
+  : {
+      read: () => localStorage.getItem('kampala_school_portal_state'),
+      write: data => localStorage.setItem('kampala_school_portal_state', JSON.stringify(data)),
+    };
+
 function loadState() {
   try {
-    const raw = localStorage.getItem('kampala_school_portal_state');
+    const raw = STORE.read();
     state = raw ? migrate(JSON.parse(raw)) : freshState();
     if (!raw) state.programs = DEFAULT_PROGRAMS.map(p => ({ ...p }));
   } catch (_) {
     state = freshState();
     state.programs = DEFAULT_PROGRAMS.map(p => ({ ...p }));
   }
+  ensureDefaultTerm(state);
   recomputePaid();
   recomputeGrades();
 }
 function saveState() {
   try {
-    localStorage.setItem('kampala_school_portal_state', JSON.stringify(state));
+    STORE.write(state);
+    MODULES.forEach(m => { if (m.afterSave) try { m.afterSave(); } catch (_) {} });
     return true;
   } catch (err) {
     const quota = err && (err.name === 'QuotaExceededError' || err.code === 22);
@@ -148,6 +166,29 @@ function saveState() {
     return false;
   }
 }
+/* Save and wait for the result. Offline this is immediate; online it waits
+   until the school database has accepted the change. Used for money, where a
+   receipt must never be shown for a payment that was not stored. */
+async function persistNow() {
+  if (!ONLINE_EDITION) return saveState() ? { ok: true } : { ok: false, error: 'Could not save on this device.' };
+  saveState();
+  return SYNC.flush();
+}
+/* Money needs a connection in the online edition, so every office sees the
+   same balances. Returns true (and explains) when the action must wait. */
+/* Multi-row billing changes online: save, and say so plainly if the school
+   database did not take them (they are retried when the connection is back). */
+async function saveOrWarn(what) {
+  const saved = await persistNow();
+  if (!saved.ok) toast(`${what} is not saved yet: ${saved.error} It will be retried automatically.`, 'error');
+  return saved.ok;
+}
+function needsConnection(what) {
+  if (!ONLINE_EDITION || navigator.onLine) return false;
+  toast(`${what} needs an internet connection, so every office sees the same balances. Reconnect and try again.`, 'error');
+  return true;
+}
+
 function migrate(data) {
   if (!data || typeof data !== 'object') return freshState();
   if (!data.version) data.version = 1;
@@ -201,8 +242,9 @@ function migrate(data) {
     });
     data.version = 4;
   }
+  if (data.version < 5) migrateToV5(data);
   // Ensure collections always exist.
-  ['students', 'payments', 'attendance', 'conduct', 'programs', 'competitions', 'squads', 'notices', 'terms', 'feeComponents'].forEach(k => { if (!Array.isArray(data[k])) data[k] = []; });
+  ['students', 'payments', 'attendance', 'conduct', 'programs', 'competitions', 'squads', 'notices', 'terms', 'feeComponents', 'invoices', 'feeStructures', 'registers'].forEach(k => { if (!Array.isArray(data[k])) data[k] = []; });
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
   return data;
 }
@@ -235,105 +277,8 @@ function classifyLevel(cls) {
 }
 function gradingMode() { return (state.settings && state.settings.gradingMode) || 'legacy'; }
 
-function gradeFor(level, score) {
-  score = Number(score);
-  if (level === 'Primary') {
-    if (score >= 85) return { grade: 'D1', label: 'Distinction', points: 1 };
-    if (score >= 70) return { grade: 'C', label: 'Credit', points: 2 };
-    if (score >= 50) return { grade: 'P', label: 'Pass', points: 3 };
-    return { grade: 'F', label: 'Fail', points: 4 };
-  }
-  if (level === 'O Level') {
-    if (gradingMode() === 'cbc') {
-      // New Lower Secondary competency grades (achievement levels A–E).
-      if (score >= 80) return { grade: 'A', label: 'Outstanding', points: 5 };
-      if (score >= 65) return { grade: 'B', label: 'Very good', points: 4 };
-      if (score >= 50) return { grade: 'C', label: 'Good', points: 3 };
-      if (score >= 35) return { grade: 'D', label: 'Basic', points: 2 };
-      return { grade: 'E', label: 'Elementary', points: 1 };
-    }
-    if (score >= 90) return { grade: 'D1', points: 1 };
-    if (score >= 80) return { grade: 'D2', points: 2 };
-    if (score >= 70) return { grade: 'C3', points: 3 };
-    if (score >= 60) return { grade: 'C4', points: 4 };
-    if (score >= 50) return { grade: 'C5', points: 5 };
-    if (score >= 40) return { grade: 'C6', points: 6 };
-    if (score >= 30) return { grade: 'P7', points: 7 };
-    if (score >= 20) return { grade: 'P8', points: 8 };
-    return { grade: 'F9', points: 9 };
-  }
-  if (level === 'A Level') {
-    if (score >= 80) return { grade: 'A', points: 6 };
-    if (score >= 70) return { grade: 'B', points: 5 };
-    if (score >= 60) return { grade: 'C', points: 4 };
-    if (score >= 50) return { grade: 'D', points: 3 };
-    if (score >= 40) return { grade: 'E', points: 2 };
-    if (score >= 35) return { grade: 'O', points: 1 };
-    return { grade: 'F', points: 0 };
-  }
-  if (score >= 50) return { grade: 'Pass', points: 1 };
-  return { grade: 'Fail', points: 0 };
-}
-function calculateDivision(agg, subjectCount) {
-  if (subjectCount < 6) return 'Incomplete';
-  if (agg <= 32) return 'Division I';
-  if (agg <= 44) return 'Division II';
-  if (agg <= 56) return 'Division III';
-  if (agg <= 72) return 'Division IV';
-  return 'Ungraded (U)';
-}
-
-/* Best score per distinct subject within a term. */
-function bestPerSubject(entries) {
-  const map = {};
-  entries.forEach(a => {
-    const key = (a.subject || '').toLowerCase();
-    if (!map[key] || a.score > map[key].score) map[key] = a;
-  });
-  return Object.values(map);
-}
-/* Aggregate a single sitting (term) for a level. */
-function termAggregate(entries, level) {
-  const distinct = bestPerSubject(entries);
-  if (level === 'O Level' && gradingMode() === 'legacy') {
-    const best8 = distinct.slice().sort((a, b) => a.points - b.points).slice(0, 8);
-    const agg = best8.reduce((a, x) => a + (x.points || 0), 0);
-    return { type: 'division', agg, count: best8.length, division: calculateDivision(agg, best8.length), label: `Aggregate ${agg} · ${calculateDivision(agg, best8.length)}` };
-  }
-  if (level === 'O Level') { // CBC
-    const counts = {};
-    distinct.forEach(a => { counts[a.grade] = (counts[a.grade] || 0) + 1; });
-    const summary = ['A', 'B', 'C', 'D', 'E'].filter(g => counts[g]).map(g => `${counts[g]}${g}`).join(' ');
-    return { type: 'cbc', count: distinct.length, label: summary ? summary + ' · competency grades' : '—' };
-  }
-  if (level === 'A Level') {
-    const best3 = distinct.slice().sort((a, b) => b.points - a.points).slice(0, 3);
-    const pts = best3.reduce((a, x) => a + (x.points || 0), 0);
-    return { type: 'points', points: pts, count: best3.length, label: `${pts} principal points` };
-  }
-  const avg = distinct.length ? Math.round(distinct.reduce((a, x) => a + x.score, 0) / distinct.length) : 0;
-  return { type: 'avg', avg, count: distinct.length, label: avg + '% average' };
-}
-/* Overall summary using the most recently recorded sitting. */
-function studentAcademicSummary(s) {
-  const ac = s.academics || [];
-  if (!ac.length) return { count: 0, avg: 0, latestTerm: '', summary: '—' };
-  const avg = Math.round(ac.reduce((a, x) => a + x.score, 0) / ac.length);
-  // Group by term; pick the term whose newest entry is latest.
-  const byTerm = {};
-  ac.forEach(a => { (byTerm[a.term] = byTerm[a.term] || []).push(a); });
-  let latestTerm = ac[0].term, latestDate = '';
-  Object.keys(byTerm).forEach(term => {
-    const newest = byTerm[term].reduce((m, x) => (x.date > m ? x.date : m), '');
-    if (newest >= latestDate) { latestDate = newest; latestTerm = term; }
-  });
-  const agg = termAggregate(byTerm[latestTerm], s.level);
-  return { count: ac.length, avg, latestTerm, aggregate: agg, summary: agg.label, byTerm };
-}
-
 /* ── Fees & bursary ────────────────────────────────────────────────────── */
-function effectiveFee(s) { return Math.round(s.fee * (1 - (s.bursaryPct || 0) / 100)); }
-function studentBalance(s) { return Math.max(0, effectiveFee(s) - studentPaid(s)); }
+/* effectiveFee(), studentBalance() and the invoice model live in billing.js. */
 
 function studentAttendance(studentId) {
   let total = 0, present = 0;
@@ -382,13 +327,14 @@ function registerStudent(f) {
   state.students.push({
     id, name: f.name.trim(), class: (f.class || '').trim(), level: classifyLevel(f.class),
     combination: (f.combination || '').split(',').map(x => x.trim()).filter(Boolean).join(', '),
-    guardian: (f.guardian || '').trim(), fee: Number(f.fee) || 0, paid: 0,
+    guardian: (f.guardian || '').trim(), fee: Number(f.fee) || 0, paid: 0, stream: (f.stream || '').trim(),
     sport: (f.sport || '').trim(), skillLevel: (f.skillLevel || '').trim(),
     gender: (f.gender || '').trim(), boardingStatus: (f.boardingStatus || 'Day').trim(),
     unebIndexNo: (f.unebIndexNo || '').trim(), senFlag: (f.senFlag || '').trim(),
     performanceNotes: [], academics: [], bursaryPct: 0, feeComponents: [], injuryLog: [],
-    athleteProfile: {}, createdAt: todayISO(),
+    athleteProfile: {}, comments: {}, createdAt: todayISO(),
   });
+  billStudentForCurrentTerm(state.students[state.students.length - 1]);
   saveState(); renderAll();
   AUTH.audit('STUDENT_REGISTER', `${f.name.trim()} (${id})`);
   toast('Registered ' + f.name.trim() + ' (' + id + ').', 'success');
@@ -410,35 +356,68 @@ function updateStudent(id, f) {
   s.senFlag = (f.senFlag || '').trim();
   s.sport = (f.sport || '').trim();
   s.skillLevel = (f.skillLevel || '').trim();
+  s.stream = (f.stream || '').trim();
+  refreshCurrentInvoice(s);
   saveState(); renderAll();
   AUTH.audit('STUDENT_EDIT', `${s.name} (${s.id})`);
   toast('Updated ' + s.name + '.', 'success');
 }
 
-function recordPayment(f) {
+async function recordPayment(f) {
   if (!can('canRecordPayment')) return toast('You do not have permission to record payments.', 'error');
   const s = state.students.find(x => x.id === f.studentId);
   if (!s) return toast('Choose a student first.', 'error');
   const amount = Number(f.amount);
   if (!amount || amount <= 0) return toast('Enter a valid amount.', 'error');
+  if (needsConnection('Recording a payment')) return;
   const date = f.date || todayISO();
-  state.payments.push({
+  const payment = {
     id: 'P' + uid(), studentId: s.id, amount, method: f.method || 'Cash',
     reference: (f.reference || '').trim(), date,
     recordedBy: currentSession.userId, recordedByName: currentSession.displayName,
     ts: nowISO(), void: false,
-  });
-  recomputePaid(); saveState(); renderAll();
+  };
+  state.payments.push(payment);
+  recomputePaid();
+  const saved = await persistNow();
+  if (!saved.ok && saved.offline) {
+    // The connection dropped mid-save, so the database may already have this
+    // payment. Keep it, with the same id, so it is saved (or matched) when the
+    // connection returns. Recording it again would count it twice.
+    renderAll();
+    return toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+  }
+  if (!saved.ok) {
+    state.payments = state.payments.filter(x => x !== payment);
+    recomputePaid(); renderAll();
+    return toast('The payment was NOT recorded. ' + saved.error, 'error');
+  }
+  renderAll();
   AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${f.method || 'Cash'}`);
   toast('Recorded ' + fmtMoney(amount) + ' for ' + s.name + '.', 'success');
 }
 
-function voidPayment(id, reason) {
+async function voidPayment(id, reason) {
   if (!can('canVoidPayment')) return toast('You do not have permission to reverse payments.', 'error');
   const p = state.payments.find(x => x.id === id);
   if (!p || p.void) return;
+  if (ONLINE_EDITION && !(reason || '').trim()) return toast('Give a reason for the reversal.', 'error');
+  if (needsConnection('Reversing a payment')) return;
   p.void = true; p.voidReason = (reason || '').trim(); p.voidedBy = currentSession.displayName; p.voidedAt = nowISO();
-  recomputePaid(); saveState(); renderAll();
+  recomputePaid();
+  const saved = await persistNow();
+  if (!saved.ok && saved.offline) {
+    // As with recording: the reversal may already be stored, and repeating it
+    // is harmless, so keep it and let it be confirmed when the connection returns.
+    renderAll();
+    return toast('Connection lost while reversing the payment. The reversal is kept and will be saved automatically when the connection returns.', 'warn');
+  }
+  if (!saved.ok) {
+    p.void = false; p.voidReason = ''; p.voidedBy = ''; p.voidedAt = '';
+    recomputePaid(); renderAll();
+    return toast('The payment was NOT reversed. ' + saved.error, 'error');
+  }
+  renderAll();
   AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)} · ${p.voidReason}`);
   toast('Payment reversed.', 'warn');
 }
@@ -448,7 +427,9 @@ async function deleteStudent(id) {
   const s = state.students.find(x => x.id === id); if (!s) return;
   const ok = await confirmDialog({
     title: 'Remove student',
-    message: `Remove ${s.name} (${s.id}) and all related payments, attendance and conduct records? This cannot be undone.`,
+    message: ONLINE_EDITION
+      ? `Remove ${s.name} (${s.id}) from the school's lists? Their bills and payments stay in the school's records.`
+      : `Remove ${s.name} (${s.id}) and all related payments, attendance and conduct records? This cannot be undone.`,
     confirmLabel: 'Remove student', danger: true,
   });
   if (!ok) return;
@@ -457,6 +438,8 @@ async function deleteStudent(id) {
   state.attendance.forEach(a => { a.records = (a.records || []).filter(r => r.studentId !== id); });
   state.conduct = state.conduct.filter(c => c.studentId !== id);
   state.squads.forEach(sq => { sq.members = (sq.members || []).filter(m => m !== id); });
+  state.invoices = state.invoices.filter(i => i.studentId !== id);
+  state.registers.forEach(r => { r.records = r.records.filter(x => x.studentId !== id); });
   recomputePaid(); saveState(); renderAll();
   AUTH.audit('STUDENT_DELETE', `${s.name} (${s.id})`);
   toast('Removed ' + s.name + '.', 'success');
@@ -470,6 +453,7 @@ async function resetAll() {
   state = freshState();
   state.settings = settings;
   state.programs = DEFAULT_PROGRAMS.map(p => ({ ...p }));
+  ensureDefaultTerm(state);
   saveState(); renderAll();
   AUTH.audit('DATA_RESET', '');
   toast('All data cleared.', 'success');
@@ -521,19 +505,6 @@ function logPerformance(f) {
   toast('Evaluation saved for ' + s.name + '.', 'success');
 }
 
-function addAcademicScore(f) {
-  if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
-  const s = state.students.find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a student first.', 'error');
-  const score = Number(f.score);
-  if (isNaN(score) || score < 0 || score > 100) return toast('Score must be between 0 and 100.', 'error');
-  const g = gradeFor(s.level, score);
-  s.academics = s.academics || [];
-  s.academics.push({ id: 'AC' + uid().slice(0, 5), term: f.term, subject: (f.subject || '').trim(), score, grade: g.grade, points: g.points, date: todayISO() });
-  saveState(); renderAll();
-  toast(`Saved: ${f.subject} ${score}% (${g.grade}).`, 'success');
-}
-
 function saveAttendance(programId, date, records) {
   if (!can('canMarkAttendance')) return toast('You do not have permission.', 'error');
   if (!programId || !date) return toast('Choose a program and date.', 'error');
@@ -549,6 +520,7 @@ async function setBursary(studentId) {
   const val = await promptDialog({ title: 'Award bursary', label: `Bursary percentage for ${s.name} (0–100)`, value: String(s.bursaryPct || 0), type: 'number' });
   if (val === null) return;
   s.bursaryPct = Math.max(0, Math.min(100, Number(val) || 0));
+  refreshCurrentInvoice(s);
   saveState(); renderAll();
   AUTH.audit('BURSARY_AWARD', `${s.name} (${s.id}) → ${s.bursaryPct}%`);
   toast(`Bursary set to ${s.bursaryPct}% for ${s.name}.`, 'success');
@@ -559,20 +531,20 @@ function smsBalance(studentId) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const phone = normalizePhone(s.guardian);
   if (!phone) return toast('No valid guardian phone number on file.', 'error');
-  const fee = effectiveFee(s), bal = studentBalance(s);
-  const body = bal > 0
-    ? `Dear Parent/Guardian of ${s.name} (${s.class}), the outstanding school fees balance is ${fmtMoney(bal)} of ${fmtMoney(fee)}. Kindly clear it at your earliest convenience. Thank you. — ${schoolName()}`
-    : `Dear Parent/Guardian of ${s.name} (${s.class}), thank you for clearing the school fees of ${fmtMoney(fee)} this term. — ${schoolName()}`;
+  const a = studentAccount(s);
+  const body = a.balance > 0
+    ? `Dear Parent/Guardian of ${s.name} (${s.class}), the outstanding school fees balance is ${fmtMoney(a.balance)}${a.arrears ? `, including ${fmtMoney(a.arrears)} from previous terms` : ''}. Kindly clear it at your earliest convenience. Thank you. — ${schoolName()}`
+    : `Dear Parent/Guardian of ${s.name} (${s.class}), thank you for clearing the school fees. — ${schoolName()}`;
   window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
 }
 function whatsappBalance(studentId) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const phone = normalizePhone(s.guardian);
   if (!phone) return toast('No valid guardian phone number on file.', 'error');
-  const fee = effectiveFee(s), bal = studentBalance(s);
-  const body = bal > 0
-    ? `Dear Parent/Guardian of *${s.name}* (${s.class}), outstanding school fees balance: *${fmtMoney(bal)}* of ${fmtMoney(fee)}. Kindly clear at your earliest convenience. Thank you. — ${schoolName()}`
-    : `Dear Parent/Guardian of *${s.name}* (${s.class}), thank you for clearing the fees of *${fmtMoney(fee)}* this term. — ${schoolName()}`;
+  const a = studentAccount(s);
+  const body = a.balance > 0
+    ? `Dear Parent/Guardian of *${s.name}* (${s.class}), outstanding school fees balance: *${fmtMoney(a.balance)}*${a.arrears ? ` (including ${fmtMoney(a.arrears)} from previous terms)` : ''}. Kindly clear at your earliest convenience. Thank you. — ${schoolName()}`
+    : `Dear Parent/Guardian of *${s.name}* (${s.class}), thank you for clearing the school fees. — ${schoolName()}`;
   window.open('https://wa.me/' + phone.replace('+', '') + '?text=' + encodeURIComponent(body), '_blank');
 }
 function smsConduct(conductId) {
@@ -652,17 +624,17 @@ function renderAll() {
   guard(renderSquadsGrid);
   guard(renderAthleteProfiles);
   guard(renderNotices);
-  guard(renderTermsTable);
-  guard(renderFeeComponents);
+  guard(renderWhatsNew);
   if (can('canManageUsers')) { guard(renderUsersList); guard(renderAuditLog); }
   if (can('canManageSettings')) guard(renderSettingsForm);
+  MODULES.forEach(m => { if (m.render) guard(m.render); });
 }
 
 function updateMetrics() {
   const s = state.students;
   const collected = s.reduce((a, x) => a + studentPaid(x), 0);
   const outstanding = s.reduce((a, x) => a + studentBalance(x), 0);
-  const cleared = s.filter(x => studentPaid(x) >= effectiveFee(x)).length;
+  const cleared = s.filter(x => studentBalance(x) <= 0).length;
   const athletes = s.filter(x => x.sport).length;
   const bursaryCount = s.filter(bursaryEligible).length;
   const attRates = s.filter(x => x.sport).map(x => studentAttendance(x.id).rate);
@@ -671,26 +643,38 @@ function updateMetrics() {
 
   let cards = [];
   if (['exec', 'admin'].includes(role)) {
+    const f = financeSnapshot();
     cards = [
-      { label: 'Students', value: s.length },
-      { label: 'Fees Collected', value: fmtMoney(collected), cls: 'is-success', money: true },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true },
-      { label: 'Programs', value: state.programs.length, cls: 'is-info' },
-      { label: 'Bursary Eligible', value: bursaryCount, cls: 'is-gold' },
+      { label: 'Learners', value: s.length },
+      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
+      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'from earlier terms' },
+      { label: 'Fully paid', value: cleared, cls: 'is-info' },
     ];
   } else if (role === 'bursary') {
+    const f = financeSnapshot();
     cards = [
-      { label: 'Students', value: s.length },
-      { label: 'Fees Collected', value: fmtMoney(collected), cls: 'is-success', money: true },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true },
-      { label: 'Cleared', value: cleared, cls: 'is-success' },
-      { label: 'Bursary Eligible', value: bursaryCount, cls: 'is-gold' },
+      { label: 'Learners', value: s.length },
+      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
+      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true },
+      { label: 'Fully paid', value: cleared, cls: 'is-info' },
+    ];
+  } else if (role === 'teacher') {
+    const mine = visibleStudents();
+    const classes = visibleClasses();
+    const today = todayISO();
+    const done = classes.filter(c => (state.registers || []).some(r => r.class === c && r.date === today)).length;
+    cards = [
+      { label: 'My classes', value: classes.length },
+      { label: 'Learners', value: mine.length, cls: 'is-info' },
+      { label: "Today's registers", value: `${done} / ${classes.length}`, cls: done === classes.length ? 'is-success' : 'is-gold' },
     ];
   } else {
     cards = [
       { label: 'Athletes', value: athletes },
       { label: 'Programs', value: state.programs.length, cls: 'is-info' },
-      { label: 'Avg Attendance', value: avgAtt + '%', cls: avgAtt >= 75 ? 'is-success' : 'is-danger' },
+      { label: 'Avg training attendance', value: avgAtt + '%', cls: avgAtt >= 75 ? 'is-success' : 'is-danger' },
       { label: 'Bursary Eligible', value: bursaryCount, cls: 'is-gold' },
     ];
   }
@@ -698,15 +682,9 @@ function updateMetrics() {
   if (row) row.innerHTML = cards.map(c => `
     <div class="stat ${c.cls || ''}">
       <div class="stat-label">${c.label}</div>
-      <div class="stat-value ${c.money ? 'money' : ''}">${c.value}</div>
+      <div class="stat-value ${c.money ? 'money' : ''}">${c.value}</div>${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
     </div>`).join('');
 
-  if (el('ovCleared')) {
-    el('ovCleared').textContent = cleared;
-    el('ovBalance').textContent = s.length - cleared;
-    el('ovAthletes').textContent = athletes;
-    el('ovAttendance').textContent = avgAtt + '%';
-  }
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   const counts = levels.map(l => s.filter(x => x.level === l).length);
   const max = Math.max(1, ...counts);
@@ -734,20 +712,21 @@ function renderStudentTable() {
     body.innerHTML = '<tr><td colspan="11" class="empty">No students match your filters.</td></tr>';
   } else {
     body.innerHTML = slice.map(s => {
-      const fee = effectiveFee(s), bal = studentBalance(s), paid = studentPaid(s);
+      const acct = studentAccount(s), fee = effectiveFee(s), bal = acct.balance, paid = studentPaid(s);
       const status = bal <= 0 ? '<span class="badge badge-success">Cleared</span>'
-        : (paid > 0 ? `<span class="badge badge-warn">Partial</span>` : `<span class="badge badge-danger">Unpaid</span>`);
+        : acct.arrears > 0 ? `<span class="badge badge-danger">${fmtMoney(bal)}</span>`
+        : (paid > 0 ? `<span class="badge badge-warn">${fmtMoney(bal)}</span>` : `<span class="badge badge-danger">${fmtMoney(bal)}</span>`);
       const sport = s.sport ? `${escapeHtml(s.sport)} ${skillBadge(s.skillLevel)}` : '<span class="t-muted">—</span>';
       const gender = s.gender === 'Female' ? '<span style="color:#be185d">Female</span>' : s.gender === 'Male' ? '<span style="color:#1d4ed8">Male</span>' : '<span class="t-muted">—</span>';
       const board = s.boardingStatus === 'Boarding' ? '<span class="badge badge-purple">Boarding</span>' : s.boardingStatus === 'Weekly' ? '<span class="badge badge-info">Weekly</span>' : '<span class="badge badge-neutral">Day</span>';
-      const bursaryTag = s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '';
+      const bursaryTag = (s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '') + (acct.arrears > 0 ? `<div class="card-desc" style="color:var(--danger)">+${fmtMoney(acct.arrears)} arrears</div>` : '');
       const senTag = s.senFlag ? `<div class="card-desc" style="color:#6d28d9">SEN: ${escapeHtml(s.senFlag)}</div>` : '';
       const editBtn = can('canEditStudents') ? `<button class="btn-icon" title="Edit" data-act="editStudent" data-id="${escapeHtml(s.id)}">${icon('edit', 15)}</button>` : '';
       const delBtn = can('canDeleteStudents') ? `<button class="btn-icon" title="Remove" data-act="deleteStudent" data-id="${escapeHtml(s.id)}">${icon('trash', 15)}</button>` : '';
       return `<tr>
         <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
         <td style="font-weight:600">${escapeHtml(s.name)}${senTag}</td>
-        <td>${escapeHtml(s.class)}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
+        <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
         <td>${gender}</td>
         <td>${board}</td>
         <td>${escapeHtml(s.guardian)}</td>
@@ -782,7 +761,7 @@ function renderPaymentsTable() {
   if (body) {
     body.innerHTML = sorted.length ? sorted.map(p => {
       const s = state.students.find(x => x.id === p.studentId);
-      const voidCol = can('canVoidPayment') && !p.void ? `<button class="btn btn-danger btn-xs" data-act="voidPayment" data-id="${escapeHtml(p.id)}">Reverse</button>` : '';
+      const voidCol = `<button class="btn-icon" title="Print receipt" data-act="paymentReceipt" data-id="${escapeHtml(p.id)}">${icon('printer', 15)}</button>` + (can('canVoidPayment') && !p.void ? ` <button class="btn btn-danger btn-xs" data-act="voidPayment" data-id="${escapeHtml(p.id)}">Reverse</button>` : '');
       return `<tr style="${p.void ? 'opacity:0.55' : ''}">
         <td class="t-muted">${p.date}</td>
         <td class="t-id">${escapeHtml(p.studentId)}</td>
@@ -839,24 +818,6 @@ function renderPerformanceTable() {
       <td><button class="btn btn-outline btn-xs" data-act="notes" data-id="${escapeHtml(s.id)}">History</button></td>
     </tr>`;
   }).join('') : '<tr><td colspan="7" class="empty">No athletes tracked yet.</td></tr>';
-}
-
-function renderAcademicTable() {
-  const body = el('academicTableBody'); if (!body) return;
-  const levelF = el('academicLevelFilter').value;
-  const list = state.students.filter(s => (!levelF || s.level === levelF) && (s.academics || []).length);
-  body.innerHTML = list.length ? list.map(s => {
-    const sum = studentAcademicSummary(s);
-    return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
-      <td>${escapeHtml(s.class)}</td>
-      <td>${escapeHtml(s.level)}</td>
-      <td class="t-center">${sum.count}</td>
-      <td class="t-center">${sum.avg}%</td>
-      <td style="font-weight:600;color:var(--brand)">${escapeHtml(sum.summary)}${sum.latestTerm ? '<div class="card-desc">' + escapeHtml(sum.latestTerm) + '</div>' : ''}</td>
-      <td><button class="btn btn-outline btn-xs" data-act="academic" data-id="${escapeHtml(s.id)}">View</button></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">No academic records yet.</td></tr>';
 }
 
 function renderAttendanceProgramSelect() {
@@ -956,7 +917,7 @@ function renderStatisticalReports() {
     const list = classMap[k];
     const avgScores = list.map(s => studentAcademicSummary(s).avg).filter(v => v > 0);
     const avg = avgScores.length ? Math.round(avgScores.reduce((a, b) => a + b, 0) / avgScores.length) : 0;
-    const cleared = list.filter(s => studentPaid(s) >= effectiveFee(s)).length;
+    const cleared = list.filter(s => studentBalance(s) <= 0).length;
     const outstanding = list.reduce((a, s) => a + studentBalance(s), 0);
     return `<tr><td style="font-weight:600">${escapeHtml(k)}</td><td>${escapeHtml(list[0].level)}</td><td class="t-center">${list.length}</td><td class="t-center">${avg ? avg + '%' : '—'}</td><td class="t-center" style="color:var(--success)">${cleared}/${list.length}</td><td class="t-num" style="color:var(--danger)">${fmtMoney(outstanding)}</td><td class="t-center" style="color:var(--brand)">${list.filter(s => s.sport).length}</td></tr>`;
   }).join('') : '<tr><td colspan="7" class="empty">No data.</td></tr>';
@@ -967,18 +928,6 @@ function renderStatisticalReports() {
   const sm = Math.max(1, ...entries.map(e => e[1]));
   if (el('sportStats')) el('sportStats').innerHTML = entries.length ? entries.map(([sport, n]) => `
     <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600">${escapeHtml(sport)}</span><span>${n}</span></div><div class="bar"><span class="gold" style="width:${(n / sm) * 100}%"></span></div></div>`).join('') : '<p class="card-desc">No sports data.</p>';
-
-  const total = state.students.reduce((a, s) => a + effectiveFee(s), 0);
-  const paid = state.students.reduce((a, s) => a + studentPaid(s), 0);
-  const bursary = state.students.reduce((a, s) => a + (s.fee - effectiveFee(s)), 0);
-  const rate = total ? Math.round(paid * 100 / total) : 0;
-  if (el('financeStats')) el('financeStats').innerHTML = [
-    ['Expected (after bursaries)', fmtMoney(total), ''],
-    ['Collected', fmtMoney(paid), 'color:var(--success)'],
-    ['Outstanding', fmtMoney(total - paid), 'color:var(--danger)'],
-    ['Bursary granted', fmtMoney(bursary), 'color:var(--warn)'],
-  ].map(([l, v, st]) => `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><span class="t-muted">${l}</span><span style="font-weight:700;${st}">${v}</span></div>`).join('') +
-    `<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Collection Rate</span><span style="color:${rate >= 75 ? 'var(--success)' : rate >= 50 ? 'var(--warn)' : 'var(--danger)'}">${rate}%</span></div>`;
 
   renderGenderBoardingSenStats();
   renderEMISPreview();
@@ -1011,9 +960,9 @@ function renderEMISPreview() {
   const el2 = el('emisPreview'); if (!el2) return;
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   const ct = getCurrentTerm();
-  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — configure it in Administration'}</strong></p>
+  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — open one under Fees → Terms &amp; fee structures'}</strong></p>
     <div class="table-wrap"><table><thead><tr><th>Level</th><th class="t-center">Total</th><th class="t-center">Male</th><th class="t-center">Female</th><th class="t-center">Boarding</th><th class="t-center">Day</th><th class="t-center">SEN</th><th class="t-center">Cleared</th></tr></thead><tbody>
-    ${levels.map(lvl => { const list = state.students.filter(s => s.level === lvl); return `<tr><td style="font-weight:600">${lvl}</td><td class="t-center">${list.length}</td><td class="t-center">${list.filter(s => s.gender === 'Male').length}</td><td class="t-center">${list.filter(s => s.gender === 'Female').length}</td><td class="t-center">${list.filter(s => s.boardingStatus === 'Boarding').length}</td><td class="t-center">${list.filter(s => (s.boardingStatus || 'Day') === 'Day').length}</td><td class="t-center">${list.filter(s => s.senFlag).length}</td><td class="t-center" style="color:var(--success)">${list.filter(s => studentPaid(s) >= effectiveFee(s)).length}</td></tr>`; }).join('')}
+    ${levels.map(lvl => { const list = state.students.filter(s => s.level === lvl); return `<tr><td style="font-weight:600">${lvl}</td><td class="t-center">${list.length}</td><td class="t-center">${list.filter(s => s.gender === 'Male').length}</td><td class="t-center">${list.filter(s => s.gender === 'Female').length}</td><td class="t-center">${list.filter(s => s.boardingStatus === 'Boarding').length}</td><td class="t-center">${list.filter(s => (s.boardingStatus || 'Day') === 'Day').length}</td><td class="t-center">${list.filter(s => s.senFlag).length}</td><td class="t-center" style="color:var(--success)">${list.filter(s => studentBalance(s) <= 0).length}</td></tr>`; }).join('')}
     </tbody></table></div>`;
 }
 function exportEMIS() {
@@ -1026,7 +975,7 @@ function exportEMIS() {
     [`Term: ${ct ? ct.year + ' ' + ct.term : 'Not set'} | Generated: ${todayISO()}`], [],
     ['Level', 'Total Enrolment', 'Male', 'Female', 'Boarding', 'Day', 'Weekly', 'SEN', 'Cleared Fees', 'Outstanding (' + currency() + ')'],
   ];
-  const addRow = (label, list) => rows.push([label, list.length, list.filter(s => s.gender === 'Male').length, list.filter(s => s.gender === 'Female').length, list.filter(s => s.boardingStatus === 'Boarding').length, list.filter(s => (s.boardingStatus || 'Day') === 'Day').length, list.filter(s => s.boardingStatus === 'Weekly').length, list.filter(s => s.senFlag).length, list.filter(s => studentPaid(s) >= effectiveFee(s)).length, list.reduce((a, s) => a + studentBalance(s), 0)]);
+  const addRow = (label, list) => rows.push([label, list.length, list.filter(s => s.gender === 'Male').length, list.filter(s => s.gender === 'Female').length, list.filter(s => s.boardingStatus === 'Boarding').length, list.filter(s => (s.boardingStatus || 'Day') === 'Day').length, list.filter(s => s.boardingStatus === 'Weekly').length, list.filter(s => s.senFlag).length, list.filter(s => studentBalance(s) <= 0).length, list.reduce((a, s) => a + studentBalance(s), 0)]);
   levels.forEach(lvl => addRow(lvl, state.students.filter(s => s.level === lvl)));
   addRow('TOTAL', state.students);
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -1064,7 +1013,6 @@ function renderStudentSelects() {
   };
   fill('paymentStudent', s => ` (Balance ${fmtMoney(studentBalance(s))})`);
   fill('perfStudent', s => s.sport ? ' · ' + s.sport : '');
-  fill('academicStudent', s => ' · ' + s.level);
   fill('conductStudent', s => ' · ' + s.class);
   updateBalancePreview();
 }
@@ -1073,9 +1021,9 @@ function updateBalancePreview() {
   if (!sel || !box) return;
   const s = state.students.find(x => x.id === sel.value);
   if (!s) { box.style.display = 'none'; return; }
-  const fee = effectiveFee(s), bal = studentBalance(s);
+  const a = studentAccount(s);
   box.style.display = 'block';
-  box.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${escapeHtml(s.class)}<br>Fee ${fmtMoney(fee)}${s.bursaryPct > 0 ? ` <span style="color:var(--warn)">(−${s.bursaryPct}%)</span>` : ''} · Paid ${fmtMoney(studentPaid(s))} · <span style="font-weight:700;color:${bal <= 0 ? 'var(--success)' : 'var(--danger)'}">Balance ${fmtMoney(bal)}</span>`;
+  box.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${escapeHtml(s.class)}<br>This term ${fmtMoney(a.currentBilled)}${s.bursaryPct > 0 ? ` <span style="color:var(--warn)">(−${s.bursaryPct}% bursary)</span>` : ''}${a.arrears ? ` · <span style="color:var(--danger)">Arrears ${fmtMoney(a.arrears)}</span>` : ''}<br>Paid ${fmtMoney(a.paid)} · <span style="font-weight:700;color:${a.balance <= 0 ? 'var(--success)' : 'var(--danger)'}">Balance ${fmtMoney(a.balance)}</span>`;
 }
 
 /* ── Detail modals ─────────────────────────────────────────────────────── */
@@ -1094,22 +1042,6 @@ function openNotes(studentId) {
     footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>`,
   });
 }
-function openAcademic(studentId) {
-  const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const sum = studentAcademicSummary(s);
-  const byTerm = sum.byTerm || {};
-  const termBlocks = Object.keys(byTerm).sort().map(term => {
-    const agg = termAggregate(byTerm[term], s.level);
-    const rows = bestPerSubject(byTerm[term]).sort((a, b) => a.subject.localeCompare(b.subject)).map(a => `<tr><td>${escapeHtml(a.subject)}</td><td class="t-center">${a.score}%</td><td class="t-center" style="font-weight:700;color:var(--brand)">${escapeHtml(a.grade)}</td></tr>`).join('');
-    return `<div class="tile" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:8px"><strong>${escapeHtml(term)}</strong><span class="badge badge-gold">${escapeHtml(agg.label)}</span></div><table><thead><tr><th>Subject</th><th class="t-center">Score</th><th class="t-center">Grade</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  }).join('');
-  openModal({
-    title: escapeHtml(s.name) + ' — academic record',
-    bodyHtml: `<div class="tile" style="margin-bottom:12px;font-size:13px"><strong>${escapeHtml(s.class)}</strong> · ${escapeHtml(s.level)} · ${sum.count} entries · average ${sum.avg}%</div>${termBlocks || '<p class="empty">No scores yet.</p>'}`,
-    footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>`,
-  });
-}
-
 /* ── Student edit modal ────────────────────────────────────────────────── */
 const CLASS_OPTIONS = ['Baby Class', 'Middle Class', 'Top Class', 'P.1', 'P.2', 'P.3', 'P.4', 'P.5', 'P.6', 'P.7', 'S.1', 'S.2', 'S.3', 'S.4', 'S.5', 'S.6'];
 function openStudentEdit(studentId) {
@@ -1124,6 +1056,7 @@ function openStudentEdit(studentId) {
         <div><label class="form-label">Class</label><select class="input" name="class"><option value="">—</option>${opt(CLASS_OPTIONS, s.class)}</select></div>
       </div>
       <div class="form-row">
+        <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" value="${escapeHtml(s.stream || '')}" placeholder="e.g. East"></div>
         <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination)}"></div>
         <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" value="${escapeHtml(s.guardian)}"></div>
       </div>
@@ -1155,12 +1088,14 @@ function openStudentEdit(studentId) {
 /* ── Printable documents ───────────────────────────────────────────────── */
 function docHeader(subtitle) {
   const st = state.settings;
+  const brand = st.brandColor || '#0b5d3b';
   const contact = [st.address, st.poBox ? 'P.O. Box ' + st.poBox : '', st.phone, st.email].filter(Boolean).join(' · ');
-  return `<div style="text-align:center;border-bottom:3px double #0b5d3b;padding-bottom:10px;margin-bottom:14px">
-    <h1 style="font-family:Georgia,serif;font-size:23px;font-weight:700;color:#0b5d3b;margin:0;text-transform:uppercase;letter-spacing:0.02em">${escapeHtml(st.schoolName)}</h1>
+  return `<div style="text-align:center;border-bottom:3px double ${brand};padding-bottom:10px;margin-bottom:14px;position:relative">
+    ${st.logo ? `<img src="${st.logo}" alt="" style="position:absolute;left:0;top:0;width:64px;height:64px;object-fit:contain">` : ''}
+    <h1 style="font-family:Georgia,serif;font-size:23px;font-weight:700;color:${brand};margin:0;text-transform:uppercase;letter-spacing:0.02em">${escapeHtml(st.schoolName)}</h1>
     ${st.motto ? `<p style="font-size:11px;color:#555;margin:2px 0;font-style:italic">${escapeHtml(st.motto)}</p>` : ''}
     <p style="font-size:11px;color:#555;margin:2px 0">${escapeHtml(contact)}</p>
-    <p style="font-size:12px;color:#0b5d3b;font-weight:700;margin:6px 0 0;letter-spacing:0.08em;text-transform:uppercase">${subtitle}</p>
+    <p style="font-size:12px;color:${brand};font-weight:700;margin:6px 0 0;letter-spacing:0.08em;text-transform:uppercase">${subtitle}</p>
   </div>`;
 }
 function printDoc(html) {
@@ -1169,95 +1104,6 @@ function printDoc(html) {
   window.print();
   el('printArea').style.display = 'none';
 }
-function openReportCard(studentId) {
-  const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const sum = studentAcademicSummary(s);
-  const att = studentAttendance(s.id);
-  const fee = effectiveFee(s), bal = studentBalance(s);
-  const notes = (s.performanceNotes || []).slice(-3).reverse();
-  const byTerm = sum.byTerm || {};
-  const academic = Object.keys(byTerm).sort().map(term => bestPerSubject(byTerm[term]).map(a =>
-    `<tr><td style="border:1px solid #cbd5e1;padding:5px">${escapeHtml(term)}</td><td style="border:1px solid #cbd5e1;padding:5px">${escapeHtml(a.subject)}</td><td style="border:1px solid #cbd5e1;padding:5px;text-align:center">${a.score}%</td><td style="border:1px solid #cbd5e1;padding:5px;text-align:center;font-weight:700">${escapeHtml(a.grade)}</td></tr>`).join('')).join('')
-    || '<tr><td colspan="4" style="border:1px solid #cbd5e1;padding:8px;text-align:center;color:#888">No scores recorded</td></tr>';
-  const conduct = state.conduct.filter(c => c.studentId === s.id).slice(-5).reverse();
-  const conductHtml = conduct.length ? '<ul style="font-size:12px;margin:4px 0 0;padding-left:18px">' + conduct.map(c => `<li><strong>${escapeHtml(c.date)} · ${escapeHtml(c.type)}:</strong> ${escapeHtml(c.description)} — <em>${escapeHtml(c.reportedBy)}</em></li>`).join('') + '</ul>' : '<p style="font-size:12px;color:#888">No conduct entries.</p>';
-  const h2 = 'font-size:13px;background:#0b5d3b;color:#fff;padding:5px 10px;margin:12px 0 6px;font-family:Arial,sans-serif';
-  printDoc(`${docHeader('Termly Student Report Card')}
-    <table style="width:100%;font-size:12px;margin-bottom:10px"><tr><td style="padding:2px 6px"><strong>Student:</strong> ${escapeHtml(s.name)}</td><td><strong>Admission no.:</strong> ${escapeHtml(s.id)}</td></tr>
-    <tr><td style="padding:2px 6px"><strong>Class:</strong> ${escapeHtml(s.class)} ${s.combination ? '(' + escapeHtml(s.combination) + ')' : ''}</td><td><strong>Level:</strong> ${escapeHtml(s.level)}</td></tr>
-    <tr><td style="padding:2px 6px"><strong>Guardian:</strong> ${escapeHtml(s.guardian)}</td><td><strong>Date:</strong> ${todayISO()}</td></tr></table>
-    <h2 style="${h2}">ACADEMIC PERFORMANCE</h2>
-    <table style="width:100%;border-collapse:collapse;font-size:12px"><thead style="background:#f0f4f1"><tr><th style="border:1px solid #cbd5e1;padding:5px">Term</th><th style="border:1px solid #cbd5e1;padding:5px">Subject</th><th style="border:1px solid #cbd5e1;padding:5px">Score</th><th style="border:1px solid #cbd5e1;padding:5px">Grade</th></tr></thead><tbody>${academic}</tbody></table>
-    <p style="font-size:12px;margin:6px 0"><strong>Overall:</strong> ${sum.count} entries · average ${sum.avg}% · latest sitting result: <strong>${escapeHtml(sum.summary)}</strong></p>
-    <h2 style="${h2}">SPORTS & CO-CURRICULAR</h2>
-    <p style="font-size:12px;margin:2px 0"><strong>Sport:</strong> ${escapeHtml(s.sport || '—')} · <strong>Skill:</strong> ${escapeHtml(s.skillLevel || '—')} · <strong>Attendance:</strong> ${att.rate}% (${att.present}/${att.total})</p>
-    ${notes.map(n => `<div style="border-left:2px solid #0b5d3b;padding:3px 8px;margin:3px 0;font-size:12px"><em>${escapeHtml(n.date)}:</em> ${escapeHtml(n.note)}</div>`).join('')}
-    <h2 style="${h2}">DISCIPLINE & CONDUCT</h2>${conductHtml}
-    <h2 style="${h2}">FEES STATEMENT</h2>
-    <table style="width:100%;font-size:12px"><tr><td><strong>Termly fee:</strong> ${fmtMoney(s.fee)}</td><td><strong>After bursary:</strong> ${fmtMoney(fee)}</td></tr>
-    <tr><td><strong>Paid:</strong> <span style="color:#047857">${fmtMoney(studentPaid(s))}</span></td><td><strong>Balance:</strong> <span style="color:#b91c1c;font-weight:700">${fmtMoney(bal)}</span></td></tr></table>
-    <div style="margin-top:30px;display:flex;justify-content:space-between;font-size:11px"><div>____________________<br>Class Teacher</div><div>____________________<br>Head of Sports</div><div>____________________<br>Head Teacher</div></div>
-    <p style="text-align:center;font-size:10px;color:#999;margin-top:14px">Generated ${new Date().toLocaleString('en-GB')}</p>`);
-}
-function printFeeReceipt(studentId) {
-  const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const payments = state.payments.filter(p => p.studentId === s.id && !p.void);
-  const fee = effectiveFee(s), bal = studentBalance(s);
-  const receiptNo = 'RCP-' + s.id + '-' + Date.now().toString().slice(-6);
-  const ct = getCurrentTerm();
-  const comp = state.feeComponents.length
-    ? `<table style="width:100%;border-collapse:collapse;font-size:12px;margin:8px 0"><thead style="background:#f0f4f1"><tr><th style="border:1px solid #cbd5e1;padding:5px;text-align:left">Component</th><th style="border:1px solid #cbd5e1;padding:5px;text-align:right">Amount</th></tr></thead><tbody>${state.feeComponents.map(c => `<tr><td style="border:1px solid #cbd5e1;padding:5px">${escapeHtml(c.name)}</td><td style="border:1px solid #cbd5e1;padding:5px;text-align:right">${fmtMoney(c.amount)}</td></tr>`).join('')}<tr style="font-weight:700;background:#f0f4f1"><td style="border:1px solid #cbd5e1;padding:5px">TOTAL</td><td style="border:1px solid #cbd5e1;padding:5px;text-align:right">${fmtMoney(fee)}</td></tr></tbody></table>`
-    : `<p style="font-size:12px"><strong>Total fees:</strong> ${fmtMoney(fee)}</p>`;
-  printDoc(`${docHeader('Official Fee Receipt')}
-    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px">
-      <div><strong>Receipt no.:</strong> ${receiptNo}<br><strong>Date:</strong> ${todayISO()}<br><strong>Term:</strong> ${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Current term'}</div>
-      <div style="text-align:right"><strong>Student:</strong> ${escapeHtml(s.name)}<br><strong>Admission no.:</strong> ${escapeHtml(s.id)}<br><strong>Class:</strong> ${escapeHtml(s.class)}</div>
-    </div>
-    <h3 style="font-size:13px;margin:0 0 4px">FEE BREAKDOWN</h3>${comp}
-    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px;margin:10px 0;display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
-      <div><strong>Total assessed:</strong> ${fmtMoney(fee)}</div><div><strong>Amount paid:</strong> <span style="color:#047857;font-weight:700">${fmtMoney(studentPaid(s))}</span></div>
-      <div><strong>Outstanding:</strong> <span style="color:${bal > 0 ? '#b91c1c' : '#047857'};font-weight:700">${fmtMoney(bal)}</span></div><div><strong>Status:</strong> <strong style="color:${bal <= 0 ? '#047857' : '#b91c1c'}">${bal <= 0 ? 'CLEARED' : 'OUTSTANDING'}</strong></div>
-    </div>
-    <h3 style="font-size:13px;margin:12px 0 4px">PAYMENT HISTORY</h3>
-    <table style="width:100%;border-collapse:collapse;font-size:11px"><thead style="background:#f0f4f1"><tr><th style="border:1px solid #cbd5e1;padding:5px;text-align:left">Date</th><th style="border:1px solid #cbd5e1;padding:5px;text-align:left">Method</th><th style="border:1px solid #cbd5e1;padding:5px;text-align:right">Amount</th><th style="border:1px solid #cbd5e1;padding:5px;text-align:left">Reference</th></tr></thead><tbody>
-    ${payments.length ? payments.map(p => `<tr><td style="border:1px solid #cbd5e1;padding:4px">${p.date}</td><td style="border:1px solid #cbd5e1;padding:4px">${escapeHtml(p.method || 'Cash')}</td><td style="border:1px solid #cbd5e1;padding:4px;text-align:right;font-weight:600">${fmtMoney(p.amount)}</td><td style="border:1px solid #cbd5e1;padding:4px;font-family:monospace;font-size:10px">${escapeHtml(p.reference || p.id)}</td></tr>`).join('') : '<tr><td colspan="4" style="border:1px solid #cbd5e1;padding:6px;text-align:center;color:#888">No payments recorded</td></tr>'}
-    </tbody></table>
-    <div style="margin-top:30px;display:flex;justify-content:space-between;font-size:11px"><div>____________________<br>Cashier / Bursar</div><div style="text-align:center">____________________<br>Head Teacher</div><div style="text-align:right">____________________<br>School Stamp</div></div>
-    <p style="text-align:center;font-size:10px;color:#999;margin-top:12px">Official receipt — keep for your records. Generated ${new Date().toLocaleString('en-GB')}</p>`);
-}
-
-/* ── Terms & fee components ────────────────────────────────────────────── */
-function getCurrentTerm() { return state.terms.find(t => t.isActive) || state.terms[state.terms.length - 1] || null; }
-function addTerm(f) {
-  if (!can('canManageTerms')) return toast('You do not have permission.', 'error');
-  if (state.terms.find(t => t.year === f.year && t.term === f.term)) return toast('That term already exists.', 'error');
-  state.terms.forEach(t => t.isActive = false);
-  state.terms.push({ id: 'TRM' + uid().slice(0, 5), year: (f.year || '').trim(), term: f.term, startDate: f.startDate, endDate: f.endDate, isActive: true });
-  saveState(); renderAll();
-  toast(`${f.year} ${f.term} set as the current term.`, 'success');
-}
-function setActiveTerm(id) { state.terms.forEach(t => t.isActive = (t.id === id)); saveState(); renderAll(); toast('Active term updated.', 'success'); }
-async function deleteTerm(id) { if (!await confirmDialog({ title: 'Remove term', message: 'Remove this term?', confirmLabel: 'Remove', danger: true })) return; state.terms = state.terms.filter(t => t.id !== id); saveState(); renderAll(); }
-function renderTermsTable() {
-  const body = el('termsTableBody'); if (!body) return;
-  const banner = el('currentTermBanner');
-  if (banner) { const ct = getCurrentTerm(); if (ct) { banner.style.display = 'flex'; banner.querySelector('span').textContent = `Current term: ${ct.year} ${ct.term}${ct.startDate ? ' · ' + ct.startDate + ' → ' + (ct.endDate || '?') : ''}`; } else banner.style.display = 'none'; }
-  body.innerHTML = state.terms.length ? [...state.terms].reverse().map(t => `<tr><td style="font-weight:600">${escapeHtml(t.year)}</td><td>${escapeHtml(t.term)}</td><td>${t.startDate || '—'}</td><td>${t.endDate || '—'}</td><td>${t.isActive ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-neutral">Archived</span>'}</td><td><div class="row-actions">${!t.isActive ? `<button class="btn btn-outline btn-xs" data-act="setActiveTerm" data-id="${escapeHtml(t.id)}">Set active</button>` : ''}<button class="btn-icon" data-act="deleteTerm" data-id="${escapeHtml(t.id)}" title="Remove">${icon('trash', 15)}</button></div></td></tr>`).join('') : '<tr><td colspan="6" class="empty">No terms set yet.</td></tr>';
-}
-function addFeeComponent(f) {
-  if (!can('canManageTerms')) return toast('You do not have permission.', 'error');
-  if (!f.compName || !f.compName.trim()) return toast('Component name is required.', 'error');
-  if (state.feeComponents.find(c => c.name.toLowerCase() === f.compName.toLowerCase())) return toast('That component already exists.', 'error');
-  state.feeComponents.push({ id: 'FC' + uid().slice(0, 5), name: f.compName.trim(), amount: Number(f.compAmount) || 0 });
-  saveState(); renderAll();
-  toast('Fee component added.', 'success');
-}
-function deleteFeeComponent(id) { state.feeComponents = state.feeComponents.filter(c => c.id !== id); saveState(); renderAll(); }
-function renderFeeComponents() {
-  const box = el('feeCompList'); if (!box) return;
-  box.innerHTML = state.feeComponents.length ? state.feeComponents.map(c => `<div class="tile" style="display:flex;align-items:center;gap:8px;padding:8px 12px"><span style="font-weight:600">${escapeHtml(c.name)}</span><span style="color:var(--success);font-size:12.5px">${fmtMoney(c.amount)}</span><button class="btn-icon" data-act="deleteFeeComponent" data-id="${escapeHtml(c.id)}" title="Remove">${icon('x', 15)}</button></div>`).join('') : '<p class="card-desc">No components defined yet.</p>';
-}
-
 /* ── Competitions & squads ─────────────────────────────────────────────── */
 function openCompetitionForm() {
   openModal({
@@ -1343,6 +1189,7 @@ function renderSquadsGrid() {
   }).join('') : '<div class="empty">No squads created yet.</div>';
 }
 function openAthleteProfile(studentId) {
+  if (!can('canLogPerformance')) return toast('You do not have permission.', 'error');
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const p = s.athleteProfile || {};
   const opt = (v, sel) => `<option ${v === sel ? 'selected' : ''}>${v}</option>`;
@@ -1369,7 +1216,7 @@ function renderAthleteProfiles() {
   if (apf) { const sports = [...new Set(state.students.filter(s => s.sport).map(s => s.sport))].sort(); const cur = apf.value; apf.innerHTML = '<option value="">All Sports</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); apf.value = cur; }
   const athletes = state.students.filter(s => s.sport && (!filter || (s.sport || '').toLowerCase() === filter));
   const ic = { Fit: 'badge-success', 'Minor Knock': 'badge-warn', Injured: 'badge-danger', Recovering: 'badge-warn' };
-  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td><button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button></td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
+  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
 }
 
 /* ── Notices ───────────────────────────────────────────────────────────── */
@@ -1393,17 +1240,41 @@ function renderNotices() {
 function renderUsersList() {
   const box = el('usersList'); if (!box) return;
   const users = AUTH.getUsers();
-  const colors = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309' };
-  const labels = { exec: 'Executive', admin: 'Administrator', bursary: 'Bursary', coach: 'Sports' };
-  box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">@${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || u.role}</span></div><div class="card-desc">Last sign-in: ${u.lastLogin ? u.lastLogin.slice(0, 16).replace('T', ' ') : 'Never'}</div></div><div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Password reset</span>' : '<span class="badge badge-success">Active</span>'}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No user accounts found.</p>';
+  const colors = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
+  const labels = { exec: 'Executive', admin: 'Administrator', bursary: 'Bursary', coach: 'Sports', teacher: 'Teacher' };
+  if (ONLINE_EDITION) {
+    box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || escapeHtml(u.role)}</span></div>${u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : ''}</div><div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited — not joined yet</span>' : (u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-neutral">Access off</span>')}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No staff yet. Add someone below.</p>';
+    return;
+  }
+  box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">@${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || u.role}</span></div><div class="card-desc">Last sign-in: ${u.lastLogin ? u.lastLogin.slice(0, 16).replace('T', ' ') : 'Never'}${u.role === 'teacher' ? ' · Classes: ' + escapeHtml((u.assignedClasses || []).join(', ') || 'none yet') : ''}</div></div><div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Password reset</span>' : '<span class="badge badge-success">Active</span>'}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No user accounts found.</p>';
 }
 function loadUserForEdit(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
   el('editUserId').value = u.id; el('editUsername').value = u.username; el('editDisplayName').value = u.displayName; el('editRole').value = u.role; el('editPassword').value = '';
+  if (ONLINE_EDITION) el('editUsername').readOnly = true;   // an account's email cannot be changed here
+  document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = (u.assignedClasses || []).includes(cb.value); });
+  toggleAssignedClasses();
   el('userEditForm').closest('details').open = true;
   el('editUsername').focus();
 }
-function clearUserEditForm() { ['editUserId', 'editUsername', 'editDisplayName', 'editPassword'].forEach(id => el(id).value = ''); el('editRole').value = 'admin'; }
+function clearUserEditForm() {
+  ['editUserId', 'editUsername', 'editDisplayName', 'editPassword'].forEach(id => el(id).value = '');
+  el('editUsername').readOnly = false;
+  el('editRole').value = 'admin';
+  document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = false; });
+  toggleAssignedClasses();
+}
+/* Teachers are limited to the classes ticked here. */
+function renderAssignedClassOptions() {
+  const box = el('editAssignedClasses'); if (!box || box.dataset.ready) return;
+  box.dataset.ready = '1';
+  box.innerHTML = CLASS_OPTIONS.map(c => `<label class="check"><input type="checkbox" value="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`).join('');
+}
+function toggleAssignedClasses() {
+  renderAssignedClassOptions();
+  const wrap = el('assignedClassesWrap');
+  if (wrap) wrap.style.display = el('editRole').value === 'teacher' ? '' : 'none';
+}
 async function handleUserEditSubmit(e) {
   e.preventDefault();
   const id = el('editUserId').value;
@@ -1411,8 +1282,10 @@ async function handleUserEditSubmit(e) {
   const displayName = el('editDisplayName').value.trim();
   const role = el('editRole').value;
   const password = el('editPassword').value;
-  if (!username || !displayName) return toast('Username and display name are required.', 'error');
+  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Email address and name are required.' : 'Username and display name are required.', 'error');
   const data = { username, displayName, role };
+  data.assignedClasses = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
+  if (role === 'teacher' && !data.assignedClasses.length) return toast('Tick at least one class for this teacher.', 'error');
   if (id) data.id = id;
   if (password) {
     const check = AUTH.validatePasswordStrength(password);
@@ -1422,11 +1295,19 @@ async function handleUserEditSubmit(e) {
   }
   const res = await AUTH.upsertUser(data);
   if (!res.ok) return toast(res.error, 'error');
-  toast(id ? 'User updated.' : 'User created.', 'success');
+  if (ONLINE_EDITION && res.invited) toast(`${displayName} is invited. Ask them to open the portal, choose "First time here?" and use ${username}.`, 'success');
+  else toast(id ? 'User updated.' : 'User created.', 'success');
   clearUserEditForm(); renderUsersList(); renderAuditLog();
 }
 async function resetUserPwd(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
+  if (ONLINE_EDITION) {
+    if (!await confirmDialog({ title: 'Send a password-reset link', message: `Email a link to ${u.username} so ${u.displayName} can choose a new password?`, confirmLabel: 'Send link' })) return;
+    const sent = await AUTH.adminResetPassword(userId);
+    if (!sent.ok) return toast(sent.error, 'error');
+    renderAuditLog();
+    return toast(`Reset link sent to ${u.username}.`, 'success');
+  }
   const pwd = await promptDialog({ title: 'Reset password', label: `Temporary password for ${u.displayName} (min 8 chars, letters + numbers)`, type: 'text' });
   if (!pwd) return;
   const res = await AUTH.adminResetPassword(userId, pwd);
@@ -1436,10 +1317,13 @@ async function resetUserPwd(userId) {
 }
 async function confirmDeleteUser(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
-  if (!await confirmDialog({ title: 'Delete account', message: `Delete the account for ${u.displayName}? This cannot be undone.`, confirmLabel: 'Delete account', danger: true })) return;
-  const res = AUTH.deleteUser(userId);
+  const msg = ONLINE_EDITION
+    ? (u.pending ? `Cancel the invitation for ${u.displayName}?` : `Remove ${u.displayName} from the school? They will no longer be able to sign in to it.`)
+    : `Delete the account for ${u.displayName}? This cannot be undone.`;
+  if (!await confirmDialog({ title: ONLINE_EDITION ? 'Remove staff member' : 'Delete account', message: msg, confirmLabel: ONLINE_EDITION ? (u.pending ? 'Cancel invitation' : 'Remove') : 'Delete account', danger: true })) return;
+  const res = await AUTH.deleteUser(userId);
   if (!res.ok) return toast(res.error, 'error');
-  toast('Account deleted.', 'success'); renderUsersList(); renderAuditLog();
+  toast(ONLINE_EDITION ? 'Done.' : 'Account deleted.', 'success'); renderUsersList(); renderAuditLog();
 }
 function renderAuditLog() {
   const box = el('auditLogBody'); if (!box) return;
@@ -1463,6 +1347,7 @@ function saveSettings(f) {
     motto: (f.motto || '').trim(), address: (f.address || '').trim(),
     poBox: (f.poBox || '').trim(), phone: (f.phone || '').trim(), email: (f.email || '').trim(),
     headTeacher: (f.headTeacher || '').trim(), gradingMode: f.gradingMode || 'legacy', currency: (f.currency || 'UGX').trim(),
+    brandPreset: f.brandPreset || state.settings.brandPreset || 'green',
   });
   recomputeGrades();
   saveState(); applySettings(); renderAll();
@@ -1481,19 +1366,22 @@ function applySettings() {
    Modal system (confirm / prompt / generic)
    ========================================================================= */
 let modalResolver = null;
-function openModal({ title, bodyHtml, footHtml, wide, onOpen }) {
+function openModal({ title, bodyHtml, footHtml, wide, onOpen, locked }) {
   const host = el('modalHost');
-  host.innerHTML = `<div class="modal-overlay"><div class="modal ${wide ? 'modal-wide' : ''}" role="dialog" aria-modal="true">
-    <div class="modal-head"><div><h3>${title}</h3></div><button class="modal-close" data-modal-close aria-label="Close">${icon('x', 20)}</button></div>
+  // A locked modal (forced password change) cannot be dismissed by ✕, Escape or backdrop.
+  host.innerHTML = `<div class="modal-overlay"${locked ? ' data-locked' : ''}><div class="modal ${wide ? 'modal-wide' : ''}" role="dialog" aria-modal="true">
+    <div class="modal-head"><div><h3>${title}</h3></div>${locked ? '' : `<button class="modal-close" data-modal-close aria-label="Close">${icon('x', 20)}</button>`}</div>
     <div class="modal-body">${bodyHtml}</div>
     ${footHtml ? `<div class="modal-foot">${footHtml}</div>` : ''}
   </div></div>`;
   const overlay = host.querySelector('.modal-overlay');
-  overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeModal(); });
+  if (!locked) overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeModal(); });
   const root = host.querySelector('.modal');
   if (onOpen) onOpen(root);
+  // Focus straight away. A delayed focus can jump the cursor back to the first
+  // field while someone is already typing in another one.
   const focusable = root.querySelector('input, select, textarea, button');
-  if (focusable) setTimeout(() => focusable.focus(), 30);
+  if (focusable && !root.contains(document.activeElement)) focusable.focus();
 }
 function closeModal() { el('modalHost').innerHTML = ''; if (modalResolver) { const r = modalResolver; modalResolver = null; r(null); } }
 
@@ -1533,22 +1421,92 @@ function promptDialog({ title, label, value = '', type = 'text' }) {
 /* =========================================================================
    Navigation
    ========================================================================= */
+/* Ten modules. The ids are historical ("register" is Attendance, "payments" is
+   Fees, "conduct" is Discipline); only what people read changed. */
 const TAB_LABELS = {
-  overview: 'Dashboard', directory: 'Students', academics: 'Academics', payments: 'Payments',
-  sports: 'Sports', attendance: 'Attendance', competitions: 'Competitions', bursary: 'Bursaries',
-  conduct: 'Conduct', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
+  overview: 'Dashboard', directory: 'Students', register: 'Attendance', academics: 'Academics', payments: 'Fees',
+  sports: 'Sports', conduct: 'Discipline', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
 };
+/* Sub-tabs inside a module: [id, label, permission needed]. Cards in
+   index.html carry data-sub="<id>"; anything without data-sub always shows. */
+const SUB_TABS = {
+  directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
+  register: [['daily', 'Daily register'], ['recent', 'Recent registers']],
+  academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
+  payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
+  sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
+  reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
+  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['data', 'Data & backup']],
+};
+let currentTab = null;
+const lastSub = {};
+function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm]) => !perm || can(perm)); }
 function buildNav(tabs) {
   const nav = el('navBar');
   nav.innerHTML = tabs.map(t => `<button class="nav-tab" data-tab="${t}">${icon(t, 16)}<span>${TAB_LABELS[t] || t}</span></button>`).join('');
 }
-function switchTab(tab) {
+function switchTab(tab, sub) {
   if (!hasTab(tab)) { toast('You do not have access to that section.', 'error'); return; }
+  currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = el('panel-' + tab);
   if (panel) panel.classList.add('active');
+  showSub(tab, sub);
+  // The KPI strip belongs on each role's home module; elsewhere it is clutter.
+  const metrics = el('metricsRow');
+  if (metrics) metrics.classList.toggle('hidden', tab !== AUTH.getDefaultTab());
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+/* Show one sub-tab of a module: the one asked for, else the last one used,
+   else the first this role may use. Hiding uses a class, so it never fights
+   the role checks in initApp, which set style.display. */
+function showSub(tab, sub) {
+  const subs = allowedSubs(tab);
+  const ids = subs.map(s => s[0]);
+  const chosen = ids.includes(sub) ? sub : ids.includes(lastSub[tab]) ? lastSub[tab] : ids[0];
+  if (chosen) lastSub[tab] = chosen;
+  const nav = el('subNav');
+  if (nav) {
+    nav.classList.toggle('hidden', subs.length < 2);
+    nav.innerHTML = subs.map(([id, label]) => `<button type="button" role="tab" data-sub="${id}" aria-selected="${id === chosen}">${escapeHtml(label)}</button>`).join('');
+  }
+  const panel = el('panel-' + tab);
+  if (panel && SUB_TABS[tab]) panel.querySelectorAll('[data-sub]').forEach(c => c.classList.toggle('hidden', c.dataset.sub !== chosen));
+}
+
+/* ── What's new (dashboard) ────────────────────────────────────────────── */
+/* Points directors at the capabilities added in this release. Hiding it is
+   remembered on this device only. */
+const WHATS_NEW_RELEASE = '2026-11';
+const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
+const WHATS_NEW = [
+  ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
+  ['academics/marksheet', 'Academics', 'Class mark sheet', "Enter a whole class's marks for one subject on one screen."],
+  ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
+  ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
+  ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
+  ['payments/bursaries', 'Fees', 'Bursaries for any learner', 'Needs-based, staff, academic or sports bursaries. The bill adjusts itself.'],
+  ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
+  ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
+  ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
+];
+function whatsNewHidden() {
+  try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
+}
+function renderWhatsNew() {
+  const card = el('whatsNewCard'), list = el('whatsNewList');
+  if (!card || !list) return;
+  const items = WHATS_NEW.filter(([to]) => { const [tab, sub] = to.split('/'); return hasTab(tab) && allowedSubs(tab).some(s => s[0] === sub); });
+  card.style.display = items.length && !whatsNewHidden() ? '' : 'none';
+  list.innerHTML = items.map(([to, where, title, desc]) => `<div class="wn-item">
+      <div class="wn-where">${escapeHtml(where)}</div><div class="wn-title">${escapeHtml(title)}</div><div class="wn-desc">${escapeHtml(desc)}</div>
+      <button class="btn btn-outline btn-xs" type="button" data-act="goto" data-to="${escapeHtml(to)}">Open ${icon('right', 13)}</button>
+    </div>`).join('');
+}
+function hideWhatsNew() {
+  try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_RELEASE); } catch (_) {}
+  const card = el('whatsNewCard'); if (card) card.style.display = 'none';
 }
 
 /* =========================================================================
@@ -1570,7 +1528,6 @@ const ACTIONS = {
   setBursary: d => setBursary(d.id),
   setActiveTerm: d => setActiveTerm(d.id),
   deleteTerm: d => deleteTerm(d.id),
-  deleteFeeComponent: d => deleteFeeComponent(d.id),
   matchReport: d => viewMatchReport(d.id),
   deleteCompetition: d => deleteCompetition(d.id),
   deleteSquad: d => deleteSquad(d.id),
@@ -1580,6 +1537,8 @@ const ACTIONS = {
   resetUserPwd: d => resetUserPwd(d.id),
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
+  goto: d => { const [tab, sub] = String(d.to || '').split('/'); switchTab(tab, sub); },
+  dismissWhatsNew: () => hideWhatsNew(),
 };
 function handleDelegatedClick(e) {
   const modalClose = e.target.closest('[data-modal-close]');
@@ -1593,14 +1552,14 @@ function handleDelegatedClick(e) {
    ========================================================================= */
 function bind(id, handler) { const e = el(id); if (e) e.addEventListener('submit', ev => { ev.preventDefault(); handler(Object.fromEntries(new FormData(ev.target).entries()), ev.target); }); }
 function setupBindings() {
+  // initApp runs on every sign-in; bind listeners only once or forms submit twice.
+  if (bindingsReady) return;
+  bindingsReady = true;
   bind('registerForm', (f, form) => { registerStudent(f); form.reset(); });
   bind('paymentForm', (f, form) => { recordPayment(f); form.reset(); el('balancePreview').style.display = 'none'; });
   bind('programForm', (f, form) => { f.days = new FormData(form).getAll('days'); addProgram(f); form.reset(); });
   bind('performanceForm', (f, form) => { logPerformance(f); form.reset(); });
-  bind('academicForm', (f, form) => { addAcademicScore(f); form.reset(); });
   bind('conductForm', (f, form) => { f.notifyGuardian = form.notifyGuardian.checked; addConduct(f); form.reset(); });
-  bind('termForm', (f, form) => { addTerm(f); form.reset(); });
-  bind('feeCompForm', (f, form) => { addFeeComponent(f); form.reset(); });
   bind('noticeForm', (f, form) => { postNotice(f); form.reset(); });
   bind('settingsForm', (f) => { saveSettings(f); });
 
@@ -1608,7 +1567,6 @@ function setupBindings() {
   on('searchInput', 'input', () => { studentPage = 1; renderStudentTable(); });
   on('levelFilter', 'change', () => { studentPage = 1; renderStudentTable(); });
   on('sportFilter', 'change', renderPerformanceTable);
-  on('academicLevelFilter', 'change', renderAcademicTable);
   on('conductFilter', 'change', renderConductTable);
   on('compSportFilter', 'change', renderCompetitionsTable);
   on('compSeasonFilter', 'change', renderCompetitionsTable);
@@ -1652,6 +1610,10 @@ function setupBindings() {
     const hints = { Primary: 'Math, English, Science, SST, RE', 'O Level': 'Math, English, Physics, Chemistry, Biology…', 'A Level': 'PCM, PCB, HEG, MEG…' };
     combo.placeholder = hints[classifyLevel(cls.value)] || 'Subjects, comma-separated';
   });
+  const role = el('editRole');
+  if (role) role.addEventListener('change', toggleAssignedClasses);
+
+  MODULES.forEach(m => { if (m.setup) m.setup(); });
 }
 
 /* =========================================================================
@@ -1661,12 +1623,20 @@ let sessionTimer = null;
 let lastRefresh = 0;
 const SESSION_WARN_SECS = 15 * 60;
 function updateSessionBar() {
-  const secs = AUTH.sessionSecondsLeft();
   const bar = el('sessionBar'); if (!bar) return;
+  // Signed out: stop. Treating "no session" as an expiry would sign out the
+  // next person who signs in on this device.
+  if (!currentSession) { stopSessionTimer(); return; }
+  const secs = AUTH.sessionSecondsLeft();
   if (secs <= 0) {
-    clearInterval(sessionTimer); bar.classList.remove('visible');
+    const expired = currentSession.userId;
+    stopSessionTimer();
     toast('Your session has expired. Please sign in again.', 'warn');
-    setTimeout(() => { AUTH.logout(); location.reload(); }, 1800);
+    setTimeout(() => {
+      // Only end the session that actually expired.
+      const now = AUTH.getSession();
+      if (!now || now.userId === expired) { AUTH.logout(); location.reload(); }
+    }, 1800);
     return;
   }
   if (secs <= SESSION_WARN_SECS) {
@@ -1678,21 +1648,16 @@ function updateSessionBar() {
     fill.className = secs < 300 ? 'danger' : secs < 600 ? 'warn' : '';
   } else bar.classList.remove('visible');
 }
-function startSessionTimer() { if (sessionTimer) clearInterval(sessionTimer); sessionTimer = setInterval(updateSessionBar, 1000); }
-
-function checkPwdStrength(pwd) {
-  const bar = el('pwdMeter'), lbl = el('pwdMeterLabel'); if (!bar || !lbl) return;
-  let score = 0;
-  if (pwd.length >= 8) score++; if (pwd.length >= 12) score++;
-  if (/[A-Z]/.test(pwd)) score++; if (/[0-9]/.test(pwd)) score++; if (/[^A-Za-z0-9]/.test(pwd)) score++;
-  const levels = [{ l: '', c: 'transparent', w: '0%' }, { l: 'Very weak', c: '#dc2626', w: '20%' }, { l: 'Weak', c: '#ea580c', w: '40%' }, { l: 'Fair', c: '#d97706', w: '60%' }, { l: 'Strong', c: '#16a34a', w: '80%' }, { l: 'Very strong', c: '#15803d', w: '100%' }];
-  const lv = levels[Math.min(score, 5)];
-  bar.querySelector('span').style.width = lv.w; bar.querySelector('span').style.background = lv.c;
-  lbl.textContent = lv.l; lbl.style.color = lv.c;
+function stopSessionTimer() {
+  if (sessionTimer) clearInterval(sessionTimer);
+  sessionTimer = null;
+  const bar = el('sessionBar'); if (bar) bar.classList.remove('visible');
 }
+function startSessionTimer() { if (sessionTimer) clearInterval(sessionTimer); sessionTimer = setInterval(updateSessionBar, 1000); }
 
 function updateBackupBanner() {
   const banner = el('backupBanner'); if (!banner) return;
+  if (ONLINE_EDITION) { banner.style.display = 'none'; return; }
   let last = null;
   try { last = localStorage.getItem('ksa_last_backup'); } catch (_) {}
   if (!can('canExport')) { banner.style.display = 'none'; return; }
@@ -1710,15 +1675,20 @@ async function handleLogin(e) {
   btn.disabled = true; btn.textContent = 'Signing in…'; err.style.display = 'none';
   const res = await AUTH.login(el('loginUsername').value, el('loginPassword').value);
   btn.disabled = false; btn.textContent = 'Sign in';
-  if (!res.ok) { err.style.display = 'block'; err.textContent = res.error; return; }
+  if (!res.ok) {
+    err.style.display = 'block'; err.textContent = res.error;
+    if (res.noSchool && typeof offerNewSchool === 'function') offerNewSchool();
+    return;
+  }
   currentSession = res.session;
   el('loginPassword').value = '';
   initApp();
-  if (res.mustChangePassword) openChangePwd(true);
 }
 async function handleLogout() {
   if (!await confirmDialog({ title: 'Sign out', message: 'Sign out of the portal?', confirmLabel: 'Sign out' })) return;
+  stopSessionTimer();
   AUTH.logout(); currentSession = null;
+  if (ONLINE_EDITION) { state = freshState(); closeModal(); }   // nothing of the school stays on a shared computer
   el('appShell').classList.remove('visible');
   el('authScreen').style.display = 'grid';
 }
@@ -1730,6 +1700,7 @@ function openChangePwd(forced) {
       <div class="field"><label>New password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="cpNew"><div class="pwd-meter"><span></span></div><div class="pwd-meter-label" id="pwdMeterLabel"></div></div>
       <div class="field"><label>Confirm new password</label><input class="input" type="password" id="cpConfirm"></div>
       <div id="cpError" class="auth-error" style="display:none"></div>`,
+    locked: !!forced,
     footHtml: forced ? `<button class="btn btn-primary btn-block" id="cpSave">Update password</button>` : `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="cpSave">Update password</button>`,
     onOpen(root) {
       // Re-point the strength meter (modal creates the elements).
@@ -1780,7 +1751,9 @@ function initApp() {
   document.documentElement.style.setProperty('--role', perms.color);
 
   el('exportBtn').style.display = can('canExport') ? '' : 'none';
-  el('importLabel').style.display = can('canImport') ? '' : 'none';
+  // Restoring a device backup, daily snapshots and "erase all data" belong to
+  // the offline edition; online, the school database is the record.
+  el('importLabel').style.display = can('canImport') && !ONLINE_EDITION ? '' : 'none';
 
   buildNav(perms.tabs);
 
@@ -1789,7 +1762,7 @@ function initApp() {
   show('regStudentCard', can('canRegisterStudent'));
   show('recPaymentCard', can('canRecordPayment'));
   show('addProgramCard', can('canAddProgram'));
-  show('resetCard', can('canReset'));
+  show('resetCard', can('canReset') && !ONLINE_EDITION);
   show('userMgmtCard', can('canManageUsers'));
   show('auditLogCard', can('canManageUsers'));
   show('settingsCard', can('canManageSettings'));
@@ -1797,8 +1770,21 @@ function initApp() {
   show('academicFormCard', can('canAddAcademic'));
   show('perfFormCard', can('canLogPerformance'));
   show('termMgmtCard', can('canManageTerms'));
-  show('feeCompCard', can('canManageTerms'));
-  show('adminImportLabel', can('canImport'));
+  show('feeStructCard', can('canManageTerms'));
+  show('bandsCard', can('canManageSettings'));
+  show('importCard', can('canRegisterStudent'));
+  show('snapshotsBtn', can('canImport') && !ONLINE_EDITION);
+  show('exportDefaultersBtn2', can('canExport'));
+  show('marksheetCard', can('canAddAcademic'));
+  show('commentsCard', can('canAddAcademic'));
+  show('adminImportLabel', can('canImport') && !ONLINE_EDITION);
+  // Sports is view-only for roles that cannot act there (the administrator).
+  show('trainingFormCard', can('canMarkAttendance'));
+  show('addCompetitionBtn', can('canManageCompetitions'));
+  show('addSquadBtn', can('canManageSquads'));
+  show('syncStatus', ONLINE_EDITION);
+  showOnlineImport();
+  if (ONLINE_EDITION && can('canManageSettings') && SYNC.importing()) setTimeout(resolveInterruptedImport, 0);
 
   setupBindings();
   renderAll();
@@ -1806,7 +1792,10 @@ function initApp() {
   startSessionTimer();
 
   if (el('attendanceDate')) el('attendanceDate').value = todayISO();
+  // A new sign-in starts at the top of each module, not where the last person was.
+  Object.keys(lastSub).forEach(k => delete lastSub[k]);
   switchTab(AUTH.getDefaultTab());
+  if (AUTH.mustChangePassword()) openChangePwd(true);
 }
 
 /* Throttle activity-based session refresh to once per minute. */
@@ -1817,16 +1806,260 @@ function registerActivityRefresh() {
   }, { passive: true }));
 }
 
+/* =========================================================================
+   Online edition: sign-in extras and start-up (unused offline)
+   ========================================================================= */
+function applyEditionTexts() {
+  const edition = ONLINE_EDITION ? 'online' : 'offline';
+  document.querySelectorAll('[data-edition]').forEach(e => { e.style.display = e.dataset.edition === edition ? '' : 'none'; });
+  if (!ONLINE_EDITION) return;
+  const user = el('loginUsername');
+  user.type = 'email'; user.autocomplete = 'email'; user.name = 'email';
+  const label = document.querySelector('label[for="loginUsername"]'); if (label) label.textContent = 'Email address';
+  const sub = document.querySelector('.auth-card .auth-sub'); if (sub) sub.textContent = 'Sign in with the email address your school registered for you.';
+  // Staff are added by email address and choose their own password.
+  const uLabel = el('editUsername') && el('editUsername').previousElementSibling;
+  if (uLabel) uLabel.textContent = 'Email address';
+  if (el('editUsername')) { el('editUsername').type = 'email'; el('editUsername').placeholder = 'name@yourschool.ug'; }
+  if (el('editPassword')) el('editPassword').parentElement.style.display = 'none';
+  const desc = document.querySelector('#userMgmtCard .card-desc');
+  if (desc) desc.textContent = 'Staff who can sign in to this school. Add someone by email address; they then create their own password with "First time here?".';
+}
+
+function authModalError(root, id, message) { const e = root.querySelector(id); e.style.display = message ? 'block' : 'none'; e.textContent = message || ''; }
+
+function openSignUp() {
+  openModal({
+    title: 'Create your staff account',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Use the email address your school's director added for you. We will email you a link to confirm it.</p>
+      <div class="field"><label for="suEmail">Email address</label><input class="input" type="email" id="suEmail" autocomplete="email"></div>
+      <div class="field"><label for="suPwd">Choose a password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="suPwd" autocomplete="new-password"></div>
+      <div class="field"><label for="suConfirm">Confirm password</label><input class="input" type="password" id="suConfirm" autocomplete="new-password"></div>
+      <div id="suError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="suSave">Create account</button>`,
+    onOpen(root) {
+      const typed = el('loginUsername').value.trim(); if (typed) root.querySelector('#suEmail').value = typed;
+      root.querySelector('#suSave').addEventListener('click', async () => {
+        const email = root.querySelector('#suEmail').value.trim().toLowerCase();
+        const pwd = root.querySelector('#suPwd').value;
+        if (pwd !== root.querySelector('#suConfirm').value) return authModalError(root, '#suError', 'The passwords do not match.');
+        const btn = root.querySelector('#suSave'); btn.disabled = true;
+        const res = await AUTH.signUp(email, pwd);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#suError', res.error);
+        closeModal();
+        el('loginUsername').value = email;
+        if (res.confirmEmail) { toast(`Account created. Open the link we emailed to ${email}, then sign in.`, 'success'); return; }
+        el('loginPassword').value = pwd;
+        el('loginForm').requestSubmit();
+      });
+    },
+  });
+}
+
+function openForgotPassword() {
+  openModal({
+    title: 'Reset your password',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Enter your email address and we will send you a link to choose a new password.</p>
+      <div class="field"><label for="fpEmail">Email address</label><input class="input" type="email" id="fpEmail" autocomplete="email"></div>
+      <div id="fpError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="fpSend">Send link</button>`,
+    onOpen(root) {
+      const typed = el('loginUsername').value.trim(); if (typed) root.querySelector('#fpEmail').value = typed;
+      root.querySelector('#fpSend').addEventListener('click', async () => {
+        const email = root.querySelector('#fpEmail').value.trim();
+        const btn = root.querySelector('#fpSend'); btn.disabled = true;
+        const res = await AUTH.sendPasswordReset(email);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#fpError', res.error);
+        closeModal();
+        toast(`If ${email} has an account, a reset link is on its way. Check your email.`, 'success');
+      });
+    },
+  });
+}
+
+/* Shown after following a password-reset link from the email. */
+function openSetNewPassword() {
+  openModal({
+    title: 'Choose a new password',
+    locked: true,
+    bodyHtml: `<div class="field"><label for="npPwd">New password <span class="opt">(min 8 chars, letters + numbers)</span></label><input class="input" type="password" id="npPwd" autocomplete="new-password"></div>
+      <div class="field"><label for="npConfirm">Confirm new password</label><input class="input" type="password" id="npConfirm" autocomplete="new-password"></div>
+      <div id="npError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-primary btn-block" id="npSave">Save new password</button>`,
+    onOpen(root) {
+      root.querySelector('#npSave').addEventListener('click', async () => {
+        const pwd = root.querySelector('#npPwd').value;
+        if (pwd !== root.querySelector('#npConfirm').value) return authModalError(root, '#npError', 'The passwords do not match.');
+        const res = await AUTH.setNewPassword(pwd);
+        if (!res.ok) return authModalError(root, '#npError', res.error);
+        closeModal();
+        AUTH.logout();
+        toast('Password changed. Sign in with your new password.', 'success');
+      });
+    },
+  });
+}
+
+/* Signed in, but not linked to any school yet: offer to start one. */
+function offerNewSchool() {
+  openModal({
+    title: 'Start your school on the portal',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">Your email address is not linked to a school yet. If your school is joining the portal, set it up here and you become its Executive Director. If your school already uses the portal, ask its director to add you instead.</p>
+      <div class="field"><label for="nsName">School name</label><input class="input" id="nsName" placeholder="e.g. Kampala Hill Primary School"></div>
+      <div class="field"><label for="nsYou">Your name</label><input class="input" id="nsYou" placeholder="e.g. Sarah Namubiru"></div>
+      <div id="nsError" class="auth-error" style="display:none"></div>`,
+    footHtml: `<button class="btn btn-ghost" data-modal-close>Not now</button><button class="btn btn-primary" id="nsCreate">Start the school</button>`,
+    onOpen(root) {
+      root.querySelector('#nsCreate').addEventListener('click', async () => {
+        const btn = root.querySelector('#nsCreate'); btn.disabled = true;
+        const res = await AUTH.createSchool(root.querySelector('#nsName').value, root.querySelector('#nsYou').value);
+        btn.disabled = false;
+        if (!res.ok) return authModalError(root, '#nsError', res.error);
+        closeModal();
+        el('authError').style.display = 'none';
+        currentSession = res.session;
+        initApp();
+        toast(`${res.session.schoolName} is ready. Add your staff under Administration → Staff accounts.`, 'success');
+      });
+    },
+  });
+}
+
+/* Bring a school's offline-edition backup into its new online school. Every
+   learner's bills and payments are checked against the backup before the
+   import is accepted; if anything differs it can be undone. */
+async function importOfflineBackup(file) {
+  if (!ONLINE_EDITION || !can('canManageSettings')) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch (_) { data = null; }
+  if (!data || !Array.isArray(data.students)) return toast('That file is not a portal backup.', 'error');
+  const backup = migrate(data);
+  ensureDefaultTerm(backup);
+  const seen = new Set(), problems = [];
+  backup.students.forEach(s => {
+    if (!ADMISSION_RE.test(String(s.id || ''))) problems.push(`"${s.id}" (${s.name}): admission numbers may only contain letters, numbers, / _ and -`);
+    else if (seen.has(String(s.id).toLowerCase())) problems.push(`"${s.id}" is used by more than one learner`);
+    seen.add(String(s.id).toLowerCase());
+  });
+  if (problems.length) {
+    return openModal({
+      title: 'Fix these learners first',
+      bodyHtml: `<p class="card-desc" style="margin-bottom:10px">Correct them in the offline edition, export a new backup and try again.</p><ul style="margin:0;padding-left:18px;font-size:13px">${problems.slice(0, 12).map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>${problems.length > 12 ? `<p class="card-desc">…and ${problems.length - 12} more.</p>` : ''}`,
+      footHtml: '<button class="btn btn-primary" data-modal-close>OK</button>',
+    });
+  }
+  const expected = SYNC.balancesOf(backup);
+  const live = backup.payments.filter(p => !p.void);
+  const ok = await confirmDialog({
+    title: 'Bring in the offline backup',
+    message: `${backup.students.length} learners, ${live.length} payments (${fmtMoney(live.reduce((a, p) => a + Number(p.amount || 0), 0))}), ${backup.invoices.length} bills and ${backup.terms.length} terms will be copied into ${schoolName()}. Terms or notices already entered here are replaced. Every learner's bills and payments are then checked against the backup.`,
+    confirmLabel: 'Bring in the backup',
+  });
+  if (!ok) return;
+  if (needsConnection('Bringing in a backup')) return;
+  openModal({ title: 'Bringing in the backup…', locked: true, bodyHtml: '<p class="card-desc" id="impProgress">Starting…</p>', footHtml: '' });
+  const say = text => { const p = el('impProgress'); if (p) p.textContent = text; };
+  let result;
+  try {
+    result = await SYNC.importBackup(backup, (done, total) => say(`Copied ${done} of ${total} records…`));
+  } catch (e) {
+    try { await SYNC.cancelImport(); } catch (_) {}
+    closeModal();
+    return toast('The backup was not brought in: ' + (e.message || e) + ' Nothing was kept; you can try again.', 'error');
+  }
+  say('Checking every learner\'s balance…');
+  let actual;
+  try {
+    await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
+    loadState();
+    actual = SYNC.balancesOf(state);
+  } catch (e) {
+    closeModal();
+    return toast('The backup was copied, but the balances could not be checked: ' + (e.message || e) + ' Sign in again to finish or undo the import.', 'error');
+  }
+  const wrong = Object.keys(expected).filter(id => !actual[id] || actual[id].billed !== expected[id].billed || actual[id].paid !== expected[id].paid);
+  closeModal();
+  if (!wrong.length) {
+    await SYNC.finishImport(`${backup.students.length} learners, ${result.total} records, all balances checked`);
+    renderAll(); showOnlineImport();
+    return toast(`Done. All ${backup.students.length} learners' balances match the backup.${result.skipped ? ` ${result.skipped} records that belonged to no learner were left out.` : ''}`, 'success');
+  }
+  const examples = wrong.slice(0, 3).map(id => `${expected[id].name} (${id})`).join(', ');
+  const choice = await chooseImportOutcome('Some balances do not match',
+    `${wrong.length} learner(s) do not match the backup, for example ${examples}. Undo the import to remove everything it brought in, or keep it and check those learners' accounts yourself.`);
+  await settleImport(choice, `${backup.students.length} learners; ${wrong.length} balance(s) differ from the backup`);
+}
+
+/* The director must either keep or undo an import: until then the database
+   pauses new payments for the school. */
+function chooseImportOutcome(title, message) {
+  return new Promise(resolve => {
+    openModal({
+      title, locked: true,
+      bodyHtml: `<p style="font-size:14px;color:var(--muted);margin:0">${escapeHtml(message)}</p>`,
+      footHtml: '<button class="btn btn-danger-solid" id="impUndo" type="button">Undo the import</button><button class="btn btn-primary" id="impKeep" type="button">Keep it and finish</button>',
+      onOpen(root) {
+        root.querySelector('#impUndo').addEventListener('click', () => { closeModal(); resolve('undo'); });
+        root.querySelector('#impKeep').addEventListener('click', () => { closeModal(); resolve('keep'); });
+      },
+    });
+  });
+}
+async function settleImport(choice, summary) {
+  try {
+    if (choice === 'undo') await SYNC.cancelImport(); else await SYNC.finishImport(summary);
+    await SYNC.loadSchool(currentSession.schoolId, currentSession.role);
+    loadState(); renderAll(); showOnlineImport();
+    toast(choice === 'undo' ? 'The import was undone.' : 'The import is finished. Check the learners whose balances differed.', 'warn');
+  } catch (e) {
+    toast('Could not finish the import: ' + (e.message || e) + ' Sign in again to finish or undo it.', 'error');
+  }
+}
+/* An import that was interrupted (closed tab, lost connection) is offered
+   again to the director at sign-in, so the school is never left with
+   payments paused. */
+async function resolveInterruptedImport() {
+  const choice = await chooseImportOutcome('A backup import did not finish',
+    'Bringing in the offline backup was interrupted, so new payments are paused for this school. Keep what was brought in and finish, or undo it and bring the backup in again.');
+  await settleImport(choice, 'Finished after an interruption');
+}
+/* "Bring in data from the offline edition" is offered to the director of a
+   new online school that has no learners yet. */
+function showOnlineImport() {
+  const e = el('onlineImportLabel'); if (!e) return;
+  e.style.display = ONLINE_EDITION && can('canManageSettings') && !state.students.length ? '' : 'none';
+}
+
+/* Connect to the school database and pick up an earlier sign-in. */
+async function startOnline() {
+  applyEditionTexts();
+  el('authScreen').style.display = 'grid';
+  const btn = el('loginBtn'), err = el('authError');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  let res;
+  try { res = await ONLINE.start(); } catch (e) { res = { signedIn: false, error: e.message }; }
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if (res.signedIn) { currentSession = AUTH.getSession(); initApp(); return; }
+  if (res.error) { err.style.display = 'block'; err.textContent = res.error; }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   if (el('brandCrest')) el('brandCrest').innerHTML = crestSVG();
   if (el('topCrest')) el('topCrest').innerHTML = crestSVG();
   el('loginForm').addEventListener('submit', handleLogin);
   el('changePwdBtn').addEventListener('click', () => openChangePwd(false));
   el('logoutBtn').addEventListener('click', handleLogout);
+  if (el('forgotPwdBtn')) el('forgotPwdBtn').addEventListener('click', openForgotPassword);
+  if (el('signUpBtn')) el('signUpBtn').addEventListener('click', openSignUp);
+  if (el('onlineImportInput')) el('onlineImportInput').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importOfflineBackup(f); });
+  window.addEventListener('portal:password-recovery', openSetNewPassword);
   el('navBar').addEventListener('click', e => { const b = e.target.closest('.nav-tab'); if (b) switchTab(b.dataset.tab); });
+  el('subNav').addEventListener('click', e => { const b = e.target.closest('[data-sub]'); if (b && currentTab) showSub(currentTab, b.dataset.sub); });
   el('sessionExtendBtn').addEventListener('click', () => { AUTH.refreshSession(); updateSessionBar(); });
   document.addEventListener('click', handleDelegatedClick);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('#modalHost [data-locked]')) closeModal(); });
   registerActivityRefresh();
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -1845,6 +2078,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }).catch(() => {});
   }
 
+  // Show the school's own name, logo and colours on the sign-in screen.
+  try { loadState(); applySettings(); applyBranding(); } catch (_) {}
+
+  if (ONLINE_EDITION) { startOnline(); return; }
   const session = AUTH.getSession();
   if (session) { currentSession = session; initApp(); }
   else el('authScreen').style.display = 'grid';

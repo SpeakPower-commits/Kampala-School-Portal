@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self'; base-uri 'none'; form-action 'self'">
 <meta name="theme-color" content="#0b5d3b">
 <meta name="description" content="Offline-first, role-based school management portal for Ugandan schools and academies.">
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icon192.png">
+<link rel="apple-touch-icon" href="icon192.png">
 <link rel="stylesheet" href="styles.css">
 <title>School Management Portal</title>
 </head>
@@ -48,7 +48,11 @@
         </div>
         <button class="btn btn-primary btn-block" type="submit" id="loginBtn">Sign in</button>
       </form>
-      <p class="auth-sub" style="margin-top:22px;font-size:12px">First-time setup? Sign in with the credentials supplied to your administrator. You will be asked to set a private password immediately.</p>
+      <div class="auth-links" data-edition="online" style="display:none">
+        <button class="btn btn-ghost btn-sm" type="button" id="forgotPwdBtn">Forgot your password?</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="signUpBtn">First time here? Create your account</button>
+      </div>
+      <p class="auth-sub" data-edition="offline" style="margin-top:22px;font-size:12px">First-time setup? Sign in with the credentials supplied to your administrator. You will be asked to set a private password immediately.</p>
     </div>
   </div>
 </div>
@@ -63,12 +67,13 @@
         <span class="t-sub" data-school-motto>Management Portal</span>
       </div>
       <div class="topbar-spacer"></div>
+      <span class="sync-pill" id="syncStatus" role="status" aria-live="polite" style="display:none"></span>
       <span class="role-chip" id="roleChip">—</span>
       <div class="topbar-user"><div class="u-name" id="userName">—</div><div class="u-role" id="userRole">—</div></div>
-      <button class="topbar-btn" id="exportBtn" style="display:none" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Backup</button>
-      <label class="topbar-btn" id="importLabel" style="display:none;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Restore<input id="importInput" type="file" accept="application/json" hidden></label>
-      <button class="topbar-btn" id="changePwdBtn" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Password</button>
-      <button class="topbar-btn danger" id="logoutBtn" type="button">Sign out</button>
+      <button class="topbar-btn" id="exportBtn" style="display:none" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="tb-label">Backup</span></button>
+      <label class="topbar-btn" id="importLabel" style="display:none;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span class="tb-label">Restore</span><input id="importInput" type="file" accept="application/json" hidden></label>
+      <button class="topbar-btn" id="changePwdBtn" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tb-label">Password</span></button>
+      <button class="topbar-btn danger" id="logoutBtn" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tb-label">Sign out</span></button>
     </div>
   </header>
 
@@ -77,19 +82,22 @@
   <main class="main">
     <div class="banner banner-warn no-print" id="backupBanner" style="display:none;margin-bottom:16px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg><span></span></div>
 
+    <nav class="subnav no-print hidden" id="subNav" role="tablist" aria-label="Sections"></nav>
+
     <div class="stat-row" id="metricsRow"></div>
 
     <!-- DASHBOARD -->
     <section id="panel-overview" class="panel">
+      <div class="card card-pad" id="whatsNewCard" style="display:none">
+        <div class="card-head"><div><div class="card-title">What's new in your portal</div><p class="card-desc">All of this is ready to use. Tap Open to go straight to it.</p></div>
+          <button class="btn btn-ghost btn-sm" type="button" data-act="dismissWhatsNew">Got it, hide this</button></div>
+        <div class="whats-new" id="whatsNewList"></div>
+      </div>
       <div class="grid grid-2">
-        <div class="card card-pad">
-          <div class="card-title">Fees at a glance</div>
-          <div class="grid" style="grid-template-columns:1fr 1fr;gap:11px;margin-top:12px">
-            <div class="tile"><div class="stat-label">Cleared</div><div class="stat-value" style="color:var(--success)" id="ovCleared">0</div></div>
-            <div class="tile"><div class="stat-label">With balance</div><div class="stat-value" style="color:var(--danger)" id="ovBalance">0</div></div>
-            <div class="tile"><div class="stat-label">Athletes</div><div class="stat-value" style="color:var(--brand)" id="ovAthletes">0</div></div>
-            <div class="tile"><div class="stat-label">Avg attendance</div><div class="stat-value" id="ovAttendance">0%</div></div>
-          </div>
+        <div class="card card-pad" id="attTodayCard">
+          <div class="card-head" style="margin-bottom:12px"><div><div class="card-title">Attendance today</div><p class="card-desc">From the daily class registers.</p></div>
+            <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="register/daily">Open the register</button></div>
+          <div id="attTodayBody"></div>
         </div>
         <div class="card card-pad">
           <div class="card-title">Enrolment by level</div>
@@ -102,13 +110,12 @@
       </div>
     </section>
 
-    <!-- STUDENTS -->
+    <!-- STUDENTS: all students · admit a student · import from Excel -->
     <section id="panel-directory" class="panel">
-      <div class="card card-pad">
+      <div class="card card-pad" data-sub="list">
         <div class="card-head">
           <div class="card-title">Student directory</div>
           <div class="toolbar">
-            <button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Fee reminders</button>
             <select class="input" id="levelFilter" style="width:auto"><option value="">All levels</option><option>Pre-Primary</option><option>Primary</option><option>O Level</option><option>A Level</option><option>Other</option></select>
             <input class="input" id="searchInput" type="search" placeholder="Search name, class or ID…" style="width:220px">
           </div>
@@ -119,32 +126,148 @@
         </table></div>
         <div class="pager" id="studentPager"></div>
       </div>
+      <div class="card card-pad" id="regStudentCard" data-sub="admit">
+        <div class="card-title">Admit a new student</div>
+        <form id="registerForm" class="form-grid" style="margin-top:12px">
+          <div class="form-row">
+            <div><label class="form-label">Admission no. <span class="opt">(optional)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
+            <div><label class="form-label">Full name</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
+          </div>
+          <div class="form-row">
+            <div><label class="form-label">Class</label>
+              <select class="input" name="class" id="classSelect" required>
+                <option value="">Select…</option>
+                <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
+                <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
+                <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
+                <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
+              </select>
+            </div>
+            <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" list="streamList" placeholder="e.g. East"><datalist id="streamList"><option value="East"></option><option value="West"></option><option value="North"></option><option value="South"></option><option value="A"></option><option value="B"></option></datalist></div>
+            <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
+          </div>
+          <div class="form-row">
+            <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
+            <div><label class="form-label">Termly tuition (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" required placeholder="450000"></div>
+          </div>
+          <div class="form-row">
+            <div><label class="form-label">Gender</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
+            <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
+            <div><label class="form-label">UNEB index <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
+            <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
+          </div>
+          <div class="form-row">
+            <div><label class="form-label">Primary sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
+            <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
+          </div>
+          <button class="btn btn-primary" type="submit">Admit student</button>
+        </form>
+      </div>
+      <div class="card card-pad" id="importCard" data-sub="import">
+        <div class="card-title">Import learners</div>
+        <p class="card-desc">Move your existing records in from Excel. Save the sheet as CSV, check the preview, then import.</p>
+        <div class="stack" style="margin-top:12px">
+          <button class="btn btn-outline btn-block" id="importTemplateBtn" type="button" style="justify-content:flex-start">Download the template</button>
+          <label class="btn btn-primary btn-block" style="cursor:pointer;justify-content:flex-start">Import a CSV file<input id="importLearnersInput" type="file" accept=".csv,text/csv" hidden></label>
+          <button class="btn btn-outline btn-block" id="exportLearnersBtn" type="button" style="justify-content:flex-start">Export all learners (CSV)</button>
+        </div>
+      </div>
     </section>
 
-    <!-- ACADEMICS -->
+    <!-- ATTENDANCE: the daily class register -->
+    <section id="panel-register" class="panel">
+      <div class="card card-pad" data-sub="daily">
+        <div class="card-head"><div><div class="card-title">Class register</div><p class="card-desc" id="registerNote">Everyone starts as present. Tap A, L or E to change a learner.</p></div>
+          <div class="pill-list" id="registerToday"></div></div>
+        <div class="form-row" style="align-items:end">
+          <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
+          <div><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
+          <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
+          <div class="toolbar"><button class="btn btn-outline" id="regAllPresentBtn" type="button">All present</button><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
+        </div>
+        <p class="card-desc" style="margin:10px 0 6px"><strong>P</strong> present · <strong>A</strong> absent · <strong>L</strong> late · <strong>E</strong> excused</p>
+        <div class="scroll-box" id="registerRoster" style="max-height:520px"></div>
+        <div id="registerAbsentees" style="margin-top:14px"></div>
+      </div>
+      <div class="card card-pad" data-sub="recent">
+        <div class="card-title">Recent registers</div>
+        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>Class</th><th class="t-center">Present</th><th class="t-center">Absent</th><th class="t-center">Rate</th><th>Marked by</th><th></th></tr></thead><tbody id="registerHistoryBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- ACADEMICS: enter marks · mark sheet · comments · report cards · grading scales -->
     <section id="panel-academics" class="panel">
-      <div class="card card-pad" id="academicFormCard">
+      <div class="card card-pad" id="academicFormCard" data-sub="marks">
         <div class="card-title">Record subject score</div>
         <p class="card-desc">Grades follow the Uganda curriculum and your selected O-Level grading mode.</p>
         <form id="academicForm" class="form-row" style="margin-top:14px;align-items:end">
           <div><label class="form-label">Student</label><select class="input" name="studentId" id="academicStudent" required><option value="">Choose…</option></select></div>
-          <div><label class="form-label">Term</label><select class="input" name="term"><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></div>
+          <div><label class="form-label">Term</label><select class="input" name="termId" id="academicTerm"></select></div>
+          <div><label class="form-label">Exam</label><select class="input" name="examSet"><option value="BOT">Beginning of term</option><option value="MOT">Mid-term</option><option value="EOT" selected>End of term</option></select></div>
           <div><label class="form-label">Subject</label><input class="input" name="subject" list="subjectList" required placeholder="Mathematics"><datalist id="subjectList"></datalist></div>
           <div><label class="form-label">Score (%)</label><input class="input" name="score" type="number" min="0" max="100" required></div>
           <div><button class="btn btn-primary btn-block" type="submit">Add score</button></div>
         </form>
       </div>
-      <div class="card card-pad">
-        <div class="card-head"><div class="card-title">Academic performance</div>
-          <select class="input" id="academicLevelFilter" style="width:auto"><option value="">All levels</option><option>Primary</option><option>O Level</option><option>A Level</option></select>
+      <div class="card card-pad" data-sub="marks">
+        <div class="card-head"><div class="card-title">Results &amp; positions</div>
+          <div class="toolbar"><select class="input" id="academicTermFilter" style="width:auto" aria-label="Term"></select>
+          <select class="input" id="academicLevelFilter" style="width:auto" aria-label="Level"><option value="">All levels</option><option>Primary</option><option>O Level</option><option>A Level</option></select></div>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>Student</th><th>Class</th><th>Level</th><th class="t-center">Entries</th><th class="t-center">Avg</th><th>Latest result</th><th>View</th></tr></thead><tbody id="academicTableBody"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Learner</th><th>Class</th><th class="t-center">Subjects</th><th class="t-center">Average</th><th>Result</th><th class="t-center">Position</th><th></th></tr></thead><tbody id="academicTableBody"></tbody></table></div>
+      </div>
+      <div class="card card-pad" id="marksheetCard" data-sub="marksheet">
+        <div class="card-title">Class mark sheet</div>
+        <p class="card-desc">Enter one subject's marks for a whole class at once.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="msClass">Class</label><select class="input" id="msClass"></select></div>
+          <div><label class="form-label" for="msStream">Stream</label><select class="input" id="msStream"></select></div>
+          <div><label class="form-label" for="msTerm">Term</label><select class="input" id="msTerm"></select></div>
+          <div><label class="form-label" for="msExam">Exam</label><select class="input" id="msExam"><option value="BOT">Beginning of term</option><option value="MOT">Mid-term</option><option value="EOT" selected>End of term</option></select></div>
+          <div><label class="form-label" for="msSubject">Subject</label><input class="input" id="msSubject" list="subjectList" placeholder="Mathematics"></div>
+          <div><button class="btn btn-outline btn-block" id="msLoadBtn" type="button">Load class</button></div>
+        </div>
+        <div class="scroll-box" id="markSheetRoster" style="margin-top:12px;max-height:460px"><div class="empty">Choose a class and a subject to load the mark sheet.</div></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="msSaveBtn" type="button">Save marks</button></div>
+      </div>
+      <div class="card card-pad" id="commentsCard" data-sub="comments">
+        <div class="card-title">Report-card comments</div>
+        <p class="card-desc">Class-teacher and head-teacher remarks for each learner.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="cmClass">Class</label><select class="input" id="cmClass"></select></div>
+          <div><label class="form-label" for="cmTerm">Term</label><select class="input" id="cmTerm"></select></div>
+          <div class="toolbar"><button class="btn btn-outline" id="cmSuggestBtn" type="button">Suggest for blanks</button><button class="btn btn-primary" id="cmSaveBtn" type="button">Save comments</button></div>
+        </div>
+        <div id="commentRoster" style="margin-top:12px"><div class="empty">Choose a class to write report-card comments.</div></div>
+      </div>
+      <div class="card card-pad" data-sub="reportcards">
+        <div class="card-title">Print report cards</div>
+        <p class="card-desc">One page per learner, with marks, position, attendance, comments and fees.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="rcClass">Class</label><select class="input" id="rcClass"></select></div>
+          <div><label class="form-label" for="rcStream">Stream</label><select class="input" id="rcStream"></select></div>
+          <div><label class="form-label" for="rcTerm">Term</label><select class="input" id="rcTerm"></select></div>
+          <div><label class="form-label" for="rcNextBegins">Next term begins</label><input class="input" id="rcNextBegins" type="date"></div>
+          <div><label class="form-label" for="rcNextFees">Next term fees <span class="opt">(optional)</span></label><input class="input" id="rcNextFees" type="number" min="0" placeholder="From fee structure"></div>
+          <div><button class="btn btn-primary btn-block" id="rcPrintBtn" type="button">Print class</button></div>
+        </div>
+      </div>
+      <div class="card card-pad" id="bandsCard" style="display:none" data-sub="grading">
+        <div class="card-title">Grading scales</div>
+        <p class="card-desc">One grade per line: <code>GRADE MINIMUM POINTS</code>, e.g. <code>D1 80 1</code>. Changing a scale re-grades every mark.</p>
+        <div class="form-row" style="margin-top:12px">
+          <div><label class="form-label" for="bands-primary">Primary (PLE)</label><textarea class="input mono" id="bands-primary" rows="9"></textarea></div>
+          <div><label class="form-label" for="bands-olevel">O Level — legacy</label><textarea class="input mono" id="bands-olevel" rows="9"></textarea></div>
+          <div><label class="form-label" for="bands-olevelCbc">O Level — new curriculum</label><textarea class="input mono" id="bands-olevelCbc" rows="9"></textarea></div>
+          <div><label class="form-label" for="bands-alevel">A Level</label><textarea class="input mono" id="bands-alevel" rows="9"></textarea></div>
+        </div>
+        <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary btn-sm" id="bandsSaveBtn" type="button">Save scales</button><button class="btn btn-ghost btn-sm" id="bandsResetBtn" type="button">Restore defaults</button></div>
       </div>
     </section>
 
-    <!-- PAYMENTS -->
+    <!-- FEES: record payment · fees dashboard · terms & fee structures · bursaries -->
     <section id="panel-payments" class="panel">
-      <div class="grid" style="grid-template-columns:minmax(280px,340px) 1fr;align-items:start">
+      <div class="grid" style="grid-template-columns:minmax(280px,340px) 1fr;align-items:start" data-sub="record">
         <div class="card card-pad" id="recPaymentCard">
           <div class="card-title">Record payment</div>
           <form id="paymentForm" class="form-grid" style="margin-top:12px">
@@ -160,20 +283,115 @@
           </form>
         </div>
         <div class="card card-pad">
-          <div class="card-title">Payment ledger</div>
+          <div class="card-head" style="margin-bottom:0"><div class="card-title">Payment ledger</div>
+            <div class="toolbar"><button class="btn btn-outline btn-sm" id="exportPaymentsBtn" type="button">Export payments</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn" type="button">Export defaulters</button></div></div>
           <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>ID</th><th>Student</th><th>Method</th><th>Recorded by</th><th class="t-num">Amount</th><th class="t-num"></th></tr></thead><tbody id="paymentsTableBody"></tbody></table></div>
         </div>
       </div>
+      <div data-sub="dashboard"><div class="banner banner-warn" id="arrearsHeadline"></div></div>
+      <div class="grid grid-2" data-sub="dashboard">
+        <div class="card card-pad"><div class="card-title">Fees this term</div><div id="financeStats" style="margin-top:4px;font-size:13px"></div></div>
+        <div class="card card-pad"><div class="card-title">Collections by payment method</div><p class="card-desc">Money received this term.</p><div class="stack" id="collectionsByMethod" style="margin-top:12px"></div></div>
+      </div>
+      <div class="card card-pad" data-sub="dashboard">
+        <div class="card-head"><div><div class="card-title">Top defaulters</div><p class="card-desc">Largest balances, with one-tap reminders to guardians.</p></div>
+          <div class="toolbar"><button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Fee reminders</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn2" type="button">Export all defaulters</button></div></div>
+        <div class="table-wrap" id="topDefaulters"></div>
+      </div>
+      <div class="card card-pad" data-sub="dashboard"><div class="card-title">Fees by class</div><div class="table-wrap" id="arrearsByClass" style="margin-top:8px"></div></div>
+      <div class="card card-pad" id="termMgmtCard" data-sub="terms">
+        <div class="card-title">Terms</div>
+        <p class="card-desc">Opening a new term bills every learner from the fee structures. Unpaid balances carry forward as arrears.</p>
+        <form id="termForm" class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026"></div>
+          <div><label class="form-label">Term</label><select class="input" name="term"><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></div>
+          <div><label class="form-label">Start</label><input class="input" name="startDate" type="date"></div>
+          <div><label class="form-label">End</label><input class="input" name="endDate" type="date"></div>
+          <div><button class="btn btn-primary btn-block" type="submit">Open term</button></div>
+        </form>
+        <div class="banner banner-success" id="currentTermBanner" style="display:none;margin:12px 0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Term</th><th>Start</th><th>End</th><th class="t-center">Learners</th><th class="t-num">Billed</th><th>Status</th><th></th></tr></thead><tbody id="termsTableBody"></tbody></table></div>
+      </div>
+      <div class="card card-pad" id="feeStructCard" data-sub="terms">
+        <div class="card-head"><div><div class="card-title">Fee structures</div><p class="card-desc">What each class pays per term — tuition, boarding, PTA, development and more.</p></div></div>
+        <div class="toolbar" style="margin-bottom:12px">
+          <select class="input" id="feeStructureTerm" style="width:auto" aria-label="Term"></select>
+          <button class="btn btn-primary btn-sm" id="addFeeStructureBtn" type="button">Add fee structure</button>
+          <button class="btn btn-outline btn-sm" id="applyFeeStructuresBtn" type="button">Apply to learners</button>
+        </div>
+        <div class="stack" id="feeStructureList"></div>
+      </div>
+      <div class="card card-pad" id="bursariesCard" data-sub="bursaries">
+        <div class="card-title">Bursaries</div>
+        <p class="card-desc">Reduce a learner's fees by a percentage: needs-based, staff children, academic or sports awards. This term's bill changes straight away, and every change is kept in the audit log.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="bursaryStudent">Learner</label><select class="input" id="bursaryStudent"><option value="">Choose a student…</option></select></div>
+          <div><button class="btn btn-primary btn-block" id="bursarySetBtn" type="button">Set bursary…</button></div>
+        </div>
+        <div class="card-title" style="margin-top:20px">On a bursary</div>
+        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Learner</th><th>Class</th><th class="t-center">Bursary</th><th class="t-num">Off this term</th><th></th></tr></thead><tbody id="bursaryListBody"></tbody></table></div>
+        <div id="bursaryRecommended"></div>
+      </div>
     </section>
 
-    <!-- SPORTS -->
+    <!-- SPORTS: programmes · training attendance · competitions & squads · athletes · bursary candidates -->
     <section id="panel-sports" class="panel">
-      <div class="card card-pad">
+      <div class="card card-pad" data-sub="programmes">
         <div class="card-title">Active programs</div>
         <p class="card-desc">Training programs, schedules, coaches, requirements and enrolment.</p>
         <div class="grid grid-3" id="programsGrid" style="margin-top:14px"></div>
       </div>
-      <div class="card card-pad">
+      <div class="card card-pad" id="addProgramCard" data-sub="programmes">
+        <div class="card-title">Add sports program</div>
+        <form id="programForm" class="form-grid" style="margin-top:12px">
+          <div class="form-row">
+            <div><label class="form-label">Program name</label><input class="input" name="name" required placeholder="Football U-16"></div>
+            <div><label class="form-label">Sport</label><input class="input" name="sport" list="sportList" required placeholder="Football"></div>
+          </div>
+          <div><label class="form-label">Coach</label><input class="input" name="coach" placeholder="Mr. Opolot"></div>
+          <div><label class="form-label">Training days</label>
+            <div class="pill-list" style="padding:4px 0">
+              <label class="check"><input type="checkbox" name="days" value="Monday"> Mon</label>
+              <label class="check"><input type="checkbox" name="days" value="Tuesday"> Tue</label>
+              <label class="check"><input type="checkbox" name="days" value="Wednesday"> Wed</label>
+              <label class="check"><input type="checkbox" name="days" value="Thursday"> Thu</label>
+              <label class="check"><input type="checkbox" name="days" value="Friday"> Fri</label>
+              <label class="check"><input type="checkbox" name="days" value="Saturday"> Sat</label>
+            </div>
+          </div>
+          <div><label class="form-label">Requirements <span class="opt">(one per line)</span></label><textarea class="input" name="requirements" rows="3" placeholder="Football boots&#10;Team jersey"></textarea></div>
+          <button class="btn btn-primary" type="submit">Add program</button>
+        </form>
+      </div>
+      <div class="card card-pad" id="trainingFormCard" data-sub="training">
+        <div class="card-title">Mark training attendance</div>
+        <div class="form-row" style="margin-top:12px">
+          <div><label class="form-label">Program</label><select class="input" id="attendanceProgram"><option value="">Choose…</option></select></div>
+          <div><label class="form-label">Session date</label><input class="input" id="attendanceDate" type="date"></div>
+          <div style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-block" id="saveAttendanceBtn" type="button">Save session</button></div>
+        </div>
+        <div class="scroll-box" id="attendanceRoster" style="margin-top:14px"><div class="empty">Select a program to load enrolled athletes.</div></div>
+      </div>
+      <div class="card card-pad" data-sub="training">
+        <div class="card-title">Training attendance rates</div>
+        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Student</th><th>Sport</th><th class="t-center">Sessions</th><th class="t-center">Present</th><th class="t-center">Rate</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
+      </div>
+      <div class="card card-pad" data-sub="competitions">
+        <div class="card-head"><div><div class="card-title">Competitions &amp; tournaments</div><p class="card-desc">USSSA, FEASSSA and inter-school results.</p></div>
+          <button class="btn btn-primary btn-sm" id="addCompetitionBtn" type="button">Log result</button></div>
+        <div class="stat-row" id="compSummaryRow" style="margin:0 0 16px"></div>
+        <div class="toolbar" style="margin-bottom:12px">
+          <select class="input" id="compSportFilter" style="width:auto"><option value="">All Sports</option></select>
+          <select class="input" id="compSeasonFilter" style="width:auto"><option value="">All Seasons</option></select>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Sport</th><th>Level</th><th>Opponent</th><th>Venue</th><th>Result</th><th>Score</th><th>Position</th><th></th></tr></thead><tbody id="competitionsTableBody"></tbody></table></div>
+      </div>
+      <div class="card card-pad" data-sub="competitions">
+        <div class="card-head"><div><div class="card-title">Squad management</div><p class="card-desc">Team rosters — first XI, relay squad, netball team.</p></div>
+          <button class="btn btn-primary btn-sm" id="addSquadBtn" type="button">Create squad</button></div>
+        <div class="grid grid-3" id="squadsGrid" style="margin-top:8px"></div>
+      </div>
+      <div class="card card-pad" data-sub="athletes">
         <div class="card-head"><div><div class="card-title">Performance &amp; activity log</div><p class="card-desc">Latest skill evaluations per athlete.</p></div>
           <select class="input" id="sportFilter" style="width:auto"><option value="">All Sports</option></select>
         </div>
@@ -187,59 +405,19 @@
         </div>
         <div class="table-wrap"><table><thead><tr><th>Student</th><th>Class</th><th>Sport</th><th>Skill</th><th>Latest</th><th>Note</th><th></th></tr></thead><tbody id="performanceTableBody"></tbody></table></div>
       </div>
-    </section>
-
-    <!-- ATTENDANCE -->
-    <section id="panel-attendance" class="panel">
-      <div class="card card-pad">
-        <div class="card-title">Mark session attendance</div>
-        <div class="form-row" style="margin-top:12px">
-          <div><label class="form-label">Program</label><select class="input" id="attendanceProgram"><option value="">Choose…</option></select></div>
-          <div><label class="form-label">Session date</label><input class="input" id="attendanceDate" type="date"></div>
-          <div style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-block" id="saveAttendanceBtn" type="button">Save session</button></div>
-        </div>
-        <div class="scroll-box" id="attendanceRoster" style="margin-top:14px"><div class="empty">Select a program to load enrolled athletes.</div></div>
-      </div>
-      <div class="card card-pad">
-        <div class="card-title">Athlete attendance rates</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Student</th><th>Sport</th><th class="t-center">Sessions</th><th class="t-center">Present</th><th class="t-center">Rate</th></tr></thead><tbody id="attendanceTableBody"></tbody></table></div>
-      </div>
-    </section>
-
-    <!-- COMPETITIONS -->
-    <section id="panel-competitions" class="panel">
-      <div class="card card-pad">
-        <div class="card-head"><div><div class="card-title">Competitions &amp; tournaments</div><p class="card-desc">USSSA, FEASSSA and inter-school results.</p></div>
-          <button class="btn btn-primary btn-sm" id="addCompetitionBtn" type="button">Log result</button></div>
-        <div class="stat-row" id="compSummaryRow" style="margin:0 0 16px"></div>
-        <div class="toolbar" style="margin-bottom:12px">
-          <select class="input" id="compSportFilter" style="width:auto"><option value="">All Sports</option></select>
-          <select class="input" id="compSeasonFilter" style="width:auto"><option value="">All Seasons</option></select>
-        </div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Sport</th><th>Level</th><th>Opponent</th><th>Venue</th><th>Result</th><th>Score</th><th>Position</th><th></th></tr></thead><tbody id="competitionsTableBody"></tbody></table></div>
-      </div>
-      <div class="card card-pad">
-        <div class="card-head"><div><div class="card-title">Squad management</div><p class="card-desc">Team rosters — first XI, relay squad, netball team.</p></div>
-          <button class="btn btn-primary btn-sm" id="addSquadBtn" type="button">Create squad</button></div>
-        <div class="grid grid-3" id="squadsGrid" style="margin-top:8px"></div>
-      </div>
-      <div class="card card-pad">
+      <div class="card card-pad" data-sub="athletes">
         <div class="card-head"><div><div class="card-title">Athlete profiles &amp; personal bests</div><p class="card-desc">Height, weight, position, personal bests and injury status.</p></div>
           <select class="input" id="athleteProfileFilter" style="width:auto"><option value="">All Sports</option></select></div>
         <div class="table-wrap"><table><thead><tr><th>Athlete</th><th>Class</th><th>Sport</th><th>Position</th><th>Height</th><th>Weight</th><th>Personal best</th><th>Injury</th><th></th></tr></thead><tbody id="athleteProfilesBody"></tbody></table></div>
       </div>
-    </section>
-
-    <!-- BURSARY -->
-    <section id="panel-bursary" class="panel">
-      <div class="card card-pad">
+      <div class="card card-pad" data-sub="candidates">
         <div class="card-title">Sports bursary eligibility</div>
         <p class="card-desc">Auto-scored: skill ≥ Advanced · attendance ≥ 75% · at least 3 evaluations.</p>
         <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Student</th><th>Class · Level</th><th>Sport · Skill</th><th class="t-center">Attendance</th><th class="t-center">Evals</th><th class="t-center">Score</th><th class="t-center">Awarded</th><th class="t-center">Action</th></tr></thead><tbody id="bursaryTableBody"></tbody></table></div>
       </div>
     </section>
 
-    <!-- CONDUCT -->
+    <!-- DISCIPLINE -->
     <section id="panel-conduct" class="panel">
       <div class="card card-pad" id="conductFormCard">
         <div class="card-title">Log conduct entry</div>
@@ -265,22 +443,19 @@
       </div>
     </section>
 
-    <!-- REPORTS -->
+    <!-- REPORTS: statistics · EMIS -->
     <section id="panel-reports" class="panel">
-      <div class="card card-pad"><div class="card-title">Enrolment by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
-      <div class="card card-pad"><div class="card-title">Class-by-class breakdown</div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Enrolment by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Class-by-class breakdown</div>
         <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Class</th><th>Level</th><th class="t-center">Students</th><th class="t-center">Avg</th><th class="t-center">Cleared</th><th class="t-num">Outstanding</th><th class="t-center">Athletes</th></tr></thead><tbody id="classStatsBody"></tbody></table></div>
       </div>
-      <div class="grid grid-2">
-        <div class="card card-pad"><div class="card-title">Sports participation</div><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
-        <div class="card card-pad"><div class="card-title">Financial summary</div><div id="financeStats" style="margin-top:8px;font-size:13px"></div></div>
-      </div>
-      <div class="grid grid-3">
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Sports participation</div><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
+      <div class="grid grid-3" data-sub="statistics">
         <div class="card card-pad"><div class="card-title">Gender</div><div id="genderStats" style="margin-top:12px"></div></div>
         <div class="card card-pad"><div class="card-title">Boarding status</div><div id="boardingStats" style="margin-top:12px"></div></div>
         <div class="card card-pad"><div class="card-title">Special needs (SEN)</div><div id="senStats" style="margin-top:12px"></div></div>
       </div>
-      <div class="card card-pad" id="emisCard" style="display:none">
+      <div class="card card-pad" id="emisCard" style="display:none" data-sub="emis">
         <div class="card-head"><div><div class="card-title">EMIS report</div><p class="card-desc">Uganda Education Management Information System — termly enrolment statistics.</p></div>
           <button class="btn btn-primary btn-sm" id="exportEmisBtn" type="button">Export EMIS CSV</button></div>
         <div id="emisPreview" style="margin-top:12px"></div>
@@ -306,96 +481,41 @@
       </div>
     </section>
 
-    <!-- ADMINISTRATION -->
+    <!-- ADMINISTRATION: staff accounts · school profile & logo · data & backup -->
     <section id="panel-admin" class="panel">
       <div class="grid grid-2">
 
-        <div class="card card-pad" id="regStudentCard">
-          <div class="card-title">Register new student</div>
-          <form id="registerForm" class="form-grid" style="margin-top:12px">
-            <div class="form-row">
-              <div><label class="form-label">Admission no. <span class="opt">(optional)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
-              <div><label class="form-label">Full name</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
+        <div class="card card-pad" id="userMgmtCard" style="display:none" data-sub="staff">
+          <div class="card-title">Staff accounts</div>
+          <p class="card-desc">Portal staff accounts.</p>
+          <div id="usersList" style="margin:12px 0"></div>
+          <details class="disclosure">
+            <summary>Add or edit a user account</summary>
+            <div class="disclosure-body">
+              <form id="userEditForm" class="form-grid">
+                <input type="hidden" id="editUserId">
+                <div class="form-row">
+                  <div><label class="form-label">Username</label><input class="input" id="editUsername" required placeholder="teacher1"></div>
+                  <div><label class="form-label">Display name</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
+                </div>
+                <div class="form-row">
+                  <div><label class="form-label">Role</label><select class="input" id="editRole"><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
+                  <div><label class="form-label">Password <span class="opt">(blank = keep)</span></label><input class="input" id="editPassword" type="password"></div>
+                </div>
+                <div id="assignedClassesWrap" style="display:none"><div class="form-label">Classes this teacher handles</div><div class="pill-list" id="editAssignedClasses"></div></div>
+                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Clear</button></div>
+              </form>
             </div>
-            <div class="form-row">
-              <div><label class="form-label">Class</label>
-                <select class="input" name="class" id="classSelect" required>
-                  <option value="">Select…</option>
-                  <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
-                  <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
-                  <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
-                  <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
-                </select>
-              </div>
-              <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
-            </div>
-            <div class="form-row">
-              <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
-              <div><label class="form-label">Termly tuition (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" required placeholder="450000"></div>
-            </div>
-            <div class="form-row">
-              <div><label class="form-label">Gender</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
-              <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
-              <div><label class="form-label">UNEB index <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
-              <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
-            </div>
-            <div class="form-row">
-              <div><label class="form-label">Primary sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
-              <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
-            </div>
-            <button class="btn btn-primary" type="submit">Register student</button>
-          </form>
+          </details>
         </div>
 
-        <div class="card card-pad" id="addProgramCard">
-          <div class="card-title">Add sports program</div>
-          <form id="programForm" class="form-grid" style="margin-top:12px">
-            <div class="form-row">
-              <div><label class="form-label">Program name</label><input class="input" name="name" required placeholder="Football U-16"></div>
-              <div><label class="form-label">Sport</label><input class="input" name="sport" list="sportList" required placeholder="Football"></div>
-            </div>
-            <div><label class="form-label">Coach</label><input class="input" name="coach" placeholder="Mr. Opolot"></div>
-            <div><label class="form-label">Training days</label>
-              <div class="pill-list" style="padding:4px 0">
-                <label class="check"><input type="checkbox" name="days" value="Monday"> Mon</label>
-                <label class="check"><input type="checkbox" name="days" value="Tuesday"> Tue</label>
-                <label class="check"><input type="checkbox" name="days" value="Wednesday"> Wed</label>
-                <label class="check"><input type="checkbox" name="days" value="Thursday"> Thu</label>
-                <label class="check"><input type="checkbox" name="days" value="Friday"> Fri</label>
-                <label class="check"><input type="checkbox" name="days" value="Saturday"> Sat</label>
-              </div>
-            </div>
-            <div><label class="form-label">Requirements <span class="opt">(one per line)</span></label><textarea class="input" name="requirements" rows="3" placeholder="Football boots&#10;Team jersey"></textarea></div>
-            <button class="btn btn-primary" type="submit">Add program</button>
-          </form>
+        <div class="card card-pad" id="auditLogCard" style="display:none" data-sub="staff">
+          <div class="card-title">Audit log</div>
+          <p class="card-desc">Recent system and financial events.</p>
+          <div id="auditLogBody" style="max-height:300px;overflow-y:auto;margin-top:8px"></div>
         </div>
 
-        <div class="card card-pad" id="termMgmtCard">
-          <div class="card-title">Academic term</div>
-          <p class="card-desc">Set the current term for receipts and reports.</p>
-          <form id="termForm" class="form-row" style="margin-top:12px;align-items:end">
-            <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026"></div>
-            <div><label class="form-label">Term</label><select class="input" name="term"><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></div>
-            <div><label class="form-label">Start</label><input class="input" name="startDate" type="date"></div>
-            <div><label class="form-label">End</label><input class="input" name="endDate" type="date"></div>
-            <div><button class="btn btn-primary btn-block" type="submit">Set term</button></div>
-          </form>
-          <div class="banner banner-success" id="currentTermBanner" style="display:none;margin:12px 0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span></span></div>
-          <div class="table-wrap"><table><thead><tr><th>Year</th><th>Term</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead><tbody id="termsTableBody"></tbody></table></div>
-        </div>
-
-        <div class="card card-pad" id="feeCompCard">
-          <div class="card-title">Fee structure components</div>
-          <p class="card-desc">Itemise fees (Tuition, PTA, Development…) for detailed receipts.</p>
-          <form id="feeCompForm" class="form-row" style="margin-top:12px;align-items:end">
-            <div><label class="form-label">Component</label><input class="input" name="compName" required placeholder="PTA Levy"></div>
-            <div><label class="form-label">Amount (<span data-currency>UGX</span>)</label><input class="input" name="compAmount" type="number" min="0" step="1000" placeholder="50000"></div>
-            <div><button class="btn btn-primary btn-block" type="submit">Add</button></div>
-          </form>
-          <div class="pill-list" id="feeCompList" style="margin-top:12px"></div>
-        </div>
-
-        <div class="card card-pad" id="settingsCard" style="display:none">
+        <div class="card card-pad" id="settingsCard" style="display:none;grid-column:1/-1" data-sub="profile">
           <div class="card-title">School profile &amp; settings</div>
           <p class="card-desc">These details appear on receipts, report cards and SMS messages.</p>
           <form id="settingsForm" class="form-grid" style="margin-top:12px">
@@ -416,48 +536,27 @@
               <div><label class="form-label">O-Level grading</label><select class="input" name="gradingMode" id="setGrading"><option value="legacy">Legacy (D1–F9 · Division)</option><option value="cbc">New Lower Secondary (A–E competency)</option></select></div>
               <div><label class="form-label">Currency</label><input class="input" name="currency" id="setCurrency" value="UGX"></div>
             </div>
+            <div><div class="form-label">School colour</div><div class="pill-list" id="brandSwatches"></div></div>
+            <div><div class="form-label">School logo</div>
+              <div class="toolbar"><span id="logoPreview"></span>
+                <label class="btn btn-outline btn-sm" style="cursor:pointer">Upload logo<input id="logoInput" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+                <button class="btn btn-ghost btn-sm" id="logoRemoveBtn" type="button">Remove</button></div>
+              <div class="form-hint">PNG or JPG. It is resized automatically and appears on the sign-in screen, receipts and report cards.</div></div>
             <button class="btn btn-primary" type="submit">Save settings</button>
           </form>
         </div>
 
-        <div class="card card-pad" id="userMgmtCard" style="display:none">
-          <div class="card-title">User management</div>
-          <p class="card-desc">Portal staff accounts.</p>
-          <div id="usersList" style="margin:12px 0"></div>
-          <details class="disclosure">
-            <summary>Add or edit a user account</summary>
-            <div class="disclosure-body">
-              <form id="userEditForm" class="form-grid">
-                <input type="hidden" id="editUserId">
-                <div class="form-row">
-                  <div><label class="form-label">Username</label><input class="input" id="editUsername" required placeholder="teacher1"></div>
-                  <div><label class="form-label">Display name</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
-                </div>
-                <div class="form-row">
-                  <div><label class="form-label">Role</label><select class="input" id="editRole"><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option></select></div>
-                  <div><label class="form-label">Password <span class="opt">(blank = keep)</span></label><input class="input" id="editPassword" type="password"></div>
-                </div>
-                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Clear</button></div>
-              </form>
-            </div>
-          </details>
-        </div>
-
-        <div class="card card-pad" id="auditLogCard" style="display:none">
-          <div class="card-title">Audit log</div>
-          <p class="card-desc">Recent system and financial events.</p>
-          <div id="auditLogBody" style="max-height:300px;overflow-y:auto;margin-top:8px"></div>
-        </div>
-
-        <div class="card card-pad">
+        <div class="card card-pad" data-sub="data">
           <div class="card-title">Data management</div>
           <div class="stack" style="margin-top:12px">
             <button class="btn btn-outline btn-block" id="adminExportBtn" type="button" style="justify-content:flex-start">Export backup (JSON)</button>
             <label class="btn btn-outline btn-block" id="adminImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Restore from backup<input id="adminImportInput" type="file" accept="application/json" hidden></label>
+            <button class="btn btn-outline btn-block" id="snapshotsBtn" type="button" style="justify-content:flex-start;display:none">Restore a daily snapshot</button>
+            <label class="btn btn-outline btn-block" id="onlineImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Bring in data from the offline edition<input id="onlineImportInput" type="file" accept="application/json" hidden></label>
           </div>
         </div>
 
-        <div class="card card-pad" id="resetCard" style="display:none">
+        <div class="card card-pad" id="resetCard" style="display:none" data-sub="data">
           <div class="card-title">Danger zone</div>
           <p class="card-desc">Permanently erase every record on this device. Export a backup first.</p>
           <button class="btn btn-danger-solid btn-block" id="resetBtn" type="button" style="margin-top:12px">Erase all data</button>
@@ -481,7 +580,14 @@
 <div id="toastHost"></div>
 <div id="modalHost"></div>
 
+<script src="config.js"></script>
 <script src="auth.js"></script>
+<script src="sync.js"></script>
+<script src="auth-online.js"></script>
 <script src="app.js"></script>
+<script src="billing.js"></script>
+<script src="academics.js"></script>
+<script src="register.js"></script>
+<script src="tools.js"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v2.0.0
+### Offline-first school administration for Ugandan schools & academies — v3.3.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -16,17 +16,48 @@ device.
 - **Uganda curriculum built in.** Automatic grading for Primary, O-Level and
   A-Level, with both the legacy Division/D1–F9 system and the new Lower
   Secondary competency grades (A–E) — switchable per school.
-- **Fees under control.** A true payment ledger with mobile-money / cash / bank
-  methods, references, receipts, reversible entries and an audit trail.
+- **Fees and arrears under control.** Fee structures per class and term
+  (tuition, boarding, PTA…), installment plans, and a per-term bill for every
+  learner. Unpaid balances carry forward as arrears automatically, and every
+  payment — cash, MTN or Airtel Mobile Money, bank — clears the oldest term first.
+- **Know who owes what.** A finance dashboard with this term's collection rate,
+  arrears, collections by payment method, fees by class and the top defaulters,
+  each one tap away from an SMS or WhatsApp reminder.
+- **Report cards in minutes.** A class mark sheet for each subject, beginning /
+  mid / end-of-term marks, class and stream positions, PLE aggregates and
+  divisions, teacher comments — then print the whole class, one page per learner.
+- **Daily class register.** Present, absent, late or excused, with one-tap
+  messages to the guardians of absent learners.
 - **Parent communication.** One-tap SMS and WhatsApp fee reminders and conduct
   notices, pre-filled in the school's name.
-- **Official documents.** Printable, school-branded fee receipts and termly
-  report cards.
+- **Official documents.** Receipts with the amount in words, fees statements
+  with arrears brought forward, and report cards — all with the school's logo.
 - **Government reporting.** One-click EMIS enrolment CSV (gender, boarding, SEN,
   fees) per term.
-- **White-label.** Set the school name, motto, address, contacts and grading
-  mode; they flow through the whole app, receipts and messages.
+- **Your school's identity.** Name, motto, contacts, logo, school colour and
+  grading scales — used across the app, documents and messages.
+- **Easy switch-over.** Import existing learners (with opening balances) from an
+  Excel/CSV sheet.
 - **Installable (PWA).** "Add to Home Screen" on any phone, tablet or laptop.
+
+---
+
+## Where things are
+
+Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at a time.
+
+| Module | Sub-tabs |
+|--------|----------|
+| **Dashboard** | Fees at a glance, today's class attendance, and what's new |
+| **Students** | All students · Admit a student · Import from Excel |
+| **Attendance** | Daily register (every class, every morning) · Recent registers |
+| **Academics** | Enter marks · Mark sheet · Comments · Report cards · Grading scales |
+| **Fees** | Record payment · Fees dashboard · Terms & fee structures · Bursaries |
+| **Sports** | Programmes · Training attendance · Competitions & squads · Athletes · Bursary candidates |
+| **Discipline** | Conduct log, with messages to guardians |
+| **Reports** | Statistics · EMIS |
+| **Notices** | The school notice board |
+| **Administration** | Staff accounts · School profile & logo · Data & backup |
 
 ---
 
@@ -34,10 +65,11 @@ device.
 
 | Role | Sees | Can do |
 |------|------|--------|
-| **Executive Director** | Everything | Full access, user management, school settings, audit log, data reset |
-| **School Administrator** | Students, academics, payments, conduct, reports, admin | Register/edit students, record payments, log academics & conduct, manage terms |
-| **Bursary Officer** | Payments, bursaries, reports | Record & reverse payments, award bursaries, financial reports |
-| **Head of Sports** | Sports, attendance, competitions, bursaries | Programs, attendance, competitions, squads, athlete profiles |
+| **Executive Director** | All ten modules | Full access, staff accounts, school profile, audit log, data reset |
+| **School Administrator** | All ten modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
+| **Bursary Officer** | Fees, Reports, Notices | Record and reverse payments, give any learner a bursary, fee reports |
+| **Head of Sports** | Sports, Notices | Programmes, training attendance, competitions, squads, athlete profiles, bursary candidates |
+| **Teacher** | Attendance, Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments |
 
 ---
 
@@ -48,14 +80,33 @@ device.
 2. Sign in with the credentials your supplier gave you. On first sign-in each
    account is **forced to set a private password** — the defaults stop working
    once changed and there is no way to skip this step.
-3. As the Executive Director, open **Administration → School profile & settings**
+3. As the Executive Director, open **Administration → School profile & logo**
    and enter your school's name, motto, address, contacts and O-Level grading
    mode.
-4. Register students, set the current term, and take your first **Backup**.
+4. Under **Fees → Terms & fee structures**, open the current term, then enter
+   what each class or level pays (mark boarding-only items) and, if you use
+   them, the installment plan.
+5. Add learners under **Students** — one by one with **Admit a student**, or all
+   at once with **Import from Excel** (download the template, fill it in Excel,
+   save as CSV). Use the opening-balance column for fees owed from before.
+6. Under **Administration → Staff accounts**, create a **Teacher** account for
+   each class teacher and tick their classes.
+7. Take your first **Backup**.
+
+## Running a term
+
+| When | Where | What |
+|------|-------|------|
+| Start of term | Fees → Terms & fee structures | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
+| Every morning | Attendance → Daily register | Each class teacher calls the register; message the guardians of absent learners. The Dashboard shows which classes are still to be marked. |
+| Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, and print the receipt. |
+| Weekly | Fees → Fees dashboard | Review the collection rate and top defaulters; send **Fee reminders**. |
+| Test / exam time | Academics → Mark sheet | Enter a subject for the whole class (beginning, mid or end of term). |
+| End of term | Academics → Comments, then Report cards | Write comments, then **Print class** for report cards. |
 
 > The four seed accounts (`exec`, `admin`, `bursary`, `coach`) exist only to
 > bootstrap the first sign-in. Change every password immediately and create
-> named staff accounts under **User management**.
+> named staff accounts under **Administration → Staff accounts**.
 
 ---
 
@@ -65,11 +116,35 @@ device.
 school-portal/
 ├── index.html          Markup only (strict Content-Security-Policy)
 ├── styles.css          Institutional stylesheet (no external dependencies)
-├── app.js              Application logic
-├── auth.js             Authentication module (PBKDF2 password hashing)
+├── app.js              Core: learners, payments, sports, conduct, UI shell
+├── billing.js          Terms, fee structures, bills, arrears, receipts, finance dashboard
+├── academics.js        Grading scales, marks, positions, comments, report cards
+├── register.js         Daily class register
+├── tools.js            CSV import/export, logo & colours, daily snapshots
+├── auth.js             Authentication and roles (PBKDF2 password hashing)
 ├── service-worker.js   Offline cache (network-first for app code)
 ├── manifest.json       PWA manifest
-└── icons/              App icons (PNG, 192 & 512)
+├── icon192.png         App icon (192×192)
+├── icon512.png         App icon (512×512)
+├── tests/e2e.js        End-to-end tests (run on every push by GitHub Actions)
+├── tests/online.e2e.mjs  End-to-end tests of the online edition
+│
+│   Online edition (shared school database)
+├── config.js           Which edition runs here (by web address) and the database address
+├── auth-online.js      Staff sign-in by email, invitations, password resets
+├── sync.js             Loads the school's data and saves only what changed
+├── vendor/supabase.js  Official Supabase client, pinned (see vendor/README.md)
+│
+│   Hosting on Cloudflare
+├── wrangler.jsonc      Cloudflare Worker settings
+├── worker/index.js     Small server API (/api/*); the app's files are served as-is
+├── _headers            Security headers for every page
+├── .assetsignore       Repository files that are never published
+│
+└── supabase/
+    ├── migrations/     Database tables and row-level security
+    ├── tests/          Database security tests (run on every push)
+    └── dev/server.mjs  Local stand-in for Supabase, for tests and demos
 ```
 
 No build step, no bundler, no CDN. Everything is self-contained and works
@@ -79,7 +154,26 @@ offline from the first load.
 
 ## Deployment
 
-### GitHub Pages (free, HTTPS)
+### Cloudflare (the portal's production home)
+One Cloudflare Worker serves the portal's files from Cloudflare's network, which
+includes Kampala, and will run the online edition's server API. Requests for the
+app's files are free and unlimited.
+
+1. In the Cloudflare dashboard open **Workers & Pages → Create application →
+   GitHub**, and pick this repository. The Worker name must stay
+   `kampala-school-portal`, the same as in `wrangler.jsonc`.
+2. Keep the production branch as `main`. No build command is needed.
+3. Under **Settings → Builds**, turn on **Builds for Preview branches**. Every
+   branch and pull request then gets its own preview link, so changes can be
+   tried on a phone before they go live.
+
+Only the app's own files are published. `.assetsignore` keeps the server code,
+database scripts, tests and documentation off the site, and `_headers` adds
+the security headers.
+
+### GitHub Pages (free, HTTPS — for trying it out)
+GitHub's terms don't allow Pages to host a commercial service, so use it for
+demos and testing only.
 1. Push all files to a repository.
 2. **Settings → Pages → Source:** deploy from `main` / root.
 3. Open `https://YOUR-USER.github.io/REPO/`.
@@ -123,7 +217,7 @@ All data lives under these `localStorage` keys:
 
 | Key | Contents |
 |-----|----------|
-| `kampala_school_portal_state` | Students, payments, academics, attendance, conduct, programs, competitions, squads, notices, terms, fee components, settings |
+| `kampala_school_portal_state` | Learners, terms, fee structures, bills, payments, marks, registers, sports, conduct, notices, settings |
 | `ksa_users` | Staff accounts (hashed passwords) |
 | `ksa_session` | Current sign-in session (8 hours) |
 | `ksa_audit` | Audit trail (last 500 events) |
@@ -140,6 +234,14 @@ been more than a week. Recommended routine:
 Move data between devices with **Backup** on one device and **Restore** on
 another.
 
+The portal also keeps an automatic **daily snapshot** for the last 7 days on the
+device (Administration → Data & backup → *Restore a daily snapshot*). It undoes
+mistakes such as a wrong import, but it does not protect against losing the
+device — keep exporting backups.
+
+Upgrading from v2 is automatic: each learner's termly fee becomes a bill for the
+current term, with exactly the same balance.
+
 ---
 
 ## Uganda curriculum reference
@@ -147,12 +249,18 @@ another.
 | Level | Classes | Grading |
 |-------|---------|---------|
 | Pre-Primary | Baby, Middle, Top Class | — |
-| Primary | P.1 – P.7 | Distinction / Credit / Pass / Fail |
+| Primary | P.1 – P.7 | D1–F9 per subject; PLE aggregate of English, Mathematics, Science and Social Studies → Division I (4–12), II (13–23), III (24–29), IV (30–33), U |
 | O-Level (UCE) | S.1 – S.4 | Legacy: D1–F9 → Division I–IV · New Lower Secondary: A–E competency (school-configurable) |
 | A-Level (UACE) | S.5 – S.6 | A (6) – F (0), best 3 principal subjects |
 
-O-Level aggregates are computed **per sitting over the best 8 distinct
-subjects**, matching UNEB practice.
+O-Level aggregates are computed **per term over the best 8 distinct
+subjects**. A subject's term result is the end-of-term mark, or the average of
+the beginning- and mid-term marks if there is no end-of-term mark yet. Positions
+use competition ranking (two learners tied for 2nd are both 2nd; the next is 4th).
+
+Grade cut-offs differ between schools, so every scale is editable under
+**Academics → Grading scales**. Check them against your school's own scale
+before printing report cards.
 
 ---
 
@@ -165,7 +273,32 @@ subjects**, matching UNEB practice.
 | Can't install as an app | It must be served over HTTPS (or `localhost`), not `file://` |
 | Restore failed | The file must be a `.json` backup exported by this app |
 | Update not showing | The app is network-first; reconnect once and refresh |
+| Teacher sees no classes | Edit the teacher's account and tick their classes |
+| A learner is billed the wrong amount | Check **Fee structures** for that term (a class beats a level, a level beats "All classes"), then **Apply to learners** |
+| Import rejected rows | The preview lists the problem on each row; fix them in the sheet and import again |
+
+## Running the tests
+
+```bash
+npm install --no-save playwright @electric-sql/pglite
+npx playwright install chromium
+
+# Database security: signs in as each kind of staff member on a local Postgres
+# (no Supabase account needed) and checks what each one can read and change
+node supabase/tests/rls.test.mjs
+
+# The online edition against a local stand-in for Supabase (real Postgres in
+# WebAssembly with the real security rules, and the official Supabase client)
+node tests/online.e2e.mjs
+
+# The offline edition, in a real browser
+python3 -m http.server 8099 &
+node tests/e2e.js
+```
+
+To try the online edition by hand, run `node supabase/dev/server.mjs` and open
+the address it prints.
 
 ---
 
-**Version:** 2.0.0 · **License:** MIT — free for any school.
+**Version:** 3.0.0 · **License:** MIT — free for any school.

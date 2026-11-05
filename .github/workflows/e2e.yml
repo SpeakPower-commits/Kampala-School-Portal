@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright, Chromium and PGlite
+        run: |
+          npm install --no-save playwright@1.48.2 @electric-sql/pglite@0.5.15
+          npx playwright install --with-deps chromium
+
+      - name: Database security tests (row-level security)
+        run: node supabase/tests/rls.test.mjs
+
+      - name: Online edition tests (local stand-in for Supabase)
+        run: node tests/online.e2e.mjs
+
+      - name: Serve the app
+        run: |
+          python3 -m http.server 8099 &
+          sleep 2
+          curl -sf http://localhost:8099/index.html > /dev/null
+
+      - name: Run end-to-end tests
+        run: node tests/e2e.js
