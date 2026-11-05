@@ -540,6 +540,30 @@ function renderFinanceDashboard() {
   }
 }
 
+/* ── Bursaries (Fees → Bursaries) ──────────────────────────────────────── */
+/* Any learner can hold a bursary. Awarding goes through setBursary(), which
+   checks permission, re-bills this term and writes the audit log. */
+function renderBursaries() {
+  const body = el('bursaryListBody'); if (!body) return;
+  const byName = [...state.students].sort((a, b) => a.name.localeCompare(b.name));
+  fillSelect('bursaryStudent', '<option value="">Choose a student…</option>' + byName.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.class)}${Number(s.bursaryPct) > 0 ? ` (${Number(s.bursaryPct)}%)` : ''}</option>`).join(''));
+  const ct = getCurrentTerm();
+  const offThisTerm = s => { const inv = ct && findInvoice(s.id, ct.id); return inv ? inv.discount || 0 : 0; };
+  const holders = byName.filter(s => Number(s.bursaryPct) > 0).sort((a, b) => b.bursaryPct - a.bursaryPct);
+  body.innerHTML = holders.length ? holders.map(s => `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td>
+      <td class="t-center" style="font-weight:700;color:var(--warn)">${Number(s.bursaryPct)}%</td><td class="t-num">${fmtMoney(offThisTerm(s))}</td>
+      <td class="t-num"><button class="btn btn-outline btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Change</button></td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">No learner has a bursary yet.</td></tr>';
+
+  const rec = el('bursaryRecommended'); if (!rec) return;
+  const picks = byName.filter(s => bursaryEligible(s) && !(Number(s.bursaryPct) > 0));
+  rec.innerHTML = picks.length ? `<div class="card-title" style="margin-top:20px">Recommended by Sports</div>
+    <p class="card-desc">Athletes who meet the sports bursary rules (skill, training attendance and evaluations) and have no bursary yet.</p>
+    <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Athlete</th><th>Class</th><th>Sport</th><th class="t-center">Score</th><th></th></tr></thead><tbody>
+    ${picks.map(s => `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td class="t-center">${bursaryScore(s)}</td>
+      <td class="t-num"><button class="btn btn-gold btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Award</button></td></tr>`).join('')}</tbody></table></div>` : '';
+}
+
 /* ── Wiring ────────────────────────────────────────────────────────────── */
 Object.assign(ACTIONS, {
   setActiveTerm: d => setActiveTerm(d.id),
@@ -556,6 +580,11 @@ MODULES.push({
     on('feeStructureTerm', 'change', renderFeeStructures);
     on('addFeeStructureBtn', 'click', () => openFeeStructureEditor(null));
     on('applyFeeStructuresBtn', 'click', applyFeeStructures);
+    on('bursarySetBtn', 'click', () => {
+      const id = el('bursaryStudent').value;
+      if (!id) return toast('Choose a learner first.', 'error');
+      setBursary(id);
+    });
   },
-  render() { renderTermsTable(); renderFeeStructures(); renderFinanceDashboard(); },
+  render() { renderTermsTable(); renderFeeStructures(); renderFinanceDashboard(); renderBursaries(); },
 });

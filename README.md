@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v3.0.0
+### Offline-first school administration for Ugandan schools & academies — v3.3.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -42,15 +42,34 @@ device.
 
 ---
 
+## Where things are
+
+Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at a time.
+
+| Module | Sub-tabs |
+|--------|----------|
+| **Dashboard** | Fees at a glance, today's class attendance, and what's new |
+| **Students** | All students · Admit a student · Import from Excel |
+| **Attendance** | Daily register (every class, every morning) · Recent registers |
+| **Academics** | Enter marks · Mark sheet · Comments · Report cards · Grading scales |
+| **Fees** | Record payment · Fees dashboard · Terms & fee structures · Bursaries |
+| **Sports** | Programmes · Training attendance · Competitions & squads · Athletes · Bursary candidates |
+| **Discipline** | Conduct log, with messages to guardians |
+| **Reports** | Statistics · EMIS |
+| **Notices** | The school notice board |
+| **Administration** | Staff accounts · School profile & logo · Data & backup |
+
+---
+
 ## Roles
 
 | Role | Sees | Can do |
 |------|------|--------|
-| **Executive Director** | Everything | Full access, user management, school settings, audit log, data reset |
-| **School Administrator** | Students, academics, payments, conduct, reports, admin | Register/edit students, record payments, log academics & conduct, manage terms |
-| **Bursary Officer** | Payments, bursaries, reports | Record & reverse payments, award bursaries, financial reports |
-| **Head of Sports** | Sports, attendance, competitions, bursaries | Programs, attendance, competitions, squads, athlete profiles |
-| **Teacher** | Register, academics, notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments |
+| **Executive Director** | All ten modules | Full access, staff accounts, school profile, audit log, data reset |
+| **School Administrator** | All ten modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
+| **Bursary Officer** | Fees, Reports, Notices | Record and reverse payments, give any learner a bursary, fee reports |
+| **Head of Sports** | Sports, Notices | Programmes, training attendance, competitions, squads, athlete profiles, bursary candidates |
+| **Teacher** | Attendance, Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments |
 
 ---
 
@@ -61,32 +80,33 @@ device.
 2. Sign in with the credentials your supplier gave you. On first sign-in each
    account is **forced to set a private password** — the defaults stop working
    once changed and there is no way to skip this step.
-3. As the Executive Director, open **Administration → School profile & settings**
+3. As the Executive Director, open **Administration → School profile & logo**
    and enter your school's name, motto, address, contacts and O-Level grading
    mode.
-4. Under **Terms**, open the current term. Under **Fee structures**, enter what
-   each class or level pays (mark boarding-only items) and, if you use them, the
-   installment plan.
-5. Add learners — one by one, or all at once with **Import learners** (download
-   the template, fill it in Excel, save as CSV). Use the opening-balance column
-   for fees owed from before.
-6. Create a **Teacher** account for each class teacher and tick their classes.
+4. Under **Fees → Terms & fee structures**, open the current term, then enter
+   what each class or level pays (mark boarding-only items) and, if you use
+   them, the installment plan.
+5. Add learners under **Students** — one by one with **Admit a student**, or all
+   at once with **Import from Excel** (download the template, fill it in Excel,
+   save as CSV). Use the opening-balance column for fees owed from before.
+6. Under **Administration → Staff accounts**, create a **Teacher** account for
+   each class teacher and tick their classes.
 7. Take your first **Backup**.
 
 ## Running a term
 
 | When | Where | What |
 |------|-------|------|
-| Start of term | Administration → Terms | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
-| Every morning | Register | Each class teacher calls the register; message the guardians of absent learners. |
-| Whenever fees come in | Payments | Record the payment with its method and Mobile Money / bank reference, and print the receipt. |
-| Weekly | Reports | Review the collection rate and top defaulters; send reminders. |
-| Test / exam time | Academics → Class mark sheet | Enter a subject for the whole class (beginning, mid or end of term). |
-| End of term | Academics | Write comments, then **Print class** for report cards. |
+| Start of term | Fees → Terms & fee structures | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
+| Every morning | Attendance → Daily register | Each class teacher calls the register; message the guardians of absent learners. The Dashboard shows which classes are still to be marked. |
+| Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, and print the receipt. |
+| Weekly | Fees → Fees dashboard | Review the collection rate and top defaulters; send **Fee reminders**. |
+| Test / exam time | Academics → Mark sheet | Enter a subject for the whole class (beginning, mid or end of term). |
+| End of term | Academics → Comments, then Report cards | Write comments, then **Print class** for report cards. |
 
 > The four seed accounts (`exec`, `admin`, `bursary`, `coach`) exist only to
 > bootstrap the first sign-in. Change every password immediately and create
-> named staff accounts under **User management**.
+> named staff accounts under **Administration → Staff accounts**.
 
 ---
 
@@ -215,7 +235,7 @@ Move data between devices with **Backup** on one device and **Restore** on
 another.
 
 The portal also keeps an automatic **daily snapshot** for the last 7 days on the
-device (Administration → Data management → *Restore a daily snapshot*). It undoes
+device (Administration → Data & backup → *Restore a daily snapshot*). It undoes
 mistakes such as a wrong import, but it does not protect against losing the
 device — keep exporting backups.
 
@@ -239,7 +259,7 @@ the beginning- and mid-term marks if there is no end-of-term mark yet. Positions
 use competition ranking (two learners tied for 2nd are both 2nd; the next is 4th).
 
 Grade cut-offs differ between schools, so every scale is editable under
-**Administration → Grading scales**. Check them against your school's own scale
+**Academics → Grading scales**. Check them against your school's own scale
 before printing report cards.
 
 ---

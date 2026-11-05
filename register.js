@@ -122,6 +122,31 @@ function renderRegisterHistory() {
   }
 }
 
+/* Dashboard: today's registers across the classes this person can see. */
+function renderAttendanceToday() {
+  const box = el('attTodayBody'); if (!box) return;
+  const today = todayISO();
+  const classes = visibleClasses();
+  if (!classes.length) { box.innerHTML = '<p class="card-desc">Admit learners to start calling the register.</p>'; return; }
+  const regs = (state.registers || []).filter(r => r.date === today && classes.includes(r.class));
+  const done = classes.filter(c => regs.some(r => r.class === c));
+  const records = regs.flatMap(r => r.records || []);
+  const count = st => records.filter(x => x.status === st).length;
+  const present = count('P') + count('L');
+  const rate = records.length ? Math.round(present * 100 / records.length) : 0;
+  const tile = (label, value, color) => `<div class="tile"><div class="stat-label">${label}</div><div class="stat-value"${color ? ` style="color:${color}"` : ''}>${value}</div></div>`;
+  const waiting = classes.filter(c => !done.includes(c));
+  box.innerHTML = `<div class="grid" style="grid-template-columns:1fr 1fr;gap:11px">
+      ${tile('Registers marked', `${done.length} / ${classes.length}`, waiting.length ? 'var(--warn)' : 'var(--success)')}
+      ${tile('Present', records.length ? `${present} <span class="card-desc">(${rate}%)</span>` : '—', records.length ? 'var(--success)' : '')}
+      ${tile('Absent', records.length ? count('A') : '—', count('A') ? 'var(--danger)' : '')}
+      ${tile('Late', records.length ? count('L') : '—', '')}
+    </div>
+    ${waiting.length
+      ? `<div class="pill-list" style="margin-top:12px;align-items:center"><span class="card-desc">Not marked yet:</span> ${waiting.map(c => `<span class="badge badge-warn">${escapeHtml(c)}</span>`).join(' ')}</div>`
+      : '<p class="card-desc" style="margin-top:12px">Every class has been marked today.</p>'}`;
+}
+
 Object.assign(ACTIONS, {
   smsAbsence: d => messageAbsence(d.id, d.date, 'sms'),
   waAbsence: d => messageAbsence(d.id, d.date, 'wa'),
@@ -149,5 +174,5 @@ MODULES.push({
       setRowStatus(b.closest('.reg-row'), b.dataset.setStatus);
     });
   },
-  render() { renderRegisterControls(); renderRegisterHistory(); },
+  render() { renderRegisterControls(); renderRegisterHistory(); renderAttendanceToday(); },
 });

@@ -49,7 +49,11 @@ page.setDefaultTimeout(10000);
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
 
-const tab = name => page.click(`.nav-tab[data-tab="${name}"]`);
+// Open a module, and optionally one of its sub-tabs (cards on other sub-tabs are hidden).
+const tab = async (name, sub) => {
+  await page.click(`.nav-tab[data-tab="${name}"]`);
+  if (sub) await page.click(`#subNav [data-sub="${sub}"]`);
+};
 const app = fn => page.evaluate(fn);
 const saved = async () => { const r = await page.evaluate(() => SYNC.flush()); assert(r.ok, 'not saved: ' + r.error); };
 // Wait until a check run inside the page comes true. This polls with
@@ -101,11 +105,13 @@ try {
     const names = await app(() => window.KSA.state().students.map(s => s.name));
     assert(JSON.stringify(names) === '["Okello Peter"]', 'learners ' + JSON.stringify(names));
     assert(await page.isVisible('#syncStatus'), 'save indicator hidden');
-    assert(!(await page.isVisible('#resetCard')) && !(await page.isVisible('#importLabel')), 'device-only tools shown online');
+    await tab('admin', 'data');
+    assert(await page.isVisible('#adminExportBtn'), 'Data & backup not shown');
+    assert(!(await page.isVisible('#resetCard')) && !(await page.isVisible('#snapshotsBtn')) && !(await page.isVisible('#importLabel')), 'device-only tools shown online');
   });
 
   await step('registering a learner saves the learner, the term and the bill to the database', async () => {
-    await tab('admin');
+    await tab('directory', 'admit');
     await page.fill('#registerForm input[name="admissionNo"]', 'KHS/2026/001');
     await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
     await page.selectOption('#classSelect', 'S.4');
@@ -122,7 +128,7 @@ try {
   });
 
   await step('a payment is stored in the database, signed by the director', async () => {
-    await tab('payments');
+    await tab('payments', 'record');
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '250000');
     await page.fill('#paymentForm input[name="reference"]', 'MoMo TID 998877');
@@ -174,7 +180,7 @@ try {
       return route.continue();
     });
     try {
-      await tab('payments');
+      await tab('payments', 'record');
       await page.selectOption('#paymentStudent', 'KHS/2026/001');
       await page.fill('#paymentForm input[name="amount"]', '75000');
       await page.click('#paymentForm button[type="submit"]');
@@ -187,7 +193,7 @@ try {
   });
 
   await step('the director invites a teacher for S.4', async () => {
-    await tab('admin');
+    await tab('admin', 'staff');
     await page.click('#userMgmtCard summary');
     assert(!(await page.isVisible('#editPassword')), 'password box shown online');
     await page.fill('#editUsername', TEACHER);
@@ -220,7 +226,7 @@ try {
   });
 
   await step("the teacher's register reaches the database", async () => {
-    await tab('register');
+    await tab('register', 'daily');
     await page.selectOption('#regClass', 'S.4');
     await page.click('#registerRoster .reg-row[data-student="KHS/2026/001"] [data-set-status="A"]');
     await page.click('#regSaveBtn');
@@ -235,13 +241,29 @@ try {
     await page.waitForSelector('#appShell', { state: 'visible' });
     assert(await page.textContent('#roleChip') === 'Bursary', 'role ' + await page.textContent('#roleChip'));
     assert(await app(() => window.KSA.state().payments.length) === 2, 'bursar cannot see the ledger');
-    await tab('payments');
+    const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
+    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    await tab('payments', 'record');
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '100000');
     await page.click('#paymentForm button[type="submit"]');
     await until(() => window.KSA.state().payments.length === 3 && SYNC.status().status === 'saved');
     const p = await one('select recorded_by from public.payments where school_id = $1 and amount = 100000', [school]);
     assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
+  });
+
+  await step("the bursar's bursary reaches the database and lowers this term's bill", async () => {
+    await tab('payments', 'bursaries');
+    await page.selectOption('#bursaryStudent', 'KHS/2026/001');
+    await page.click('#bursarySetBtn');
+    await page.fill('#mdInput', '25');
+    await page.click('#mdOk');
+    await saved();
+    const l = await one("select bursary_pct from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
+    assert(l && Number(l.bursary_pct) === 25, 'bursary in database: ' + JSON.stringify(l));
+    const bill = await one("select total from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(bill && Number(bill.total) === 450000, 'bill in database: ' + JSON.stringify(bill));
+    assert(await count('audit_log', "and action = 'BURSARY_AWARD'") === 1, 'no BURSARY_AWARD audit entry');
   });
 
   await step('"Forgot your password?" sends a reset link', async () => {
@@ -269,7 +291,7 @@ try {
     assert(await page.textContent('#roleChip') === 'Executive', 'role ' + await page.textContent('#roleChip'));
     newSchool = (await one("select id from public.schools where name = 'Mbale Hillside School'")).id;
     assert(newSchool, 'school not in the database');
-    await tab('admin');
+    await tab('admin', 'data');
     assert(await page.isVisible('#onlineImportLabel'), 'import option not offered to a new school');
   });
 

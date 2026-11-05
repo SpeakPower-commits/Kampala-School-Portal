@@ -50,7 +50,7 @@ const DEFAULT_USERS = [
 const ROLE_PERMISSIONS = {
   exec: {
     label: 'Executive Director', color: '#0b5d3b', badge: 'Executive',
-    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'attendance', 'competitions', 'bursary', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: true, canManageUsers: true,
     canManageSettings: true, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: true, canRecordPayment: true,
@@ -62,7 +62,7 @@ const ROLE_PERMISSIONS = {
   },
   admin: {
     label: 'School Administrator', color: '#1d4ed8', badge: 'Administrator',
-    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: false, canRecordPayment: true,
@@ -74,7 +74,7 @@ const ROLE_PERMISSIONS = {
   },
   bursary: {
     label: 'Bursary Officer', color: '#0b5d3b', badge: 'Bursary',
-    tabs: ['payments', 'bursary', 'reports', 'noticeboard'],
+    tabs: ['payments', 'reports', 'noticeboard'],
     canExport: true, canImport: false, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
     canDeleteConduct: false, canAwardBursary: true, canRecordPayment: true,
@@ -86,7 +86,7 @@ const ROLE_PERMISSIONS = {
   },
   coach: {
     label: 'Head of Sports', color: '#b45309', badge: 'Sports',
-    tabs: ['sports', 'attendance', 'competitions', 'bursary', 'noticeboard'],
+    tabs: ['sports', 'noticeboard'],
     canExport: false, canImport: false, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
     canDeleteConduct: false, canAwardBursary: false, canRecordPayment: false,

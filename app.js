@@ -624,6 +624,7 @@ function renderAll() {
   guard(renderSquadsGrid);
   guard(renderAthleteProfiles);
   guard(renderNotices);
+  guard(renderWhatsNew);
   if (can('canManageUsers')) { guard(renderUsersList); guard(renderAuditLog); }
   if (can('canManageSettings')) guard(renderSettingsForm);
   MODULES.forEach(m => { if (m.render) guard(m.render); });
@@ -673,7 +674,7 @@ function updateMetrics() {
     cards = [
       { label: 'Athletes', value: athletes },
       { label: 'Programs', value: state.programs.length, cls: 'is-info' },
-      { label: 'Avg Attendance', value: avgAtt + '%', cls: avgAtt >= 75 ? 'is-success' : 'is-danger' },
+      { label: 'Avg training attendance', value: avgAtt + '%', cls: avgAtt >= 75 ? 'is-success' : 'is-danger' },
       { label: 'Bursary Eligible', value: bursaryCount, cls: 'is-gold' },
     ];
   }
@@ -684,12 +685,6 @@ function updateMetrics() {
       <div class="stat-value ${c.money ? 'money' : ''}">${c.value}</div>${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
     </div>`).join('');
 
-  if (el('ovCleared')) {
-    el('ovCleared').textContent = cleared;
-    el('ovBalance').textContent = s.length - cleared;
-    el('ovAthletes').textContent = athletes;
-    el('ovAttendance').textContent = avgAtt + '%';
-  }
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   const counts = levels.map(l => s.filter(x => x.level === l).length);
   const max = Math.max(1, ...counts);
@@ -965,7 +960,7 @@ function renderEMISPreview() {
   const el2 = el('emisPreview'); if (!el2) return;
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   const ct = getCurrentTerm();
-  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — configure it in Administration'}</strong></p>
+  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — open one under Fees → Terms &amp; fee structures'}</strong></p>
     <div class="table-wrap"><table><thead><tr><th>Level</th><th class="t-center">Total</th><th class="t-center">Male</th><th class="t-center">Female</th><th class="t-center">Boarding</th><th class="t-center">Day</th><th class="t-center">SEN</th><th class="t-center">Cleared</th></tr></thead><tbody>
     ${levels.map(lvl => { const list = state.students.filter(s => s.level === lvl); return `<tr><td style="font-weight:600">${lvl}</td><td class="t-center">${list.length}</td><td class="t-center">${list.filter(s => s.gender === 'Male').length}</td><td class="t-center">${list.filter(s => s.gender === 'Female').length}</td><td class="t-center">${list.filter(s => s.boardingStatus === 'Boarding').length}</td><td class="t-center">${list.filter(s => (s.boardingStatus || 'Day') === 'Day').length}</td><td class="t-center">${list.filter(s => s.senFlag).length}</td><td class="t-center" style="color:var(--success)">${list.filter(s => studentBalance(s) <= 0).length}</td></tr>`; }).join('')}
     </tbody></table></div>`;
@@ -1194,6 +1189,7 @@ function renderSquadsGrid() {
   }).join('') : '<div class="empty">No squads created yet.</div>';
 }
 function openAthleteProfile(studentId) {
+  if (!can('canLogPerformance')) return toast('You do not have permission.', 'error');
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const p = s.athleteProfile || {};
   const opt = (v, sel) => `<option ${v === sel ? 'selected' : ''}>${v}</option>`;
@@ -1220,7 +1216,7 @@ function renderAthleteProfiles() {
   if (apf) { const sports = [...new Set(state.students.filter(s => s.sport).map(s => s.sport))].sort(); const cur = apf.value; apf.innerHTML = '<option value="">All Sports</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); apf.value = cur; }
   const athletes = state.students.filter(s => s.sport && (!filter || (s.sport || '').toLowerCase() === filter));
   const ic = { Fit: 'badge-success', 'Minor Knock': 'badge-warn', Injured: 'badge-danger', Recovering: 'badge-warn' };
-  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td><button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button></td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
+  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
 }
 
 /* ── Notices ───────────────────────────────────────────────────────────── */
@@ -1425,22 +1421,92 @@ function promptDialog({ title, label, value = '', type = 'text' }) {
 /* =========================================================================
    Navigation
    ========================================================================= */
+/* Ten modules. The ids are historical ("register" is Attendance, "payments" is
+   Fees, "conduct" is Discipline); only what people read changed. */
 const TAB_LABELS = {
-  overview: 'Dashboard', directory: 'Students', register: 'Register', academics: 'Academics', payments: 'Payments',
-  sports: 'Sports', attendance: 'Attendance', competitions: 'Competitions', bursary: 'Bursaries',
-  conduct: 'Conduct', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
+  overview: 'Dashboard', directory: 'Students', register: 'Attendance', academics: 'Academics', payments: 'Fees',
+  sports: 'Sports', conduct: 'Discipline', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
 };
+/* Sub-tabs inside a module: [id, label, permission needed]. Cards in
+   index.html carry data-sub="<id>"; anything without data-sub always shows. */
+const SUB_TABS = {
+  directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
+  register: [['daily', 'Daily register'], ['recent', 'Recent registers']],
+  academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
+  payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
+  sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
+  reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
+  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['data', 'Data & backup']],
+};
+let currentTab = null;
+const lastSub = {};
+function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm]) => !perm || can(perm)); }
 function buildNav(tabs) {
   const nav = el('navBar');
   nav.innerHTML = tabs.map(t => `<button class="nav-tab" data-tab="${t}">${icon(t, 16)}<span>${TAB_LABELS[t] || t}</span></button>`).join('');
 }
-function switchTab(tab) {
+function switchTab(tab, sub) {
   if (!hasTab(tab)) { toast('You do not have access to that section.', 'error'); return; }
+  currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = el('panel-' + tab);
   if (panel) panel.classList.add('active');
+  showSub(tab, sub);
+  // The KPI strip belongs on each role's home module; elsewhere it is clutter.
+  const metrics = el('metricsRow');
+  if (metrics) metrics.classList.toggle('hidden', tab !== AUTH.getDefaultTab());
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+/* Show one sub-tab of a module: the one asked for, else the last one used,
+   else the first this role may use. Hiding uses a class, so it never fights
+   the role checks in initApp, which set style.display. */
+function showSub(tab, sub) {
+  const subs = allowedSubs(tab);
+  const ids = subs.map(s => s[0]);
+  const chosen = ids.includes(sub) ? sub : ids.includes(lastSub[tab]) ? lastSub[tab] : ids[0];
+  if (chosen) lastSub[tab] = chosen;
+  const nav = el('subNav');
+  if (nav) {
+    nav.classList.toggle('hidden', subs.length < 2);
+    nav.innerHTML = subs.map(([id, label]) => `<button type="button" role="tab" data-sub="${id}" aria-selected="${id === chosen}">${escapeHtml(label)}</button>`).join('');
+  }
+  const panel = el('panel-' + tab);
+  if (panel && SUB_TABS[tab]) panel.querySelectorAll('[data-sub]').forEach(c => c.classList.toggle('hidden', c.dataset.sub !== chosen));
+}
+
+/* ── What's new (dashboard) ────────────────────────────────────────────── */
+/* Points directors at the capabilities added in this release. Hiding it is
+   remembered on this device only. */
+const WHATS_NEW_RELEASE = '2026-11';
+const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
+const WHATS_NEW = [
+  ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
+  ['academics/marksheet', 'Academics', 'Class mark sheet', "Enter a whole class's marks for one subject on one screen."],
+  ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
+  ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
+  ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
+  ['payments/bursaries', 'Fees', 'Bursaries for any learner', 'Needs-based, staff, academic or sports bursaries. The bill adjusts itself.'],
+  ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
+  ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
+  ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
+];
+function whatsNewHidden() {
+  try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
+}
+function renderWhatsNew() {
+  const card = el('whatsNewCard'), list = el('whatsNewList');
+  if (!card || !list) return;
+  const items = WHATS_NEW.filter(([to]) => { const [tab, sub] = to.split('/'); return hasTab(tab) && allowedSubs(tab).some(s => s[0] === sub); });
+  card.style.display = items.length && !whatsNewHidden() ? '' : 'none';
+  list.innerHTML = items.map(([to, where, title, desc]) => `<div class="wn-item">
+      <div class="wn-where">${escapeHtml(where)}</div><div class="wn-title">${escapeHtml(title)}</div><div class="wn-desc">${escapeHtml(desc)}</div>
+      <button class="btn btn-outline btn-xs" type="button" data-act="goto" data-to="${escapeHtml(to)}">Open ${icon('right', 13)}</button>
+    </div>`).join('');
+}
+function hideWhatsNew() {
+  try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_RELEASE); } catch (_) {}
+  const card = el('whatsNewCard'); if (card) card.style.display = 'none';
 }
 
 /* =========================================================================
@@ -1471,6 +1537,8 @@ const ACTIONS = {
   resetUserPwd: d => resetUserPwd(d.id),
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
+  goto: d => { const [tab, sub] = String(d.to || '').split('/'); switchTab(tab, sub); },
+  dismissWhatsNew: () => hideWhatsNew(),
 };
 function handleDelegatedClick(e) {
   const modalClose = e.target.closest('[data-modal-close]');
@@ -1710,6 +1778,10 @@ function initApp() {
   show('marksheetCard', can('canAddAcademic'));
   show('commentsCard', can('canAddAcademic'));
   show('adminImportLabel', can('canImport') && !ONLINE_EDITION);
+  // Sports is view-only for roles that cannot act there (the administrator).
+  show('trainingFormCard', can('canMarkAttendance'));
+  show('addCompetitionBtn', can('canManageCompetitions'));
+  show('addSquadBtn', can('canManageSquads'));
   show('syncStatus', ONLINE_EDITION);
   showOnlineImport();
   if (ONLINE_EDITION && can('canManageSettings') && SYNC.importing()) setTimeout(resolveInterruptedImport, 0);
@@ -1720,6 +1792,8 @@ function initApp() {
   startSessionTimer();
 
   if (el('attendanceDate')) el('attendanceDate').value = todayISO();
+  // A new sign-in starts at the top of each module, not where the last person was.
+  Object.keys(lastSub).forEach(k => delete lastSub[k]);
   switchTab(AUTH.getDefaultTab());
   if (AUTH.mustChangePassword()) openChangePwd(true);
 }
@@ -1847,7 +1921,7 @@ function offerNewSchool() {
         el('authError').style.display = 'none';
         currentSession = res.session;
         initApp();
-        toast(`${res.session.schoolName} is ready. Add your staff under Administration.`, 'success');
+        toast(`${res.session.schoolName} is ready. Add your staff under Administration → Staff accounts.`, 'success');
       });
     },
   });
@@ -1982,6 +2056,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (el('onlineImportInput')) el('onlineImportInput').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importOfflineBackup(f); });
   window.addEventListener('portal:password-recovery', openSetNewPassword);
   el('navBar').addEventListener('click', e => { const b = e.target.closest('.nav-tab'); if (b) switchTab(b.dataset.tab); });
+  el('subNav').addEventListener('click', e => { const b = e.target.closest('[data-sub]'); if (b && currentTab) showSub(currentTab, b.dataset.sub); });
   el('sessionExtendBtn').addEventListener('click', () => { AUTH.refreshSession(); updateSessionBar(); });
   document.addEventListener('click', handleDelegatedClick);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('#modalHost [data-locked]')) closeModal(); });

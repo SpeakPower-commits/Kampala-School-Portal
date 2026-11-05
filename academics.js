@@ -16,7 +16,7 @@ const EXAM_SETS = [
 ];
 const PLE_SUBJECTS = ['english language', 'mathematics', 'science', 'social studies'];
 
-/* Default grading scales. Each school can change them under Administration →
+/* Default grading scales. Each school can change them under Academics →
    Grading scales, because cut-offs differ from school to school. */
 const DEFAULT_GRADE_BANDS = {
   primary: [

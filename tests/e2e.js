@@ -46,7 +46,11 @@ async function signIn(page, user, pass) {
   await page.fill('#loginPassword', pass);
   await page.click('#loginBtn');
 }
-async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`); }
+// Open a module, and optionally one of its sub-tabs (cards on other sub-tabs are hidden).
+async function tab(page, name, sub) {
+  await page.click(`.nav-tab[data-tab="${name}"]`);
+  if (sub) await page.click(`#subNav [data-sub="${sub}"]`);
+}
 
 (async () => {
   const launch = { args: ['--no-sandbox'] };
@@ -102,14 +106,16 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(!(await page.$('#cpCurrent')), 'password prompt still shown after changing it');
   });
 
-  await step('app shell and navigation render', async () => {
+  await step('the director sees ten modules with plain names', async () => {
     assert(await page.isVisible('#appShell'), 'app shell hidden');
-    const tabs = await page.$$eval('.nav-tab', ns => ns.length);
-    assert(tabs >= 10, 'too few nav tabs: ' + tabs);
+    const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
+    assert(JSON.stringify(tabs) === '["overview","directory","register","academics","payments","sports","conduct","reports","noticeboard","admin"]', 'modules ' + JSON.stringify(tabs));
+    const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
+    assert(labels.join('|') === 'Dashboard|Students|Attendance|Academics|Fees|Sports|Discipline|Reports|Notices|Administration', 'labels ' + labels.join('|'));
   });
 
   await step('school settings apply across the app', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'admin', 'profile');
     await page.fill('#setSchoolName', 'Nakawa Progressive Academy');
     await page.fill('#setMotto', 'Effort · Discipline · Excellence');
     await page.click('#settingsForm button[type="submit"]');
@@ -117,7 +123,9 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(/Nakawa/.test(await page.textContent('.topbar-title .t-name')), 'school name not applied');
   });
 
-  await step('register a student', async () => {
+  await step('register a student (Students → Admit a student)', async () => {
+    await tab(page, 'directory', 'admit');
+    assert(!(await page.isVisible('#studentTableBody')), 'student list shown on the Admit sub-tab');
     await page.fill('#registerForm input[name="admissionNo"]', 'NPA/2026/001');
     await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
     await page.selectOption('#classSelect', 'S.4');
@@ -144,7 +152,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('record a payment (any whole amount accepted)', async () => {
-    await tab(page, 'payments');
+    await tab(page, 'payments', 'record');
     await page.selectOption('#paymentStudent', 'NPA/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '250000');
     await page.fill('#paymentForm input[name="reference"]', 'MoMo TID 998877');
@@ -164,7 +172,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('edit a student', async () => {
-    await tab(page, 'directory');
+    await tab(page, 'directory', 'list');
     await page.click('#studentTableBody button[data-act="editStudent"]');
     await page.waitForSelector('#editStudentForm');
     await page.fill('#editStudentForm input[name="fee"]', '550000');
@@ -175,7 +183,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('O-Level aggregate shows for a sitting', async () => {
-    await tab(page, 'academics');
+    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['Mathematics', '82'], ['English Language', '75'], ['Physics', '68']]) {
       await page.selectOption('#academicStudent', 'NPA/2026/001');
       await page.selectOption('#academicForm select[name="examSet"]', 'EOT');
@@ -188,16 +196,17 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('switching to competency grading re-grades entries', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'admin', 'profile');
     await page.selectOption('#setGrading', 'cbc');
     await page.click('#settingsForm button[type="submit"]');
     await page.waitForTimeout(150);
-    await tab(page, 'academics');
+    await tab(page, 'academics', 'marks');
     assert(/competency/.test(await page.textContent('#academicTableBody')), 'competency grades not shown');
   });
 
   await step('financial actions are audited', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'admin', 'staff');
+    assert(await page.isVisible('#auditLogBody'), 'audit log not on Administration → Staff accounts');
     const audit = await page.textContent('#auditLogBody');
     for (const action of ['PAYMENT_RECORD', 'PAYMENT_VOID', 'STUDENT_REGISTER', 'STUDENT_EDIT']) {
       assert(audit.includes(action), action + ' not audited');
@@ -205,7 +214,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('report card prints with school name and result', async () => {
-    await tab(page, 'directory');
+    await tab(page, 'directory', 'list');
     await page.evaluate(() => { window.print = () => {}; });
     await page.click('#studentTableBody button[data-act="reportCard"]');
     await page.waitForTimeout(150);
@@ -224,7 +233,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('fee structure with boarder-only item and installments re-bills the term', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'payments', 'terms');
     await page.click('#addFeeStructureBtn');
     await page.waitForSelector('#fsForm');
     await page.selectOption('#fsForm select[name="appliesTo"]', 'O Level');
@@ -249,12 +258,12 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('opening a new term carries the unpaid balance forward as arrears', async () => {
-    await tab(page, 'payments');
+    await tab(page, 'payments', 'record');
     await page.selectOption('#paymentStudent', 'NPA/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '200000');
     await page.click('#paymentForm button[type="submit"]');
     await page.waitForTimeout(150);
-    await tab(page, 'admin');
+    await tab(page, 'payments', 'terms');
     await page.fill('#termForm input[name="year"]', '2027');
     await page.selectOption('#termForm select[name="term"]', 'Term 1');
     await page.click('#termForm button[type="submit"]');
@@ -266,7 +275,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('payments clear the oldest term first', async () => {
-    await tab(page, 'payments');
+    await tab(page, 'payments', 'record');
     await page.selectOption('#paymentStudent', 'NPA/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '400000');
     await page.click('#paymentForm button[type="submit"]');
@@ -282,8 +291,11 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(/Four Hundred Thousand Uganda Shillings only/.test(doc), 'amount in words missing');
   });
 
-  await step('finance dashboard shows arrears, methods and defaulters', async () => {
-    await tab(page, 'reports');
+  await step('Fees → Fees dashboard shows arrears, methods and defaulters, and nothing else', async () => {
+    await tab(page, 'payments', 'dashboard');
+    assert(await page.isVisible('#topDefaulters') && await page.isVisible('#bulkSmsBtn'), 'fees dashboard not shown');
+    assert(!(await page.isVisible('#recPaymentCard')) && !(await page.isVisible('#termMgmtCard')), 'other Fees sub-tabs still showing');
+    assert(!(await page.isVisible('#metricsRow')), 'KPI strip shown outside the Dashboard');
     assert(/is owed by/.test(await page.textContent('#arrearsHeadline')), 'arrears headline missing');
     assert(/Cash/.test(await page.textContent('#collectionsByMethod')), 'collections by method missing');
     assert(/Nakato Sarah/.test(await page.textContent('#topDefaulters')), 'defaulter missing');
@@ -292,7 +304,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   /* ───────────────────────── Phase 1: academics ───────────────────────── */
   let secondId;
   await step('class mark sheet saves a whole class and ranks positions', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'directory', 'admit');
     await page.fill('#registerForm input[name="name"]', 'Mugisha Brian');
     await page.selectOption('#classSelect', 'S.4');
     await page.fill('#registerForm input[name="guardian"]', '0772000111');
@@ -301,7 +313,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     secondId = await page.evaluate(() => state.students.find(s => s.name === 'Mugisha Brian').id);
-    await tab(page, 'academics');
+    await tab(page, 'academics', 'marksheet');
     await page.selectOption('#msClass', 'S.4');
     await page.fill('#msSubject', 'Biology');
     await page.click('#msLoadBtn');
@@ -315,7 +327,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('Primary uses PLE grading: four subjects, aggregate and division', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'directory', 'admit');
     await page.fill('#registerForm input[name="name"]', 'Achieng Mary');
     await page.selectOption('#classSelect', 'P.7');
     await page.fill('#registerForm input[name="guardian"]', '0772000222');
@@ -324,7 +336,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);
-    await tab(page, 'academics');
+    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['English Language', '85'], ['Mathematics', '72'], ['Science', '66'], ['Social Studies', '58']]) {
       await page.selectOption('#academicStudent', pid);
       await page.fill('#academicForm input[name="subject"]', subj);
@@ -336,8 +348,8 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(label === 'Aggregate 11 · Division I', 'PLE result = ' + label);
   });
 
-  await step('grading scales can be edited and restored', async () => {
-    await tab(page, 'admin');
+  await step('grading scales can be edited and restored (Academics → Grading scales)', async () => {
+    await tab(page, 'academics', 'grading');
     const text = await page.inputValue('#bands-primary');
     await page.fill('#bands-primary', text.replace('D1 80 1', 'D1 90 1'));
     await page.click('#bandsSaveBtn');
@@ -351,7 +363,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('report-card comments are saved per term', async () => {
-    await tab(page, 'academics');
+    await tab(page, 'academics', 'comments');
     await page.selectOption('#cmClass', 'S.4');
     await page.click('#cmSuggestBtn');
     await page.click('#cmSaveBtn');
@@ -361,6 +373,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('a whole class of report cards prints, one per learner, with positions', async () => {
+    await tab(page, 'academics', 'reportcards');
     await page.selectOption('#rcClass', 'S.4');
     await page.fill('#rcNextBegins', '2027-05-24');
     await page.click('#rcPrintBtn');
@@ -373,8 +386,8 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   /* ───────────────────────── Phase 1: register ───────────────────────── */
-  await step('class register records absences and offers guardian SMS', async () => {
-    await tab(page, 'register');
+  await step('class register records absences and offers guardian SMS (Attendance → Daily register)', async () => {
+    await tab(page, 'register', 'daily');
     await page.selectOption('#regClass', 'S.4');
     await page.click(`#registerRoster .reg-row[data-student="${secondId}"] [data-set-status="A"]`);
     await page.click('#regSaveBtn');
@@ -384,8 +397,33 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(/Mugisha Brian/.test(await page.textContent('#registerAbsentees')), 'absentee list missing');
   });
 
+  await step("the dashboard shows today's class attendance, not sports", async () => {
+    await tab(page, 'overview');
+    assert(await page.isVisible('#metricsRow'), 'KPI strip missing on the Dashboard');
+    const text = (await page.textContent('#attTodayBody')).replace(/\s+/g, ' ');
+    // S.4 was marked (one present, one absent); P.7 was not.
+    assert(/Registers marked\s*1 \/ 2/.test(text), 'registers marked: ' + text);
+    assert(/Present\s*1 \(50%\)/.test(text) && /Absent\s*1/.test(text), 'counts: ' + text);
+    assert(/Not marked yet: P\.7/.test(text), 'unmarked class missing: ' + text);
+  });
+
+  await step("What's new opens the right sub-tab and stays hidden once dismissed", async () => {
+    assert(await page.isVisible('#whatsNewCard'), "What's new not shown");
+    const items = await page.$$eval('#whatsNewList [data-to]', bs => bs.map(b => b.dataset.to));
+    for (const to of ['register/daily', 'payments/terms', 'payments/bursaries', 'admin/staff']) assert(items.includes(to), `missing ${to} in ${items.join(' ')}`);
+    await page.click('#whatsNewList [data-to="payments/terms"]');
+    assert(await page.isVisible('#termMgmtCard') && !(await page.isVisible('#recPaymentCard')), 'did not land on Fees → Terms');
+    const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
+    assert(active === 'Terms & fee structures', 'active sub-tab: ' + active);
+    await tab(page, 'overview');
+    await page.click('[data-act="dismissWhatsNew"]');
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    assert(await page.isVisible('#attTodayCard') && !(await page.isVisible('#whatsNewCard')), "What's new came back after a reload");
+  });
+
   await step('a teacher account can be limited to chosen classes', async () => {
-    await tab(page, 'admin');
+    await tab(page, 'admin', 'staff');
     await page.click('#userMgmtCard summary');
     await page.fill('#editUsername', 'tkato');
     await page.fill('#editDisplayName', 'Mr. Kato');
@@ -399,6 +437,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
 
   /* ───────────────────────── Phase 1: tools ───────────────────────── */
   await step('CSV import previews, rejects bad rows and adds opening balances', async () => {
+    await tab(page, 'directory', 'import');
     const csv = [
       'admission_no,name,class,stream,gender,guardian_phone,termly_fee,boarding,uneb_index,special_needs,sport,opening_balance',
       'NPA/2026/050,Opio Daniel,s2,East,M,0772 555 111,"450,000",Day,,,,120000',
@@ -422,6 +461,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
   });
 
   await step('logo and school colour apply', async () => {
+    await tab(page, 'admin', 'profile');
     await page.setInputFiles('#logoInput', require('path').join(__dirname, '..', 'icon192.png'));
     await page.waitForTimeout(600);
     assert(await page.evaluate(() => /^data:image\//.test(state.settings.logo || '')), 'logo not stored');
@@ -435,6 +475,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
 
   await step('a daily snapshot is kept and listed for restore', async () => {
     await page.waitForTimeout(300);
+    await tab(page, 'admin', 'data');
     await page.click('#snapshotsBtn');
     await page.waitForSelector('[data-snap]');
     const today = await page.evaluate(() => todayISO());
@@ -449,12 +490,23 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     await page.waitForSelector('#authScreen', { state: 'visible' });
   });
 
-  await step('sports role cannot see payments', async () => {
+  await step('Head of Sports gets one Sports module (with competitions and training inside) and no fees', async () => {
     await signIn(page, 'coach', 'Coach@2026');
     await changePassword(page, 'Coach@2026', 'Coach2026Xyz');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(!tabs.includes('payments'), 'coach sees payments');
-    assert(tabs.includes('sports'), 'coach missing sports');
+    assert(JSON.stringify(tabs) === '["sports","noticeboard"]', 'coach modules ' + JSON.stringify(tabs));
+    const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(subs.join('|') === 'Programmes|Training attendance|Competitions & squads|Athletes|Bursary candidates', 'sports sub-tabs ' + subs.join('|'));
+    await page.click('#subNav [data-sub="training"]');
+    assert(await page.isVisible('#saveAttendanceBtn') && !(await page.isVisible('#programsGrid')), 'training sub-tab not shown on its own');
+    await page.click('#subNav [data-sub="competitions"]');
+    assert(await page.isVisible('#addCompetitionBtn') && await page.isVisible('#squadsGrid'), 'competitions & squads missing');
+    await page.click('#subNav [data-sub="programmes"]');
+    await page.fill('#programForm input[name="name"]', 'Football U-16');
+    await page.fill('#programForm input[name="sport"]', 'Football');
+    await page.click('#programForm button[type="submit"]');
+    await page.waitForTimeout(150);
+    assert(/Football U-16/.test(await page.textContent('#programsGrid')), 'programme not added from Sports → Programmes');
   });
 
   await step('signing in right after someone signs out keeps you signed in', async () => {
@@ -471,7 +523,7 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
 
   await step('forms submit once after signing out and back in', async () => {
     const before = await page.evaluate(() => state.students.length);
-    await tab(page, 'admin');
+    await tab(page, 'directory', 'admit');
     await page.fill('#registerForm input[name="name"]', 'Kizza Paul');
     await page.selectOption('#classSelect', 'P.1');
     await page.fill('#registerForm input[name="guardian"]', '0772000333');
@@ -483,6 +535,43 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     assert(after === before + 1, `expected one new learner, got ${after - before}`);
   });
 
+  await step('the administrator can view Sports and add a programme, but not act for the coach', async () => {
+    await tab(page, 'sports', 'training');
+    assert(await page.isVisible('#attendanceTableBody') && !(await page.isVisible('#trainingFormCard')), 'admin can mark training attendance');
+    await page.click('#subNav [data-sub="competitions"]');
+    assert(!(await page.isVisible('#addCompetitionBtn')) && !(await page.isVisible('#addSquadBtn')), 'admin can log results or create squads');
+    await page.click('#subNav [data-sub="athletes"]');
+    assert(!(await page.$('#athleteProfilesBody [data-act="athleteProfile"]')), 'admin can edit athlete profiles');
+    await page.click('#subNav [data-sub="programmes"]');
+    assert(await page.isVisible('#addProgramCard'), 'admin lost Add programme');
+    await tab(page, 'payments');
+    const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.dataset.sub));
+    assert(!subs.includes('bursaries'), 'admin can award bursaries');
+  });
+
+  await step('the bursar gives any learner a bursary from Fees → Bursaries and the bill drops', async () => {
+    await page.click('#logoutBtn');
+    await page.waitForSelector('#mdOk');
+    await page.click('#mdOk');
+    await signIn(page, 'bursary', 'Bursary@2026');
+    await changePassword(page, 'Bursary@2026', 'Bursar2026Xyz');
+    const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
+    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    await tab(page, 'payments', 'bursaries');
+    const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);   // a P.7 pupil, not an athlete
+    const before = (await acct(pid)).currentBilled;
+    await page.selectOption('#bursaryStudent', pid);
+    await page.click('#bursarySetBtn');
+    await page.waitForSelector('#mdInput');
+    await page.fill('#mdInput', '20');
+    await page.click('#mdOk');
+    await page.waitForTimeout(200);
+    const after = (await acct(pid)).currentBilled;
+    assert(before === 350000 && after === 280000, `bill ${before} → ${after}`);
+    const list = await page.textContent('#bursaryListBody');
+    assert(/Achieng Mary/.test(list) && /20%/.test(list) && /70,000/.test(list), 'bursary list: ' + list);
+  });
+
   await step('teacher sees only the register, academics and assigned classes', async () => {
     await page.click('#logoutBtn');
     await page.waitForSelector('#mdOk');
@@ -491,11 +580,16 @@ async function tab(page, name) { await page.click(`.nav-tab[data-tab="${name}"]`
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
     assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
+    assert(labels.join('|') === 'Attendance|Academics|Notices', 'teacher labels ' + labels.join('|'));
     await tab(page, 'register');
     const classes = await page.$$eval('#regClass option', o => o.map(x => x.value).filter(Boolean));
     assert(JSON.stringify(classes) === '["S.4"]', 'teacher classes ' + JSON.stringify(classes));
     const learners = await page.$$eval('#academicStudent option', o => o.map(x => x.textContent).filter(t => t !== 'Choose…'));
     assert(learners.length && learners.every(t => /S\.4/.test(t)), 'teacher sees other classes: ' + learners.join(' | '));
+    await tab(page, 'academics');
+    const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.dataset.sub));
+    assert(JSON.stringify(subs) === '["marks","marksheet","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
   });
 
   /* ───────────────────────── Migration from v4 ───────────────────────── */

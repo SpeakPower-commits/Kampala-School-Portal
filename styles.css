@@ -234,7 +234,26 @@ textarea.input { resize: vertical; min-height: 62px; }
 
 .main { max-width: 1320px; margin: 0 auto; padding: 22px; width: 100%; flex: 1; }
 .panel { display: none; }
-.panel.active { display: block; animation: fade 0.18s ease; }
+/* Blocks in a panel are spaced by the gap, so a hidden sub-tab leaves no hole. */
+.panel.active { display: flex; flex-direction: column; gap: 16px; animation: fade 0.18s ease; }
+
+/* Sub-tabs inside a module (Fees → Record payment · Fees dashboard · …) */
+.subnav { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 18px; padding-bottom: 2px; }
+.subnav button {
+  flex: none; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted);
+  border-radius: 999px; padding: 7px 14px; font-family: var(--sans); font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.subnav button:hover { color: var(--ink); border-color: var(--brand); }
+.subnav button[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+/* What's new (dashboard) */
+.whats-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.wn-item { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; }
+.wn-where { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--brand); }
+.wn-title { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.wn-desc { font-size: 12.5px; color: var(--muted); flex: 1; }
+.wn-item .btn { align-self: flex-start; margin-top: 4px; }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .page-head { margin-bottom: 18px; }
@@ -246,7 +265,8 @@ textarea.input { resize: vertical; min-height: 62px; }
    ========================================================================= */
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
 .card-pad { padding: 20px; }
-.card + .card, .stack > * + *, .panel > * + * { margin-top: 16px; }
+.card + .card, .stack > * + * { margin-top: 16px; }
+.panel > .card + .card { margin-top: 0; }
 /* Items side by side in a grid are spaced by the grid gap, not margins. */
 .grid > .card + .card, .grid > * + * { margin-top: 0; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -457,6 +477,13 @@ details.disclosure .disclosure-body { padding: 15px; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .modal-foot { justify-content: stretch; }
   .modal-foot .btn { flex: 1; }
+  /* What's new as a compact list, so today's attendance is not pushed off screen */
+  .whats-new { gap: 8px; }
+  .wn-item { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 10px 12px; }
+  .wn-where { width: 100%; }
+  .wn-title { flex: 1; }
+  .wn-desc { display: none; }
+  .wn-item .btn { margin-top: 0; }
 }
 
 /* =========================================================================
