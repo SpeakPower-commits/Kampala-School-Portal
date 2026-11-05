@@ -209,6 +209,21 @@ try {
     assert(inv && inv.role === 'teacher' && JSON.stringify(inv.assigned_classes) === '["S.4"]', 'invite ' + JSON.stringify(inv));
   });
 
+  await step("the director sets up SMS with the school's Africa's Talking account", async () => {
+    await tab('admin', 'sms');
+    await until(() => /SMS is not set up/.test(document.getElementById('smsStatus').textContent));
+    await page.fill('#smsUsername', 'sandbox');
+    await page.fill('#smsApiKey', 'atsk_test_KHS_0001');
+    await page.fill('#smsSender', 'KHILL');
+    await page.check('#smsSandbox');
+    await page.click('#smsSettingsForm button[type="submit"]');
+    await until(() => /SMS is set up/.test(document.getElementById('smsStatus').textContent));
+    assert(/UGX 5000/.test(await page.textContent('#smsStatus')), 'balance not shown: ' + await page.textContent('#smsStatus'));
+    const row = await one('select at_username, sender_id, key_hint, key_cipher from public.school_sms where school_id = $1', [school]);
+    assert(row && row.at_username === 'sandbox' && row.sender_id === 'KHILL' && row.key_hint === '0001' && !row.key_cipher.includes('atsk_test'), JSON.stringify(row));
+    assert(!(await page.inputValue('#smsApiKey')), 'the key stayed in the form');
+  });
+
   await step('signing out leaves nothing of the school in memory', async () => {
     await signOut();
     assert(await app(() => window.KSA.state().students.length) === 0, 'learners still in memory');
@@ -236,6 +251,18 @@ try {
     await saved();
     const reg = await one("select class, records from public.registers where school_id = $1", [school]);
     assert(reg && reg.class === 'S.4' && reg.records.some(r => r.studentId === 'KHS/2026/001' && r.status === 'A'), 'register ' + JSON.stringify(reg));
+  });
+
+  await step("the teacher texts the absent learner's guardian", async () => {
+    const before = S.smsOutbox.length;
+    await page.click('#registerAbsentees [data-act="smsAbsentees"]');
+    await page.waitForSelector('#smsSend');
+    assert(/1<\/strong> message\b/.test(await page.innerHTML('#smsSummary')), 'summary: ' + await page.textContent('#smsSummary'));
+    await page.click('#smsSend');
+    await until(() => /1 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    assert(sms.length === 1 && sms[0].to === '+256772123456' && sms[0].from === 'KHILL' && /Nakato Sarah \(S\.4\) was absent from school/.test(sms[0].message), JSON.stringify(sms));
   });
 
   await step('the bursar sees money but no marks, and records a payment', async () => {
@@ -267,6 +294,59 @@ try {
     const bill = await one("select total from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
     assert(bill && Number(bill.total) === 450000, 'bill in database: ' + JSON.stringify(bill));
     assert(await count('audit_log', "and action = 'BURSARY_AWARD'") === 1, 'no BURSARY_AWARD audit entry');
+  });
+
+  await step('the bursar sends fee reminders by SMS to both guardians, with the balance', async () => {
+    const before = S.smsOutbox.length;
+    await tab('payments', 'dashboard');
+    await page.click('#bulkSmsBtn');
+    await page.waitForSelector('#smsSend');
+    await page.check('#smsBoth');
+    await until(() => document.getElementById('smsSend').textContent === 'Send 2 SMS' && !document.getElementById('smsSend').disabled);
+    await page.click('#smsSend');
+    await until(() => /2 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    // Bill 450,000 after the 25% bursary; paid 75,000 + 100,000 (the 250,000 was reversed).
+    assert(sms.length === 2 && sms.every(m => /Nakato Sarah \(S\.4\) is UGX 275,000/.test(m.message)), JSON.stringify(sms));
+    assert(JSON.stringify(sms.map(m => m.to).sort()) === '["+256701234567","+256772123456"]', 'numbers ' + sms.map(m => m.to));
+  });
+
+  await step('the director publishes the term to parents and posts a notice for them by SMS', async () => {
+    await signOut();
+    await signIn(DIRECTOR, 'Director2026');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    await tab('academics', 'marks');
+    await page.selectOption('#academicStudent', 'KHS/2026/001');
+    await page.selectOption('#academicForm select[name="examSet"]', 'EOT');
+    await page.fill('#academicForm input[name="subject"]', 'Mathematics');
+    await page.fill('#academicForm input[name="score"]', '82');
+    await page.click('#academicForm button[type="submit"]');
+    await saved();
+    await tab('academics', 'reportcards');
+    await until(() => /is not published/.test(document.getElementById('publishStatus').textContent));
+    await page.click('#publishBtn');
+    await page.click('#mdOk');
+    await until(() => /is published/.test(document.getElementById('publishStatus').textContent));
+    const r = await one("select position, out_of, result from public.term_results where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(r && r.position === 1 && r.out_of === 1 && r.result, 'published result ' + JSON.stringify(r));
+    assert((await one('select bool_and(results_published) as p from public.terms where school_id = $1', [school])).p === true, 'term not marked published');
+
+    const before = S.smsOutbox.length;
+    await tab('noticeboard');
+    await page.fill('#noticeForm input[name="title"]', 'Visiting day is Saturday');
+    await page.fill('#noticeForm textarea[name="body"]', 'Parents are welcome from 10am.');
+    await page.selectOption('#noticeAudience', 'all');
+    await page.check('#noticeForm input[name="sms"]');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForSelector('#smsSend');
+    await page.click('#smsSend');
+    await until(() => /1 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    assert(sms.length === 1 && sms[0].message === 'Visiting day is Saturday: Parents are welcome from 10am. - Kampala Hill Primary & Secondary', JSON.stringify(sms));
+    await saved();
+    assert(await count('notices', "and audience = 'all'") === 1, 'the notice is not marked for parents');
   });
 
   await step('"Forgot your password?" sends a reset link', async () => {

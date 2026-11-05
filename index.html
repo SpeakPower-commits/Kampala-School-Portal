@@ -252,6 +252,11 @@
           <div><label class="form-label" for="rcNextFees">Next term fees <span class="opt">(optional)</span></label><input class="input" id="rcNextFees" type="number" min="0" placeholder="From fee structure"></div>
           <div><button class="btn btn-primary btn-block" id="rcPrintBtn" type="button">Print class</button></div>
         </div>
+        <div class="tile" id="publishBox" style="display:none;margin-top:14px">
+          <div style="font-weight:700">Results for parents</div>
+          <p class="card-desc" id="publishStatus" style="margin:4px 0 10px"></p>
+          <div class="toolbar"><button class="btn btn-primary btn-sm" id="publishBtn" type="button">Publish this term to parents</button><button class="btn btn-ghost btn-sm" id="unpublishBtn" type="button">Withdraw</button></div>
+        </div>
       </div>
       <div class="card card-pad" id="bandsCard" style="display:none" data-sub="grading">
         <div class="card-title">Grading scales</div>
@@ -473,8 +478,10 @@
             <div class="form-row">
               <div><label class="form-label">Title</label><input class="input" name="title" required placeholder="Term 2 begins 26 May 2026"></div>
               <div><label class="form-label">Category</label><select class="input" name="category"><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
+              <div data-edition="online"><label class="form-label" for="noticeAudience">Who can see this</label><select class="input" name="audience" id="noticeAudience"><option value="staff">Staff only</option><option value="all">Staff and parents</option></select></div>
             </div>
             <div><label class="form-label">Details</label><textarea class="input" name="body" rows="2"></textarea></div>
+            <label class="check" id="noticeSmsWrap" data-edition="online" style="display:none"><input type="checkbox" name="sms"> Also send it by SMS to every guardian</label>
             <button class="btn btn-primary btn-sm" type="submit" style="justify-self:start">Post notice</button>
           </form>
         </div>
@@ -563,6 +570,31 @@
           <button class="btn btn-danger-solid btn-block" id="resetBtn" type="button" style="margin-top:12px">Erase all data</button>
         </div>
 
+        <div class="card card-pad" id="smsCard" style="display:none;grid-column:1/-1" data-sub="sms">
+          <div class="card-title">SMS to parents</div>
+          <p class="card-desc">Fee reminders, absence alerts, notices and parents' sign-in codes go out as SMS through your school's own <a href="https://africastalking.com" target="_blank" rel="noopener">Africa's Talking</a> account. The school pays Africa's Talking directly. Register a sender ID (your school's short name) with them so parents see who is texting.</p>
+          <div class="tile" id="smsStatus" style="margin-top:12px"></div>
+          <form id="smsSettingsForm" class="form-grid" style="margin-top:14px;display:none" autocomplete="off">
+            <div class="form-row">
+              <div><label class="form-label" for="smsUsername">Africa's Talking username</label><input class="input" id="smsUsername" required placeholder="e.g. kampalahill"></div>
+              <div><label class="form-label" for="smsApiKey">API key</label><input class="input" id="smsApiKey" type="password" autocomplete="new-password" placeholder="From Settings → API Key"></div>
+              <div><label class="form-label" for="smsSender">Sender ID <span class="opt">(optional, up to 11)</span></label><input class="input" id="smsSender" maxlength="11" placeholder="e.g. KHILL"></div>
+            </div>
+            <label class="check"><input type="checkbox" id="smsSandbox"> Sandbox account (for trying it out: nothing reaches real phones)</label>
+            <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="smsRemoveBtn" type="button" style="display:none">Remove account</button></div>
+            <p class="form-hint">The key is checked with Africa's Talking, then stored encrypted. Nobody can read it back, not even the director.</p>
+          </form>
+          <div class="form-row" id="smsTestRow" style="margin-top:14px;align-items:end;display:none">
+            <div><label class="form-label" for="smsTestTo">Send a test SMS to</label><input class="input" id="smsTestTo" type="tel" placeholder="0772 123 456"></div>
+            <div><button class="btn btn-outline btn-block" id="smsTestBtn" type="button">Send test</button></div>
+          </div>
+        </div>
+
+        <div class="card card-pad" id="smsLogCard" style="display:none;grid-column:1/-1" data-sub="sms">
+          <div class="card-head"><div><div class="card-title">Messages sent</div><p class="card-desc">The last 30 message runs.</p></div><button class="btn btn-outline btn-sm" id="smsLogRefresh" type="button">Refresh</button></div>
+          <div class="table-wrap"><table><thead><tr><th>When</th><th>What</th><th>By</th><th class="t-center">Messages</th><th class="t-center">Sent</th><th class="t-center">Failed</th><th>Status</th></tr></thead><tbody id="smsLogBody"></tbody></table></div>
+        </div>
+
       </div>
       <datalist id="sportList"><option value="Football"></option><option value="Basketball"></option><option value="Volleyball"></option><option value="Athletics"></option><option value="Swimming"></option><option value="Netball"></option><option value="Rugby"></option><option value="Cricket"></option><option value="Tennis"></option></datalist>
     </section>
@@ -591,5 +623,6 @@
 <script src="academics.js"></script>
 <script src="register.js"></script>
 <script src="tools.js"></script>
+<script src="sms.js"></script>
 </body>
 </html>

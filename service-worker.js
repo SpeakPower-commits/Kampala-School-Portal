@@ -25,6 +25,7 @@ const CORE_ASSETS = [
   './academics.js',
   './register.js',
   './tools.js',
+  './sms.js',
   './manifest.json',
   './icon192.png',
   './icon512.png',

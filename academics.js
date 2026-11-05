@@ -487,6 +487,53 @@ Object.assign(ACTIONS, {
   academic: d => openAcademic(d.id),
   reportCard: d => openReportCard(d.id, d.term),
 });
+/* ── Publishing results to parents (online edition) ────────────────────── */
+/* Parents see a term's marks, comments and report cards only once it is
+   published. Positions need the whole class, which a parent's view does not
+   have, so they are frozen here at publishing, as on the printed cards. */
+function renderPublishBox() {
+  const box = el('publishStatus'); if (!box || !ONLINE_EDITION) return;
+  const t = termById(el('rcTerm') && el('rcTerm').value);
+  if (!t) { box.textContent = 'Choose a term above.'; return; }
+  box.textContent = t.resultsPublished
+    ? `${termLabel(t)} is published: parents can see marks, positions, comments and report cards in the parent portal.`
+    : `${termLabel(t)} is not published: parents cannot see this term's marks yet.`;
+  el('publishBtn').textContent = t.resultsPublished ? 'Publish again (after changes)' : 'Publish this term to parents';
+  el('unpublishBtn').style.display = t.resultsPublished ? '' : 'none';
+}
+async function publishResults() {
+  if (!ONLINE_EDITION || !can('canPublishResults')) return toast('You do not have permission.', 'error');
+  const termId = el('rcTerm').value, t = termById(termId);
+  if (!t) return toast('Choose a term.', 'error');
+  const learners = state.students.filter(s => studentTermResult(s, termId).results.length);
+  if (!learners.length) return toast(`No marks have been entered for ${termLabel(t)} yet.`, 'error');
+  if (!await confirmDialog({ title: 'Publish results to parents', message: `Parents will see ${termLabel(t)} marks, class positions, comments and the report card for ${learners.length} learner${learners.length === 1 ? '' : 's'}. Positions are fixed as they are now; publish again after any changes.`, confirmLabel: 'Publish' })) return;
+  const saved = await SYNC.flush();
+  if (!saved.ok) return toast('Your latest marks have not reached the school database yet. Check the connection and try again.', 'error');
+  const byClass = {};
+  const rows = learners.map(s => {
+    const r = studentTermResult(s, termId);
+    const cp = (byClass[s.class] = byClass[s.class] || classPositions(termId, s.class))[s.id];
+    const sp = s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null;
+    return { learner_id: s.id, position: cp ? cp.pos : null, out_of: cp ? cp.of : null,
+      stream_position: sp ? sp.pos : null, stream_out_of: sp ? sp.of : null, average: r.avg, result: r.label };
+  });
+  const { data, error } = await ONLINE.client().rpc('publish_results', { p_school: SYNC.schoolId(), p_term: termId, p_rows: rows });
+  if (error) return toast(ONLINE.friendly(error), 'error');
+  t.resultsPublished = true;   // the database already says so; sync.js never writes this flag
+  renderPublishBox();
+  toast(`${termLabel(t)} results published to parents for ${data} learner${data === 1 ? '' : 's'}.`, 'success');
+}
+async function unpublishResults() {
+  const termId = el('rcTerm').value, t = termById(termId);
+  if (!t || !await confirmDialog({ title: 'Withdraw results', message: `Parents will no longer see ${termLabel(t)} marks and report cards.`, confirmLabel: 'Withdraw', danger: true })) return;
+  const { error } = await ONLINE.client().rpc('unpublish_results', { p_school: SYNC.schoolId(), p_term: termId });
+  if (error) return toast(ONLINE.friendly(error), 'error');
+  t.resultsPublished = false;
+  renderPublishBox();
+  toast(`${termLabel(t)} results withdrawn.`, 'success');
+}
+
 MODULES.push({
   name: 'academics',
   setup() {
@@ -503,8 +550,11 @@ MODULES.push({
     on('cmSaveBtn', 'click', saveComments);
     on('rcClass', 'change', renderAcademicControls);
     on('rcPrintBtn', 'click', printClassReports);
+    on('rcTerm', 'change', renderPublishBox);
+    on('publishBtn', 'click', publishResults);
+    on('unpublishBtn', 'click', unpublishResults);
     on('bandsSaveBtn', 'click', saveBands);
     on('bandsResetBtn', 'click', resetBands);
   },
-  render() { renderAcademicControls(); renderBandsForm(); },
+  render() { renderAcademicControls(); renderBandsForm(); renderPublishBox(); },
 });

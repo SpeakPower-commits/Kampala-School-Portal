@@ -80,8 +80,12 @@ function showAbsentees(cls, stream, date) {
   const box = el('registerAbsentees'); if (!box) return;
   const reg = findRegister(cls, stream, date);
   const absent = reg ? reg.records.filter(r => r.status === 'A').map(r => state.students.find(s => s.id === r.studentId)).filter(Boolean) : [];
+  // Online, all of them can be told at once by SMS through the school's account.
+  const textAll = ONLINE_EDITION && absent.length
+    ? `<button class="btn btn-primary btn-sm" style="margin-bottom:10px" data-act="smsAbsentees" data-class="${escapeHtml(cls)}" data-date="${escapeHtml(date)}">${icon('message', 14)} Text all ${absent.length} guardian${absent.length === 1 ? '' : 's'}</button>`
+    : '';
   box.innerHTML = absent.length
-    ? `<div class="card-title" style="margin-bottom:8px">Absent today — tell their guardians</div>${absent.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.guardian || 'No phone on file')}</div></div>
+    ? `<div class="card-title" style="margin-bottom:8px">Absent today — tell their guardians</div>${textAll}${absent.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.guardian || 'No phone on file')}</div></div>
       <div class="row-actions"><button class="btn btn-outline btn-xs" data-act="smsAbsence" data-id="${escapeHtml(s.id)}" data-date="${escapeHtml(date)}">${icon('message', 14)} SMS</button><button class="btn btn-outline btn-xs" data-act="waAbsence" data-id="${escapeHtml(s.id)}" data-date="${escapeHtml(date)}">WhatsApp</button></div></div>`).join('')}`
     : '';
 }

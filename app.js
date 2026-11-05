@@ -421,7 +421,13 @@ function smsConduct(conductId) {
   const body = `${opener} "${c.description}" — ${c.reportedBy || 'school staff'}. ${schoolName()}`;
   window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
 }
+/* Fee reminders: real SMS through the school's account in the online
+   edition; elsewhere (or when SMS is not set up) a tap-to-SMS list. */
 function openBulkSms() {
+  if (ONLINE_EDITION) return SMS.openRun('fees', {}, 'Fee reminders by SMS', openFeeReminderLinks);
+  openFeeReminderLinks();
+}
+function openFeeReminderLinks() {
   const debtors = state.students.map(s => ({ s, bal: studentBalance(s) })).filter(x => x.bal > 0).sort((a, b) => b.bal - a.bal);
   const total = debtors.reduce((a, x) => a + x.bal, 0);
   const body = !debtors.length
@@ -1069,17 +1075,24 @@ function renderAthleteProfiles() {
 function postNotice(f) {
   if (!can('canPostNotice')) return toast('You do not have permission.', 'error');
   if (!f.title || !f.title.trim()) return toast('Notice title is required.', 'error');
-  state.notices.unshift({ id: 'NTC' + uid().slice(0, 5), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO() });
+  // Online, a notice can also be shown to parents in their portal.
+  const audience = ONLINE_EDITION && f.audience === 'all' ? 'all' : 'staff';
+  const notice = { id: 'NTC' + uid().slice(0, 5), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO(), audience };
+  state.notices.unshift(notice);
   if (state.notices.length > 50) state.notices = state.notices.slice(0, 50);
   saveState(); renderAll();
   toast('Notice posted.', 'success');
+  if (ONLINE_EDITION && f.sms && can('canBroadcastSms')) {
+    const text = (notice.title + (notice.body ? ': ' + notice.body : '')).slice(0, 380);
+    SMS.openRun('broadcast', { message: text }, 'Send this notice by SMS');
+  }
 }
 async function deleteNotice(id) { if (!await confirmDialog({ title: 'Delete notice', message: 'Delete this notice?', confirmLabel: 'Delete', danger: true })) return; state.notices = state.notices.filter(n => n.id !== id); saveState(); renderAll(); }
 function renderNotices() {
   const grid = el('noticesGrid'); if (!grid) return;
   const formCard = el('noticeFormCard');
   if (formCard) formCard.style.display = can('canPostNotice') ? '' : 'none';
-  grid.innerHTML = state.notices.length ? state.notices.map(n => `<div class="notice-item cat-${escapeHtml(n.category)}"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? new Date(n.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span></div><div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}<div class="card-desc" style="margin-top:6px">Posted by ${escapeHtml(n.postedBy)}</div></div>${can('canPostNotice') ? `<button class="btn-icon" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" title="Delete">${icon('trash', 15)}</button>` : ''}</div></div>`).join('') : '<div class="empty">No notices posted yet.</div>';
+  grid.innerHTML = state.notices.length ? state.notices.map(n => `<div class="notice-item cat-${escapeHtml(n.category)}"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? new Date(n.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>${ONLINE_EDITION && n.audience === 'all' ? '<span class="badge badge-info">Parents can see this</span>' : ''}</div><div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}<div class="card-desc" style="margin-top:6px">Posted by ${escapeHtml(n.postedBy)}</div></div>${can('canPostNotice') ? `<button class="btn-icon" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" title="Delete">${icon('trash', 15)}</button>` : ''}</div></div>`).join('') : '<div class="empty">No notices posted yet.</div>';
 }
 
 /* ── User management & audit ───────────────────────────────────────────── */
@@ -1226,11 +1239,12 @@ const SUB_TABS = {
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
   reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
-  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['data', 'Data & backup']],
+  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['sms', 'SMS', 'canViewSmsLog', 'online'], ['data', 'Data & backup']],
 };
 let currentTab = null;
 const lastSub = {};
-function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm]) => !perm || can(perm)); }
+/* A fourth entry 'online' marks a sub-tab that exists only in the online edition. */
+function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION)); }
 function buildNav(tabs) {
   const nav = el('navBar');
   nav.innerHTML = tabs.map(t => `<button class="nav-tab" data-tab="${t}">${icon(t, 16)}<span>${TAB_LABELS[t] || t}</span></button>`).join('');
@@ -1263,6 +1277,8 @@ function showSub(tab, sub) {
   }
   const panel = el('panel-' + tab);
   if (panel && SUB_TABS[tab]) panel.querySelectorAll('[data-sub]').forEach(c => c.classList.toggle('hidden', c.dataset.sub !== chosen));
+  // Feature files can load what a sub-tab shows when it opens (e.g. the SMS log).
+  MODULES.forEach(m => { if (m.onSub) { try { m.onSub(tab, chosen); } catch (err) { console.error(err); } } });
 }
 
 /* ── What's new (dashboard) ────────────────────────────────────────────── */
@@ -1280,6 +1296,7 @@ const WHATS_NEW = [
   ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
   ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
   ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
+  ['admin/sms', 'Administration', 'SMS to parents', "Fee reminders, absence alerts and notices by SMS through your school's own Africa's Talking account."],,
 ];
 function whatsNewHidden() {
   try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
@@ -1573,6 +1590,13 @@ function initApp() {
   show('addCompetitionBtn', can('canManageCompetitions'));
   show('addSquadBtn', can('canManageSquads'));
   show('syncStatus', ONLINE_EDITION);
+  // Online only: SMS, results for parents, notices parents can read.
+  show('smsCard', ONLINE_EDITION && can('canViewSmsLog'));
+  show('smsLogCard', ONLINE_EDITION && can('canViewSmsLog'));
+  show('smsSettingsForm', ONLINE_EDITION && can('canManageSettings'));
+  show('noticeSmsWrap', ONLINE_EDITION && can('canBroadcastSms'));
+  show('publishBox', ONLINE_EDITION && can('canPublishResults'));
+  if (ONLINE_EDITION) SMS.forget();
   showOnlineImport();
   if (ONLINE_EDITION && can('canManageSettings') && SYNC.importing()) setTimeout(resolveInterruptedImport, 0);
 
