@@ -175,24 +175,31 @@
       </div>
     </section>
 
-    <!-- ATTENDANCE: the daily class register -->
+    <!-- ATTENDANCE: take register · who was absent -->
     <section id="panel-register" class="panel">
       <div class="card card-pad" data-sub="daily">
-        <div class="card-head"><div><div class="card-title">Class register</div><p class="card-desc" id="registerNote">Everyone starts as present. Tap A, L or E to change a learner.</p></div>
+        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.</p></div>
           <div class="pill-list" id="registerToday"></div></div>
         <div class="form-row" style="align-items:end">
           <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
-          <div><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
+          <div id="regStreamWrap"><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
           <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
-          <div class="toolbar"><button class="btn btn-outline" id="regAllPresentBtn" type="button">All present</button><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
         </div>
-        <p class="card-desc" style="margin:10px 0 6px"><strong>P</strong> present · <strong>A</strong> absent · <strong>L</strong> late · <strong>E</strong> excused</p>
-        <div class="scroll-box" id="registerRoster" style="max-height:520px"></div>
+        <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
+        <div class="toolbar" style="margin-top:12px"><button class="btn btn-outline" id="regAllPresentBtn" type="button">Mark everyone present</button><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
         <div id="registerAbsentees" style="margin-top:14px"></div>
       </div>
       <div class="card card-pad" data-sub="recent">
-        <div class="card-title">Recent registers</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>Class</th><th class="t-center">Present</th><th class="t-center">Absent</th><th class="t-center">Rate</th><th>Marked by</th><th></th></tr></thead><tbody id="registerHistoryBody"></tbody></table></div>
+        <div class="card-title">Who was absent</div>
+        <p class="card-desc">Every register taken, with the names of the children who were absent, late or excused. Tap a name to see that child's attendance.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="absClass">Class</label><select class="input" id="absClass"></select></div>
+          <div><label class="form-label" for="absFrom">From</label><input class="input" id="absFrom" type="date"></div>
+          <div><label class="form-label" for="absTo">To</label><input class="input" id="absTo" type="date"></div>
+        </div>
+        <div id="absTop" style="margin-top:12px"></div>
+        <div id="absenceList" style="margin-top:4px"></div>
       </div>
     </section>
 
@@ -622,6 +629,7 @@
 <script src="billing.js"></script>
 <script src="academics.js"></script>
 <script src="register.js"></script>
+<script src="learner.js"></script>
 <script src="tools.js"></script>
 <script src="sms.js"></script>
 </body>

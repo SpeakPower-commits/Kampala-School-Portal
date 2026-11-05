@@ -63,7 +63,7 @@ async function tab(page, name, sub) {
   await page.goto(BASE, { waitUntil: 'networkidle' });
 
   await step('static assets resolve (service worker, icons, manifest)', async () => {
-    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
+    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/learner.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
       const res = await page.request.get(ORIGIN + new URL(BASE).pathname.replace(/[^/]*$/, '') + path.slice(1));
       assert(res.ok(), path + ' returned ' + res.status());
     }
@@ -406,6 +406,9 @@ async function tab(page, name, sub) {
     await tab(page, 'register', 'daily');
     await page.selectOption('#regClass', 'S.4');
     await page.click(`#registerRoster .reg-row[data-student="${secondId}"] [data-set-status="A"]`);
+    const line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/2 learners · 1 present · 1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
+    assert(await page.textContent(`#registerRoster .reg-row[data-student="${secondId}"] .on-A`) === 'Absent', 'the button does not say Absent');
     await page.click('#regSaveBtn');
     await page.waitForTimeout(150);
     const rec = await page.evaluate(id => state.registers[0].records.find(r => r.studentId === id).status, secondId);
@@ -421,6 +424,7 @@ async function tab(page, name, sub) {
     assert(/Registers marked\s*1 \/ 2/.test(text), 'registers marked: ' + text);
     assert(/Present\s*1 \(50%\)/.test(text) && /Absent\s*1/.test(text), 'counts: ' + text);
     assert(/Not marked yet: P\.7/.test(text), 'unmarked class missing: ' + text);
+    assert(/Absent today\s*S\.4:\s*Mugisha Brian/.test(text), 'absent child not named: ' + text);
   });
 
   await step("What's new opens the right sub-tab and stays hidden once dismissed", async () => {
@@ -436,6 +440,31 @@ async function tab(page, name, sub) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#appShell', { state: 'visible' });
     assert(await page.isVisible('#attTodayCard') && !(await page.isVisible('#whatsNewCard')), "What's new came back after a reload");
+  });
+
+  await step('Who was absent names the child, and "Change this register" opens that register', async () => {
+    await tab(page, 'register', 'recent');
+    const list = (await page.textContent('#absenceList')).replace(/\s+/g, ' ');
+    assert(/S\.4/.test(list) && /1 of 2 present/.test(list) && /Absent: Mugisha Brian/.test(list), 'list: ' + list);
+    assert(/Mugisha Brian \(1 day\)/.test(await page.textContent('#absTop')), 'most-absent line missing');
+    await page.click('#absenceList [data-act="openRegister"]');
+    assert(await page.isVisible('#registerRoster') && !(await page.isVisible('#absenceList')), 'did not open Take register');
+    assert(await page.inputValue('#regClass') === 'S.4', 'class not loaded');
+    const st = await page.getAttribute(`#registerRoster .reg-row[data-student="${secondId}"]`, 'data-status');
+    assert(st === 'A', 'the saved status is not shown: ' + st);
+  });
+
+  await step("a child's name opens their learner page, with the dates absent", async () => {
+    await tab(page, 'register', 'recent');
+    await page.click(`#absenceList [data-act="learner"][data-id="${secondId}"]`);
+    await page.waitForSelector('.modal #learnerBody');
+    try {
+      await page.click('.modal [data-lsec="attendance"]');
+      const today = await page.evaluate(() => fmtDay(todayISO()));
+      const absent = await page.textContent('.modal #learnerBody .lp-row:has(.lp-label:text-is("Days absent"))');
+      assert(absent.includes(today), 'dates absent: ' + absent);
+      for (const sec of ['marks', 'fees', 'sports', 'discipline']) assert(await page.isVisible(`.modal [data-lsec="${sec}"]`), sec + ' section missing for the director');
+    } finally { await page.click('.modal [data-modal-close]'); }
   });
 
   await step('a teacher account can be limited to chosen classes', async () => {

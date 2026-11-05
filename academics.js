@@ -411,6 +411,20 @@ function openReportCard(studentId, termId) {
   const t = termId || (termsWithMarks(s).pop()) || (getCurrentTerm() || {}).id;
   printDoc(reportCardHtml(s, t, reportOptions()));
 }
+/* One learner's report card on screen, with Print. From a learner's page,
+   "Back" returns to it. */
+function previewReportCard(studentId, termId, back) {
+  const s = state.students.find(x => x.id === studentId); if (!s) return;
+  const t = termId || (termsWithMarks(s).pop()) || (getCurrentTerm() || {}).id;
+  const html = reportCardHtml(s, t, reportOptions());
+  openModal({
+    title: escapeHtml(`${s.name} — ${termLabel(termById(t))}`), wide: true,
+    bodyHtml: `<div class="report-preview">${html}</div>`,
+    footHtml: (back ? `<button class="btn btn-ghost" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="marks">Back to ${escapeHtml(s.name)}</button>` : '<button class="btn btn-ghost" data-modal-close>Close</button>')
+      + '<button class="btn btn-primary" type="button" id="rcPreviewPrint">Print</button>',
+    onOpen(root) { root.querySelector('#rcPreviewPrint').addEventListener('click', () => printDoc(html)); },
+  });
+}
 function reportOptions() {
   const o = (state.settings && state.settings.reportOptions) || {};
   return { nextTermBegins: o.nextTermBegins || '', nextTermFees: Number(o.nextTermFees) || 0 };
@@ -488,6 +502,7 @@ function renderAcademicControls() {
 Object.assign(ACTIONS, {
   academic: d => openAcademic(d.id),
   reportCard: d => openReportCard(d.id, d.term),
+  previewReport: d => previewReportCard(d.id, d.term, d.back === '1'),
 });
 /* ── Publishing results to parents (online edition) ────────────────────── */
 /* Parents see a term's marks, comments and report cards only once it is

@@ -24,6 +24,7 @@ const CORE_ASSETS = [
   './billing.js',
   './academics.js',
   './register.js',
+  './learner.js',
   './tools.js',
   './sms.js',
   './manifest.json',

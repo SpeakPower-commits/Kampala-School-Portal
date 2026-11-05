@@ -596,7 +596,7 @@ function renderStudentTable() {
       const delBtn = can('canDeleteStudents') ? `<button class="btn-icon" title="Remove" data-act="deleteStudent" data-id="${escapeHtml(s.id)}">${icon('trash', 15)}</button>` : '';
       return `<tr>
         <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
-        <td style="font-weight:600">${escapeHtml(s.name)}${senTag}</td>
+        <td style="font-weight:600">${learnerLink(s.id, s.name)}${senTag}</td>
         <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
         <td>${gender}</td>
         <td>${board}</td>
@@ -1234,7 +1234,7 @@ const TAB_LABELS = {
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
   directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
-  register: [['daily', 'Daily register'], ['recent', 'Recent registers']],
+  register: [['daily', 'Take register'], ['recent', 'Who was absent']],
   academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],

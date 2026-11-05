@@ -470,6 +470,29 @@ details.disclosure .disclosure-body { padding: 15px; }
 .seg button.on-A { background: var(--danger-bg); color: #7f1d1d; }
 .seg button.on-L { background: var(--warn-bg); color: #78350f; }
 .seg button.on-E { background: var(--info-bg); color: #1e3a8a; }
+/* Register buttons in words: Present · Absent · Late · Excused */
+.seg.seg-words button { min-width: 0; padding: 8px 12px; font-size: 13px; }
+/* The running line above a register: who is absent, by name */
+.reg-summary { margin: 12px 0 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); font-size: 13.5px; line-height: 1.55; }
+.t-ok { color: var(--success); font-weight: 600; }
+.t-bad { color: var(--danger); font-weight: 700; }
+.t-warn { color: var(--warn); font-weight: 600; }
+/* A learner's name that opens their learner page */
+.link-btn { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.link-btn:hover { color: var(--ink); }
+/* Who was absent */
+.abs-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.abs-item:last-child { border-bottom: none; }
+.abs-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.abs-names { margin-top: 6px; line-height: 1.7; }
+.abs-label { font-weight: 700; margin-right: 2px; }
+/* The learner page (one child: details, attendance, marks, fees, sports) */
+.lp-tabs { margin: 0 0 14px; }
+.lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }
+.lp-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 9px 13px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.lp-row:last-child { border-bottom: none; }
+.lp-label { color: var(--muted); font-weight: 600; }
+.lp-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 
 /* School colour swatches */
 .swatch { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px 6px 7px; border: 1px solid var(--line); border-radius: 20px; font-size: 12.5px; cursor: pointer; }
@@ -515,6 +538,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .modal .rc-marks { font-size: 11px !important; }
   .modal .rc-marks th, .modal .rc-marks td { padding: 4px 3px !important; }
   .modal .rc-marks th { letter-spacing: 0; }
+  /* Registers on a phone: the name on one line, the four buttons across the next */
+  .reg-row { flex-wrap: wrap; gap: 8px; }
+  .reg-row .reg-name { flex: 1 1 100%; }
+  .seg.seg-words { width: 100%; }
+  .seg.seg-words button { flex: 1; padding: 10px 4px; }
+  .lp-row { grid-template-columns: 1fr; gap: 2px; }
 }
 
 /* =========================================================================
