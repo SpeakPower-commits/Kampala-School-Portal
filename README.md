@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v3.3.0
+### Offline-first school administration for Ugandan schools & academies — v3.5.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -28,6 +28,14 @@ device.
   divisions, teacher comments — then print the whole class, one page per learner.
 - **Daily class register.** Present, absent, late or excused, with one-tap
   messages to the guardians of absent learners.
+- **Parent portal (online edition).** Parents sign in on their phone with a
+  code sent by SMS and see their children's fees and receipts, published report
+  cards, attendance and school notices. They see only their own children.
+- **SMS to parents (online edition).** Fee reminders to every family that
+  owes (with each balance), absence alerts from the morning register, and
+  notices to every guardian, through the school's own Africa's Talking
+  account. A preview shows the number of messages and SMS pages first, and
+  every run is logged.
 - **Parent communication.** One-tap SMS and WhatsApp fee reminders and conduct
   notices, pre-filled in the school's name.
 - **Official documents.** Receipts with the amount in words, fees statements
@@ -57,7 +65,7 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 | **Discipline** | Conduct log, with messages to guardians |
 | **Reports** | Statistics · EMIS |
 | **Notices** | The school notice board |
-| **Administration** | Staff accounts · School profile & logo · Data & backup |
+| **Administration** | Staff accounts · School profile & logo · SMS (online) · Data & backup |
 
 ---
 
@@ -69,7 +77,8 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 | **School Administrator** | All ten modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
 | **Bursary Officer** | Fees, Reports, Notices | Record and reverse payments, give any learner a bursary, fee reports |
 | **Head of Sports** | Sports, Notices | Programmes, training attendance, competitions, squads, athlete profiles, bursary candidates |
-| **Teacher** | Attendance, Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments |
+| **Teacher** | Attendance, Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments, text the guardians of absent learners (online) |
+| **Parent** (online) | The parent portal (`parent.html`) | Their own children only: fees, receipts, published report cards, attendance, notices for parents |
 
 ---
 
@@ -116,6 +125,7 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 school-portal/
 ├── index.html          Markup only (strict Content-Security-Policy)
 ├── styles.css          Institutional stylesheet (no external dependencies)
+├── core.js             Shared helpers: formatting, icons, dialogs, printing (staff app and parent portal)
 ├── app.js              Core: learners, payments, sports, conduct, UI shell
 ├── billing.js          Terms, fee structures, bills, arrears, receipts, finance dashboard
 ├── academics.js        Grading scales, marks, positions, comments, report cards
@@ -127,17 +137,21 @@ school-portal/
 ├── icon192.png         App icon (192×192)
 ├── icon512.png         App icon (512×512)
 ├── tests/e2e.js        End-to-end tests (run on every push by GitHub Actions)
-├── tests/online.e2e.mjs  End-to-end tests of the online edition
+├── tests/online.e2e.mjs  End-to-end tests of the online edition (staff and parents)
+├── tests/worker.test.mjs  Tests of the Worker's SMS API and sign-in hook
 │
 │   Online edition (shared school database)
 ├── config.js           Which edition runs here (by web address) and the database address
 ├── auth-online.js      Staff sign-in by email, invitations, password resets
 ├── sync.js             Loads the school's data and saves only what changed
 ├── vendor/supabase.js  Official Supabase client, pinned (see vendor/README.md)
+├── sms.js              SMS to guardians: send dialog, Administration → SMS
+├── parent.html         The parent portal (sign in by SMS code)
+├── parent.js           …fees, receipts, report cards, attendance, notices
 │
 │   Hosting on Cloudflare
 ├── wrangler.jsonc      Cloudflare Worker settings
-├── worker/index.js     Small server API (/api/*); the app's files are served as-is
+├── worker/index.js     Server API (/api/*): SMS sending and the parent sign-in hook
 ├── _headers            Security headers for every page
 ├── .assetsignore       Repository files that are never published
 │
@@ -171,6 +185,44 @@ Only the app's own files are published. `.assetsignore` keeps the server code,
 database scripts, tests and documentation off the site, and `_headers` adds
 the security headers.
 
+### Turning on the online edition, the parent portal and SMS
+Everything below is built and tested locally; these are the one-time steps on
+the real services.
+
+1. **Supabase** (Frankfurt region): create the project, then in **SQL Editor**
+   run `supabase/migrations/0001_init.sql`, then `0002_parents_sms.sql`.
+2. **Supabase → Authentication:**
+   - keep **Confirm email** on (staff invitations rely on it);
+   - turn on the **Phone** provider with phone confirmations required (not auto-confirmed);
+   - set the SMS code to expire after about 5 minutes, because Ugandan networks can be slow;
+   - under **Auth Hooks**, add a **Send SMS** hook of type HTTPS pointing to
+     `https://<your portal>/api/hooks/send-sms`, and copy the secret it generates
+     (`v1,whsec_…`).
+3. **Cloudflare → the Worker → Settings → Variables and secrets:**
+   - plain text: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`;
+   - secrets:
+     - `SUPABASE_SECRET_KEY`;
+     - `SEND_SMS_HOOK_SECRET` (the `v1,whsec_…` value);
+     - `SMS_KEY_SECRET`, made with `openssl rand -base64 32`. It encrypts each school's
+       Africa's Talking key. Keep a copy somewhere safe: if it is lost, every
+       school must enter its key again.
+4. **`config.js`:** set `supabaseUrl`, `supabaseKey` (the publishable key) and
+   `onlineHosts` (the portal's web address).
+5. **Each school:**
+   1. Opens an Africa's Talking account and tops it up.
+   2. Asks Africa's Talking for a sender ID (the school's short name), which is registered with UCC and takes some days.
+   3. Has the director save the username, API key and sender ID under **Administration → SMS**, then **Send test**.
+
+   The username `sandbox` with the sandbox option ticked works for trying it out: nothing reaches real phones.
+6. **Parents:** give them the address `https://<your portal>/parent.html`. They sign
+   in with the number the school holds for them (first or second guardian).
+
+**Costs:** every SMS is paid by the school, on its own Africa's Talking account:
+- reminders, absence alerts and notices;
+- a parent's sign-in code, which is one SMS each time the parent signs in on a new phone.
+
+The send preview shows the number of messages and SMS pages before anything goes out.
+
 ### GitHub Pages (free, HTTPS — for trying it out)
 GitHub's terms don't allow Pages to host a commercial service, so use it for
 demos and testing only.
@@ -202,7 +254,21 @@ browser's `localStorage` on the device where it is used.
 - Login, password changes, user management, **payments, reversals, bursary
   awards and student changes** are written to an audit log (Executive only).
 
-**What this means in practice:** anyone with access to the unlocked device can,
+**The online edition** keeps each school's records in one shared database,
+where row-level security decides who sees what. A school never sees another
+school's records, and a teacher sees only their own classes.
+- **Parents.** A parent sees only the learners whose guardian number is theirs,
+  and only once that number is verified by SMS code. Marks, report cards and
+  positions appear only after the school publishes the term.
+- **SMS.** Who may send which messages, to whom and with what text, is decided
+  by the database, never by the browser.
+- **The Africa's Talking key.** Each school's key is checked with Africa's
+  Talking, then encrypted by the Cloudflare Worker before it is stored. No
+  browser and no member of staff can read it back.
+
+The database's security rules are tested on every change (`supabase/tests`).
+
+**What this means in practice (offline edition):** anyone with access to the unlocked device can,
 in principle, read the local data. Treat each device like a paper register —
 keep it password-protected at the operating-system level, and use the built-in
 **Backup** regularly. This design is deliberate: it keeps the app free, private
@@ -291,6 +357,9 @@ node supabase/tests/rls.test.mjs
 # WebAssembly with the real security rules, and the official Supabase client)
 node tests/online.e2e.mjs
 
+# The Worker: SMS sending and the parent sign-in hook (no browser needed)
+node tests/worker.test.mjs
+
 # The offline edition, in a real browser
 python3 -m http.server 8099 &
 node tests/e2e.js
@@ -301,4 +370,4 @@ the address it prints.
 
 ---
 
-**Version:** 3.0.0 · **License:** MIT — free for any school.
+**Version:** 3.5.0 · **License:** MIT — free for any school.

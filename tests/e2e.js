@@ -63,7 +63,7 @@ async function tab(page, name, sub) {
   await page.goto(BASE, { waitUntil: 'networkidle' });
 
   await step('static assets resolve (service worker, icons, manifest)', async () => {
-    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/styles.css']) {
+    for (const path of ['/service-worker.js', '/manifest.json', '/icon192.png', '/icon512.png', '/core.js', '/app.js', '/auth.js', '/sms.js', '/parent.html', '/parent.js', '/styles.css']) {
       const res = await page.request.get(ORIGIN + new URL(BASE).pathname.replace(/[^/]*$/, '') + path.slice(1));
       assert(res.ok(), path + ' returned ' + res.status());
     }
