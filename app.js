@@ -482,8 +482,6 @@ function renderAll() {
   guard(renderSportFilter);
   guard(renderSportOptions);
   guard(renderPerformanceTable);
-  guard(renderAcademicTable);
-  guard(renderSubjectList);
   guard(renderAttendanceProgramSelect);
   guard(renderAttendanceRoster);
   guard(renderAttendanceTable);
@@ -871,10 +869,6 @@ function renderSportOptions() {
   sel.innerHTML = '<option value="">— None —</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   if (cur) sel.value = cur;
 }
-function renderSubjectList() {
-  const dl = el('subjectList'); if (!dl) return;
-  dl.innerHTML = Array.from(new Set([...PRIMARY_SUBJECTS, ...O_LEVEL_SUBJECTS, ...A_LEVEL_SUBJECTS])).sort().map(s => `<option value="${escapeHtml(s)}"></option>`).join('');
-}
 function renderStudentSelects() {
   const fill = (id, label) => {
     const sel = el(id); if (!sel) return;
@@ -1235,7 +1229,7 @@ const TAB_LABELS = {
 const SUB_TABS = {
   directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
   register: [['daily', 'Take register'], ['recent', 'Who was absent'], ['sheet', 'Term sheet']],
-  academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
+  academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
   reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
@@ -1288,7 +1282,7 @@ const WHATS_NEW_RELEASE = '2026-11';
 const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
 const WHATS_NEW = [
   ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
-  ['academics/marksheet', 'Academics', 'Class mark sheet', "Enter a whole class's marks for one subject on one screen."],
+  ['academics/marks', 'Academics', 'Enter marks', "Choose the class and the subject, then type every child's score on one screen."],
   ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
   ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
   ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
@@ -1328,7 +1322,6 @@ Object.assign(ACTIONS, {
   editStudent: d => openStudentEdit(d.id),
   deleteStudent: d => deleteStudent(d.id),
   notes: d => openNotes(d.id),
-  academic: d => openAcademic(d.id),
   voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
   deleteProgram: d => deleteProgram(d.id),
   deleteConduct: d => deleteConduct(d.id),
@@ -1574,7 +1567,6 @@ function initApp() {
   show('auditLogCard', can('canManageUsers'));
   show('settingsCard', can('canManageSettings'));
   show('conductFormCard', can('canLogConduct'));
-  show('academicFormCard', can('canAddAcademic'));
   show('perfFormCard', can('canLogPerformance'));
   show('termMgmtCard', can('canManageTerms'));
   show('feeStructCard', can('canManageTerms'));

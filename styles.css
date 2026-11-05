@@ -502,6 +502,15 @@ details.disclosure .disclosure-body { padding: 15px; }
 .ts .ts-tot { font-weight: 700; border-left: 1px solid var(--line); }
 .ts tr.ts-low .ts-name { box-shadow: inset 4px 0 0 var(--danger); }
 .ts tfoot td { background: var(--panel-soft); font-weight: 700; border-bottom: none; }
+/* Enter marks: a score box and the grade it gives */
+.ms-entry { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ms-entry .ms-score { width: 86px; }
+.ms-grade { min-width: 44px; font-weight: 700; color: var(--brand); }
+/* Class results and report cards lists */
+.cr-grade { font-size: 11px; font-weight: 700; color: var(--brand); }
+.cr-pos { display: inline-block; min-width: 38px; color: var(--muted); font-weight: 700; }
+.rc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.rc-item:last-child { border-bottom: none; }
 /* The learner page (one child: details, attendance, marks, fees, sports) */
 .lp-tabs { margin: 0 0 14px; }
 .lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }

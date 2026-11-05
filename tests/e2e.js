@@ -51,6 +51,20 @@ async function tab(page, name, sub) {
   await page.click(`.nav-tab[data-tab="${name}"]`);
   if (sub) await page.click(`#subNav [data-sub="${sub}"]`);
 }
+// Academics → Enter marks: one subject for a class, as a teacher does it.
+async function enterMarks(page, cls, subject, scores) {
+  await tab(page, 'academics', 'marks');
+  await page.selectOption('#msClass', cls);
+  await page.selectOption('#msSubject', subject);
+  for (const [id, score] of Object.entries(scores)) await page.fill(`#markSheetRoster .ms-score[data-student="${id}"]`, String(score));
+  await page.click('#msSaveBtn');
+  await page.waitForTimeout(120);
+}
+async function classResults(page, cls) {
+  await tab(page, 'academics', 'results');
+  await page.selectOption('#crClass', cls);
+  return (await page.textContent('#classResults')).replace(/\s+/g, ' ');
+}
 
 (async () => {
   const launch = { args: ['--no-sandbox'] };
@@ -199,16 +213,11 @@ async function tab(page, name, sub) {
   });
 
   await step('O-Level aggregate shows for a sitting', async () => {
-    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['Mathematics', '82'], ['English Language', '75'], ['Physics', '68']]) {
-      await page.selectOption('#academicStudent', 'NPA/2026/001');
-      await page.selectOption('#academicForm select[name="examSet"]', 'EOT');
-      await page.fill('#academicForm input[name="subject"]', subj);
-      await page.fill('#academicForm input[name="score"]', score);
-      await page.click('#academicForm button[type="submit"]');
-      await page.waitForTimeout(120);
+      await enterMarks(page, 'S.4', subj, { 'NPA/2026/001': score });
     }
-    assert(/Aggregate/.test(await page.textContent('#academicTableBody')), 'no aggregate shown');
+    const text = await classResults(page, 'S.4');
+    assert(/Aggregate/.test(text) && /Mathematics/.test(text), 'no aggregate shown: ' + text);
   });
 
   await step('switching to competency grading re-grades entries', async () => {
@@ -216,8 +225,7 @@ async function tab(page, name, sub) {
     await page.selectOption('#setGrading', 'cbc');
     await page.click('#settingsForm button[type="submit"]');
     await page.waitForTimeout(150);
-    await tab(page, 'academics', 'marks');
-    assert(/competency/.test(await page.textContent('#academicTableBody')), 'competency grades not shown');
+    assert(/competency/.test(await classResults(page, 'S.4')), 'competency grades not shown');
   });
 
   await step('financial actions are audited', async () => {
@@ -329,17 +337,23 @@ async function tab(page, name, sub) {
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     secondId = await page.evaluate(() => state.students.find(s => s.name === 'Mugisha Brian').id);
-    await tab(page, 'academics', 'marksheet');
+    // Enter marks lists the class as soon as the class and subject are chosen,
+    // and shows the grade as a score is typed.
+    await tab(page, 'academics', 'marks');
+    assert(!(await page.$('#msLoadBtn')), 'the Load class button is still there');
     await page.selectOption('#msClass', 'S.4');
-    await page.fill('#msSubject', 'Biology');
-    await page.click('#msLoadBtn');
+    await page.selectOption('#msSubject', 'Biology');
+    assert(await page.$$eval('#markSheetRoster .ms-score', n => n.length) === 2, 'class not listed');
     await page.fill('#markSheetRoster .ms-score[data-student="NPA/2026/001"]', '77');
+    assert(/^[A-Z]\d?$|^[A-E]$|^D\d$|^C\d$/.test((await page.textContent('#markSheetRoster .ms-row:has([data-student="NPA/2026/001"]) .ms-grade')).trim()), 'grade not shown while typing');
+    assert(/1 of 2 marked/.test(await page.textContent('#msCounter')), 'counter: ' + await page.textContent('#msCounter'));
     await page.fill(`#markSheetRoster .ms-score[data-student="${secondId}"]`, '60');
     await page.click('#msSaveBtn');
     await page.waitForTimeout(150);
     const pos = await page.evaluate(() => classPositions(getCurrentTerm().id, 'S.4'));
     assert(pos['NPA/2026/001'].pos === 1 && pos[secondId].pos === 2 && pos[secondId].of === 2, 'positions ' + JSON.stringify(pos));
-    assert(/1 \/ 2/.test(await page.textContent('#academicTableBody')), 'position not shown in results table');
+    const res = await classResults(page, 'S.4');
+    assert(/1st\s*Nakato Sarah/.test(res) && /2nd\s*Mugisha Brian/.test(res) && /Biology/.test(res), 'positions not shown in class results: ' + res);
   });
 
   await step('Primary uses PLE grading: four subjects, aggregate and division', async () => {
@@ -352,13 +366,8 @@ async function tab(page, name, sub) {
     await page.click('#registerForm button[type="submit"]');
     await page.waitForTimeout(150);
     const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);
-    await tab(page, 'academics', 'marks');
     for (const [subj, score] of [['English Language', '85'], ['Mathematics', '72'], ['Science', '66'], ['Social Studies', '58']]) {
-      await page.selectOption('#academicStudent', pid);
-      await page.fill('#academicForm input[name="subject"]', subj);
-      await page.fill('#academicForm input[name="score"]', score);
-      await page.click('#academicForm button[type="submit"]');
-      await page.waitForTimeout(100);
+      await enterMarks(page, 'P.7', subj, { [pid]: score });
     }
     const label = await page.evaluate(id => studentTermResult(state.students.find(s => s.id === id), getCurrentTerm().id).label, pid);
     assert(label === 'Aggregate 11 · Division I', 'PLE result = ' + label);
@@ -392,6 +401,18 @@ async function tab(page, name, sub) {
     await tab(page, 'academics', 'reportcards');
     await page.selectOption('#rcClass', 'S.4');
     await page.fill('#rcNextBegins', '2027-05-24');
+    // Every child is listed with View and Print; the big button says what it prints.
+    assert(await page.textContent('#rcPrintBtn') === 'Print all 2 report cards for S.4', 'button: ' + await page.textContent('#rcPrintBtn'));
+    const listed = (await page.textContent('#rcList')).replace(/\s+/g, ' ');
+    assert(/Mugisha Brian/.test(listed) && /Nakato Sarah/.test(listed), 'list: ' + listed);
+    await page.click(`#rcList [data-act="previewReport"][data-id="${secondId}"]`);
+    await page.waitForSelector('.modal .report-card');
+    const shown = await page.textContent('.modal .report-card');
+    assert(/Mugisha Brian/.test(shown) && !/Nakato Sarah/.test(shown) && /2027-05-24/.test(shown), 'preview is not that child\'s card');
+    await page.click('.modal [data-modal-close]');
+    await page.click(`#rcList [data-act="reportCard"][data-id="${secondId}"]`);
+    await page.waitForTimeout(150);
+    assert(await page.$$eval('#printArea .report-card', n => n.length) === 1 && /Mugisha Brian/.test(await page.textContent('#printArea')), 'Print did not print just that child');
     await page.click('#rcPrintBtn');
     await page.waitForTimeout(150);
     const cards = await page.$$eval('#printArea .report-card', n => n.length);
@@ -645,11 +666,11 @@ async function tab(page, name, sub) {
     await tab(page, 'register');
     const classes = await page.$$eval('#regClass option', o => o.map(x => x.value).filter(Boolean));
     assert(JSON.stringify(classes) === '["S.4"]', 'teacher classes ' + JSON.stringify(classes));
-    const learners = await page.$$eval('#academicStudent option', o => o.map(x => x.textContent).filter(t => t !== 'Choose…'));
-    assert(learners.length && learners.every(t => /S\.4/.test(t)), 'teacher sees other classes: ' + learners.join(' | '));
     await tab(page, 'academics');
+    const markClasses = await page.$$eval('#msClass option', o => o.map(x => x.value).filter(Boolean));
+    assert(JSON.stringify(markClasses) === '["S.4"]', 'teacher can enter marks for other classes: ' + JSON.stringify(markClasses));
     const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.dataset.sub));
-    assert(JSON.stringify(subs) === '["marks","marksheet","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
+    assert(JSON.stringify(subs) === '["marks","results","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
   });
 
   /* ───────────────────────── Migration from v4 ───────────────────────── */
