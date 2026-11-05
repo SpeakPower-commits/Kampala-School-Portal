@@ -1234,7 +1234,7 @@ const TAB_LABELS = {
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
   directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
-  register: [['daily', 'Take register'], ['recent', 'Who was absent']],
+  register: [['daily', 'Take register'], ['recent', 'Who was absent'], ['sheet', 'Term sheet']],
   academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],

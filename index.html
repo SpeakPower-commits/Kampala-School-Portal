@@ -175,7 +175,7 @@
       </div>
     </section>
 
-    <!-- ATTENDANCE: take register · who was absent -->
+    <!-- ATTENDANCE: take register · who was absent · term sheet -->
     <section id="panel-register" class="panel">
       <div class="card card-pad" data-sub="daily">
         <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.</p></div>
@@ -200,6 +200,16 @@
         </div>
         <div id="absTop" style="margin-top:12px"></div>
         <div id="absenceList" style="margin-top:4px"></div>
+      </div>
+      <div class="card card-pad" data-sub="sheet">
+        <div class="card-head"><div><div class="card-title">Term attendance sheet</div><p class="card-desc">Like the paper register: one line per child, one column per day a register was taken, with each child's totals.</p></div>
+          <button class="btn btn-outline btn-sm" id="tsPrintBtn" type="button">Print</button></div>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="tsClass">Class</label><select class="input" id="tsClass"></select></div>
+          <div id="tsStreamWrap"><label class="form-label" for="tsStream">Stream</label><select class="input" id="tsStream"></select></div>
+          <div><label class="form-label" for="tsMonth">Period</label><select class="input" id="tsMonth"></select></div>
+        </div>
+        <div id="termSheet" style="margin-top:12px"></div>
       </div>
     </section>
 

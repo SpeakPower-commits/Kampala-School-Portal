@@ -486,6 +486,22 @@ details.disclosure .disclosure-body { padding: 15px; }
 .abs-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
 .abs-names { margin-top: 6px; line-height: 1.7; }
 .abs-label { font-weight: 700; margin-right: 2px; }
+/* Term attendance sheet: the class as on the paper register */
+.ts-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.ts { width: auto; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.ts th, .ts td { padding: 6px 7px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.ts thead th { background: var(--panel-soft); font-size: 11px; font-weight: 700; text-transform: none; letter-spacing: 0; line-height: 1.25; color: var(--muted); }
+.ts .ts-name { position: sticky; left: 0; z-index: 1; background: #fff; text-align: left; min-width: 128px; border-right: 1px solid var(--line); }
+.ts thead .ts-name, .ts tfoot .ts-name { background: var(--panel-soft); }
+.ts tbody tr:hover td { background: inherit; }
+.ts .ts-P { color: var(--success); }
+.ts .ts-A { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
+.ts .ts-L { color: var(--warn); font-weight: 700; }
+.ts .ts-E { color: #1e3a8a; }
+.ts .ts-none { color: var(--faint); }
+.ts .ts-tot { font-weight: 700; border-left: 1px solid var(--line); }
+.ts tr.ts-low .ts-name { box-shadow: inset 4px 0 0 var(--danger); }
+.ts tfoot td { background: var(--panel-soft); font-weight: 700; border-bottom: none; }
 /* The learner page (one child: details, attendance, marks, fees, sports) */
 .lp-tabs { margin: 0 0 14px; }
 .lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }
@@ -555,6 +571,11 @@ details.disclosure .disclosure-body { padding: 15px; }
   #authScreen, .topbar, .navbar, #sessionBar, #toastHost, .no-print, .modal-overlay { display: none !important; }
   #appShell, #appShell .main { display: block !important; }
   .panel { display: none !important; }
+  /* The term sheet on paper: no sideways scrolling, smaller cells */
+  .ts-wrap { overflow: visible; border: none; }
+  .ts { font-size: 9px; }
+  .ts th, .ts td { padding: 3px 4px; border: 1px solid #999; }
+  .ts .ts-name { position: static; min-width: 0; }
   #printArea { display: block !important; }
   @page { margin: 12mm; }
   .report-card { page-break-after: always; break-after: page; }

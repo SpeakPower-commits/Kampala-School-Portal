@@ -9,6 +9,8 @@
    Screens (Attendance module):
      Take register   — tap Absent, Late or Excused; a running line names them.
      Who was absent  — every register taken, with the children's names.
+     Term sheet      — the class as on the paper register: a line per child,
+                       a column per day, totals per child and per day.
    The dashboard names the children absent today.
    ========================================================================= */
 'use strict';
@@ -207,6 +209,98 @@ function renderAbsenceList() {
   }).join('') : '<div class="empty">No registers were taken in these dates.</div>';
 }
 
+/* ── Term sheet: the class register as on paper ─────────────────────────── */
+/* stream: a stream name, '' for a class without streams (or no stream), '*' for all. */
+function termSheetData(cls, stream, from, to) {
+  const learners = visibleStudents().filter(s => s.class === cls && (stream === '*' || (s.stream || '') === stream)).sort((a, b) => a.name.localeCompare(b.name));
+  const ids = new Set(learners.map(s => s.id));
+  const cell = {}, dates = new Set();
+  (state.registers || []).filter(r => r.class === cls && (!from || r.date >= from) && (!to || r.date <= to)).forEach(r => {
+    const at = r.updatedAt || r.createdAt || '';
+    (r.records || []).forEach(x => {
+      if (!ids.has(x.studentId)) return;
+      const m = cell[x.studentId] = cell[x.studentId] || {};
+      if (!m[r.date] || at >= m[r.date].at) m[r.date] = { status: x.status, at };
+      dates.add(r.date);
+    });
+  });
+  return { learners, dates: [...dates].sort(), cell };
+}
+const monthLabel = ym => `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+/* The months of this term that have registers for the class, and this month. */
+function termSheetMonths(cls) {
+  const t = getCurrentTerm();
+  const regs = (state.registers || []).filter(r => r.class === cls && (!t || !t.startDate || r.date >= t.startDate) && (!t || !t.endDate || r.date <= t.endDate));
+  return [...new Set(regs.map(r => r.date.slice(0, 7)).concat(todayISO().slice(0, 7)))].sort();
+}
+function termSheetTable(d, print) {
+  const sym = { P: '✓', A: '✗', L: 'L', E: 'E' };
+  const months = new Set(d.dates.map(x => x.slice(0, 7)));
+  const head = d.dates.map(x => {
+    const dt = new Date(x + 'T00:00:00Z');
+    return `<th class="ts-c">${DAY_NAMES[dt.getUTCDay()].slice(0, 2)}<br>${dt.getUTCDate()}${months.size > 1 ? ' ' + MONTH_NAMES[dt.getUTCMonth()] : ''}</th>`;
+  }).join('');
+  const rows = d.learners.map(s => {
+    const m = d.cell[s.id] || {};
+    let present = 0, absent = 0, days = 0;
+    const cells = d.dates.map(x => {
+      const c = m[x];
+      if (!c) return '<td class="ts-c ts-none">·</td>';
+      days++;
+      if (c.status === 'A') absent++; else if (c.status !== 'E') present++;
+      return `<td class="ts-c ts-${escapeHtml(c.status)}">${sym[c.status] || ''}</td>`;
+    }).join('');
+    const rate = days ? Math.round(present * 100 / days) : 0;
+    return `<tr class="${days && rate < 80 ? 'ts-low' : ''}"><td class="ts-name">${print ? escapeHtml(s.name) : learnerLink(s.id, s.name)}</td>${cells}<td class="ts-tot">${present}</td><td class="ts-tot${absent ? ' t-bad' : ''}">${absent}</td><td class="ts-tot">${days ? rate + '%' : '—'}</td></tr>`;
+  }).join('');
+  const foot = d.dates.map(x => {
+    const n = d.learners.filter(s => (d.cell[s.id] || {})[x] && d.cell[s.id][x].status === 'A').length;
+    return `<td class="ts-c${n ? ' t-bad' : ''}">${n || ''}</td>`;
+  }).join('');
+  return `<div class="ts-wrap"><table class="ts"><thead><tr><th class="ts-name">Learner</th>${head}<th class="ts-tot">Present</th><th class="ts-tot">Absent</th><th class="ts-tot">Rate</th></tr></thead>
+    <tbody>${rows}</tbody><tfoot><tr><td class="ts-name">Absent that day</td>${foot}<td class="ts-tot" colspan="3"></td></tr></tfoot></table></div>
+    <p class="card-desc" style="margin-top:8px">✓ present · ✗ absent · L late (counts as present) · E excused · a grey dot means no register for that child that day. A red edge marks a child present on fewer than 80% of the days.</p>`;
+}
+/* What the term sheet shows now: the chosen class, stream and period. */
+function termSheetChoice() {
+  const cls = el('tsClass') ? el('tsClass').value : '';
+  const streams = streamsFor(cls);
+  const sv = el('tsStream') ? el('tsStream').value : '';
+  const stream = !streams.length ? '' : sv === '*' ? '*' : sv === '-' ? '' : sv;
+  const t = getCurrentTerm();
+  const per = el('tsMonth') ? el('tsMonth').value : '';
+  const range = per === 'term' || !per
+    ? { from: (t && t.startDate) || '', to: (t && t.endDate) || '', period: t ? termLabel(t) : 'this term' }
+    : { from: per + '-01', to: per + '-31', period: monthLabel(per) };
+  return { cls, stream, label: cls + (stream === '*' ? ' (all streams)' : stream ? ' ' + stream : ''), ...range };
+}
+function renderTermSheet() {
+  const box = el('termSheet'); if (!box) return;
+  fillSelect('tsClass', '<option value="">Choose class…</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const cls = el('tsClass').value;
+  const streams = streamsFor(cls);
+  const unstreamed = streams.length && visibleStudents().some(s => s.class === cls && !s.stream);
+  fillSelect('tsStream', streams.map(x => `<option>${escapeHtml(x)}</option>`).join('')
+    + (streams.length ? '<option value="*">All streams</option>' : '') + (unstreamed ? '<option value="-">No stream</option>' : ''));
+  el('tsStreamWrap').style.display = streams.length ? '' : 'none';
+  const months = cls ? termSheetMonths(cls) : [todayISO().slice(0, 7)];
+  const sel = el('tsMonth');
+  fillSelect('tsMonth', months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('') + '<option value="term">Whole term</option>');
+  if (!sel.dataset.chosen && months.includes(todayISO().slice(0, 7))) sel.value = todayISO().slice(0, 7);
+  if (!cls) { box.innerHTML = '<div class="empty">Choose a class to see its attendance sheet.</div>'; return; }
+  const c = termSheetChoice();
+  const d = termSheetData(c.cls, c.stream, c.from, c.to);
+  if (!d.learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; return; }
+  box.innerHTML = d.dates.length ? termSheetTable(d, false) : `<div class="empty">No registers were taken for ${escapeHtml(c.label)} in ${escapeHtml(c.period)}.</div>`;
+}
+function printTermSheet() {
+  const c = termSheetChoice();
+  if (!c.cls) return toast('Choose a class first.', 'error');
+  const d = termSheetData(c.cls, c.stream, c.from, c.to);
+  if (!d.dates.length) return toast('There are no registers to print for these choices.', 'error');
+  printDoc('<style>@page { size: A4 landscape; margin: 10mm; }</style>' + docHeader(`Class attendance — ${escapeHtml(c.label)} — ${escapeHtml(c.period)}`) + termSheetTable(d, true));
+}
+
 /* ── Dashboard: today's registers, with the names of absent children ───── */
 function renderAttendanceToday() {
   const box = el('attTodayBody'); if (!box) return;
@@ -281,6 +375,9 @@ MODULES.push({
       setRowStatus(b.closest('.reg-row'), b.dataset.setStatus);
     });
     ['absClass', 'absFrom', 'absTo'].forEach(id => on(id, 'change', renderAbsenceList));
+    ['tsClass', 'tsStream'].forEach(id => on(id, 'change', renderTermSheet));
+    on('tsMonth', 'change', () => { el('tsMonth').dataset.chosen = '1'; renderTermSheet(); });
+    on('tsPrintBtn', 'click', printTermSheet);
   },
-  render() { renderRegisterControls(); renderAbsenceList(); renderAttendanceToday(); },
+  render() { renderRegisterControls(); renderAbsenceList(); renderTermSheet(); renderAttendanceToday(); },
 });

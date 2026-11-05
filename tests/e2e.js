@@ -454,6 +454,18 @@ async function tab(page, name, sub) {
     assert(st === 'A', 'the saved status is not shown: ' + st);
   });
 
+  await step('the term sheet shows each child by day, like the paper register, with totals', async () => {
+    await tab(page, 'register', 'sheet');
+    await page.selectOption('#tsClass', 'S.4');
+    const rows = await page.$$eval('#termSheet .ts tbody tr', trs => trs.map(tr => [...tr.cells].map(td => td.textContent.trim())));
+    const brian = rows.find(r => r[0] === 'Mugisha Brian');
+    assert(rows.length === 2 && brian, 'rows: ' + JSON.stringify(rows));
+    // name, today's cell, present, absent, rate
+    assert(JSON.stringify(brian) === '["Mugisha Brian","✗","0","1","0%"]', 'Brian: ' + JSON.stringify(brian));
+    assert(await page.$eval('#termSheet tfoot tr', tr => tr.cells[1].textContent.trim()) === '1', 'absent-that-day total');
+    assert(await page.$eval(`#termSheet .ts tbody tr:has-text("Mugisha Brian")`, tr => tr.classList.contains('ts-low')), 'low attendance not marked');
+  });
+
   await step("a child's name opens their learner page, with the dates absent", async () => {
     await tab(page, 'register', 'recent');
     await page.click(`#absenceList [data-act="learner"][data-id="${secondId}"]`);
