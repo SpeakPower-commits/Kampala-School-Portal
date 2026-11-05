@@ -73,14 +73,16 @@ const LEARNER_HTML = {
     const r = studentTermResult(s, termId);
     const p = classPositions(termId, s.class)[s.id];
     const cell = v => v === null || v === undefined ? '<span class="t-muted">—</span>' : v;
+    // Only the exams that were sat (BOT, MOT, EOT), so the table fits a phone.
+    const sets = ['BOT', 'MOT', 'EOT'].filter(k => r.results.some(x => x[k] !== null && x[k] !== undefined));
     return `<p class="card-desc" style="margin:0 0 10px">${escapeHtml(termLabel(termById(termId)))}</p>
       <div class="grid lp-tiles">
         ${lpTile('Average', r.avg + '%')}
         ${lpTile('Result', escapeHtml(r.label))}
         ${lpTile('Position in class', p ? `${ordinal(p.pos)} <span class="card-desc">of ${p.of}</span>` : '—')}
       </div>
-      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Subject</th><th class="t-center">BOT</th><th class="t-center">MOT</th><th class="t-center">EOT</th><th class="t-center">Final</th><th class="t-center">Grade</th></tr></thead><tbody>
-      ${r.results.map(x => `<tr><td>${escapeHtml(x.subject)}</td><td class="t-center">${cell(x.BOT)}</td><td class="t-center">${cell(x.MOT)}</td><td class="t-center">${cell(x.EOT)}</td><td class="t-center" style="font-weight:700">${x.final}</td><td class="t-center" style="font-weight:700;color:var(--brand)">${escapeHtml(x.grade)}</td></tr>`).join('')}
+      <div class="table-wrap" style="margin-top:12px"><table class="lp-marks"><thead><tr><th>Subject</th>${sets.map(k => `<th class="t-center">${k}</th>`).join('')}<th class="t-center">Final</th><th class="t-center">Grade</th></tr></thead><tbody>
+      ${r.results.map(x => `<tr><td>${escapeHtml(x.subject)}</td>${sets.map(k => `<td class="t-center">${cell(x[k])}</td>`).join('')}<td class="t-center" style="font-weight:700">${x.final}</td><td class="t-center" style="font-weight:700;color:var(--brand)">${escapeHtml(x.grade)}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="toolbar" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" type="button" data-act="previewReport" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}" data-back="1">View report card</button>
@@ -100,7 +102,8 @@ const LEARNER_HTML = {
       </div>
       <div class="form-label" style="margin-top:14px">Recent payments</div>
       ${pays.length ? `<div class="lp-rows">${pays.map(p => lpRow(escapeHtml(fmtDay(p.date)), `${fmtMoney(p.amount)} <span class="card-desc">· ${escapeHtml(p.method || '')}${p.reference ? ' · ' + escapeHtml(p.reference) : ''}</span>`)).join('')}</div>` : '<p class="card-desc">No payments yet.</p>'}
-      <div class="toolbar" style="margin-top:12px">${record}<button class="btn btn-outline btn-sm" type="button" data-act="feeReceipt" data-id="${escapeHtml(s.id)}">Print fee statement</button></div>`;
+      <div class="toolbar" style="margin-top:12px">${record}<button class="btn btn-outline btn-sm" type="button" data-act="feeReceipt" data-id="${escapeHtml(s.id)}">Print fee statement</button>
+        ${a.balance > 0 ? `<button class="btn btn-outline btn-sm" type="button" data-act="smsBalance" data-id="${escapeHtml(s.id)}">SMS reminder</button><button class="btn btn-outline btn-sm" type="button" data-act="waBalance" data-id="${escapeHtml(s.id)}">WhatsApp reminder</button>` : ''}</div>`;
   },
 
   sports(s) {

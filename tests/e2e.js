@@ -240,8 +240,13 @@ async function classResults(page, cls) {
   await step('report card prints with school name and result', async () => {
     await tab(page, 'directory', 'list');
     await page.evaluate(() => { window.print = () => {}; });
-    await page.click('#studentTableBody button[data-act="reportCard"]');
+    // Open the learner from the list, then Marks → Print report card.
+    await page.click('#studentTableBody button[data-act="learner"]');
+    await page.waitForSelector('.modal #learnerBody');
+    await page.click('.modal [data-lsec="marks"]');
+    await page.click('.modal [data-act="reportCard"]');
     await page.waitForTimeout(150);
+    await page.click('.modal [data-modal-close]');
     const doc = await page.textContent('#printArea');
     assert(/NAKAWA PROGRESSIVE ACADEMY/i.test(doc), 'report card missing school name');
     assert(/competency|Aggregate/i.test(doc), 'report card missing academic result');
@@ -448,19 +453,19 @@ async function classResults(page, cls) {
     assert(/Absent today\s*S\.4:\s*Mugisha Brian/.test(text), 'absent child not named: ' + text);
   });
 
-  await step("What's new opens the right sub-tab and stays hidden once dismissed", async () => {
-    assert(await page.isVisible('#whatsNewCard'), "What's new not shown");
-    const items = await page.$$eval('#whatsNewList [data-to]', bs => bs.map(b => b.dataset.to));
-    for (const to of ['register/daily', 'payments/terms', 'payments/bursaries', 'admin/staff']) assert(items.includes(to), `missing ${to} in ${items.join(' ')}`);
-    await page.click('#whatsNewList [data-to="payments/terms"]');
-    assert(await page.isVisible('#termMgmtCard') && !(await page.isVisible('#recPaymentCard')), 'did not land on Fees → Terms');
-    const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
-    assert(active === 'Terms & fee structures', 'active sub-tab: ' + active);
+  await step("Today's jobs open the right screens", async () => {
     await tab(page, 'overview');
-    await page.click('[data-act="dismissWhatsNew"]');
-    await page.reload({ waitUntil: 'networkidle' });
-    await page.waitForSelector('#appShell', { state: 'visible' });
-    assert(await page.isVisible('#attTodayCard') && !(await page.isVisible('#whatsNewCard')), "What's new came back after a reload");
+    assert(await page.isVisible('#jobsCard'), "Today's jobs not shown");
+    const jobs = await page.$$eval('#jobsList .job', bs => bs.map(b => b.dataset.to || 'act:' + b.dataset.act));
+    for (const to of ['register/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    await page.click('#jobsList [data-to="academics/reportcards"]');
+    assert(await page.isVisible('#rcList') && !(await page.isVisible('#markSheetRoster')), 'did not land on Academics → Report cards');
+    const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
+    assert(active === 'Report cards', 'active sub-tab: ' + active);
+    await tab(page, 'overview');
+    await page.click('#jobsList [data-act="absentToday"]');
+    const today = await page.evaluate(() => todayISO());
+    assert(await page.isVisible('#absenceList') && await page.inputValue('#absFrom') === today && await page.inputValue('#absTo') === today, 'Who is absent today did not open on today');
   });
 
   await step('Who was absent names the child, and "Change this register" opens that register', async () => {

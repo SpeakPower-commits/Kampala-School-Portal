@@ -272,13 +272,12 @@ textarea.input { resize: vertical; min-height: 62px; }
 .p-foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0; }
 .p-report { overflow-x: auto; }
 
-/* What's new (dashboard) */
-.whats-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
-.wn-item { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; }
-.wn-where { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--brand); }
-.wn-title { font-size: 13.5px; font-weight: 700; color: var(--ink); }
-.wn-desc { font-size: 12.5px; color: var(--muted); flex: 1; }
-.wn-item .btn { align-self: flex-start; margin-top: 4px; }
+/* Today's jobs (dashboard): the everyday tasks, one tap each */
+.jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.job { display: flex; flex-direction: column; gap: 3px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; cursor: pointer; font-family: var(--sans); }
+.job:hover, .job:focus-visible { border-color: var(--brand); background: #fff; }
+.job-label { font-size: 14px; font-weight: 700; color: var(--brand); }
+.job-hint { font-size: 12.5px; color: var(--muted); }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .page-head { margin-bottom: 18px; }
@@ -518,6 +517,8 @@ details.disclosure .disclosure-body { padding: 15px; }
 .lp-row:last-child { border-bottom: none; }
 .lp-label { color: var(--muted); font-weight: 600; }
 .lp-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.lp-tiles .stat-value { font-size: 18px; line-height: 1.3; }
+.lp-marks th, .lp-marks td { padding: 9px 8px; }
 
 /* School colour swatches */
 .swatch { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px 6px 7px; border: 1px solid var(--line); border-radius: 20px; font-size: 12.5px; cursor: pointer; }
@@ -550,13 +551,9 @@ details.disclosure .disclosure-body { padding: 15px; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .modal-foot { justify-content: stretch; }
   .modal-foot .btn { flex: 1; }
-  /* What's new as a compact list, so today's attendance is not pushed off screen */
-  .whats-new { gap: 8px; }
-  .wn-item { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 10px 12px; }
-  .wn-where { width: 100%; }
-  .wn-title { flex: 1; }
-  .wn-desc { display: none; }
-  .wn-item .btn { margin-top: 0; }
+  /* Today's jobs two to a row on a phone */
+  .jobs { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .job { padding: 10px 11px; }
   /* A report card on a phone screen: tighter marks table, and no blank
      "Initials" column (that is for pen on the printed copy). Print is unchanged. */
   .modal .rc-marks .rc-ini { display: none; }

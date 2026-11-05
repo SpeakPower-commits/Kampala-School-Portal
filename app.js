@@ -495,7 +495,7 @@ function renderAll() {
   guard(renderSquadsGrid);
   guard(renderAthleteProfiles);
   guard(renderNotices);
-  guard(renderWhatsNew);
+  guard(renderTodaysJobs);
   if (can('canManageUsers')) { guard(renderUsersList); guard(renderAuditLog); }
   if (can('canManageSettings')) guard(renderSettingsForm);
   MODULES.forEach(m => { if (m.render) guard(m.render); });
@@ -592,8 +592,8 @@ function renderStudentTable() {
       const board = s.boardingStatus === 'Boarding' ? '<span class="badge badge-purple">Boarding</span>' : s.boardingStatus === 'Weekly' ? '<span class="badge badge-info">Weekly</span>' : '<span class="badge badge-neutral">Day</span>';
       const bursaryTag = (s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '') + (acct.arrears > 0 ? `<div class="card-desc" style="color:var(--danger)">+${fmtMoney(acct.arrears)} arrears</div>` : '');
       const senTag = s.senFlag ? `<div class="card-desc" style="color:#6d28d9">SEN: ${escapeHtml(s.senFlag)}</div>` : '';
-      const editBtn = can('canEditStudents') ? `<button class="btn-icon" title="Edit" data-act="editStudent" data-id="${escapeHtml(s.id)}">${icon('edit', 15)}</button>` : '';
-      const delBtn = can('canDeleteStudents') ? `<button class="btn-icon" title="Remove" data-act="deleteStudent" data-id="${escapeHtml(s.id)}">${icon('trash', 15)}</button>` : '';
+      const editBtn = can('canEditStudents') ? `<button class="btn btn-outline btn-xs" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit</button>` : '';
+      const delBtn = can('canDeleteStudents') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteStudent" data-id="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">Remove</button>` : '';
       return `<tr>
         <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
         <td style="font-weight:600">${learnerLink(s.id, s.name)}${senTag}</td>
@@ -606,9 +606,7 @@ function renderStudentTable() {
         <td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(paid)}</td>
         <td>${status}</td>
         <td><div class="row-actions">
-          <button class="btn-icon" title="Report card" data-act="reportCard" data-id="${escapeHtml(s.id)}">${icon('file', 15)}</button>
-          <button class="btn-icon" title="Fee receipt" data-act="feeReceipt" data-id="${escapeHtml(s.id)}">${icon('printer', 15)}</button>
-          <button class="btn-icon" title="SMS guardian" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 15)}</button>
+          <button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>
           ${editBtn}${delBtn}
         </div></td>
       </tr>`;
@@ -1361,39 +1359,33 @@ function showSub(tab, sub) {
   MODULES.forEach(m => { if (m.onSub) { try { m.onSub(tab, chosen); } catch (err) { console.error(err); } } });
 }
 
-/* ── What's new (dashboard) ────────────────────────────────────────────── */
-/* Points directors at the capabilities added in this release. Hiding it is
-   remembered on this device only. */
-const WHATS_NEW_RELEASE = '2026-11';
-const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
-const WHATS_NEW = [
-  ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
-  ['academics/marks', 'Academics', 'Enter marks', "Choose the class and the subject, then type every child's score on one screen."],
-  ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
-  ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
-  ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
-  ['payments/bursaries', 'Fees', 'Bursaries for any learner', 'Needs-based, staff, academic or sports bursaries. The bill adjusts itself.'],
-  ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
-  ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
-  ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
-  ['admin/sms', 'Administration', 'SMS to parents', "Fee reminders, absence alerts and notices by SMS through your school's own Africa's Talking account."],,
+/* ── Today's jobs (dashboard) ──────────────────────────────────────────── */
+/* The everyday tasks this person can do, one tap each:
+   [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
+const TODAYS_JOBS = [
+  ['register/daily', "Take today's register", 'Tap the children who are not here', () => can('canMarkRegister')],
+  ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => hasTab('register')],
+  ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
+  ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
+  ['payments/record', 'Record a payment', 'The receipt prints straight away', () => can('canRecordPayment')],
+  ['payments/dashboard', 'Who owes fees', 'Balances, defaulters and reminders', () => hasTab('payments')],
+  ['sports/training', 'Mark training', 'Who came and who missed', () => can('canMarkAttendance')],
+  ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
 ];
-function whatsNewHidden() {
-  try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
-}
-function renderWhatsNew() {
-  const card = el('whatsNewCard'), list = el('whatsNewList');
+function renderTodaysJobs() {
+  const card = el('jobsCard'), list = el('jobsList');
   if (!card || !list) return;
-  const items = WHATS_NEW.filter(([to]) => { const [tab, sub] = to.split('/'); return hasTab(tab) && allowedSubs(tab).some(s => s[0] === sub); });
-  card.style.display = items.length && !whatsNewHidden() ? '' : 'none';
-  list.innerHTML = items.map(([to, where, title, desc]) => `<div class="wn-item">
-      <div class="wn-where">${escapeHtml(where)}</div><div class="wn-title">${escapeHtml(title)}</div><div class="wn-desc">${escapeHtml(desc)}</div>
-      <button class="btn btn-outline btn-xs" type="button" data-act="goto" data-to="${escapeHtml(to)}">Open ${icon('right', 13)}</button>
-    </div>`).join('');
-}
-function hideWhatsNew() {
-  try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_RELEASE); } catch (_) {}
-  const card = el('whatsNewCard'); if (card) card.style.display = 'none';
+  const jobs = TODAYS_JOBS.filter(([to, , , ok]) => {
+    if (!ok()) return false;
+    if (to.startsWith('act:')) return true;
+    const [tab, sub] = to.split('/');
+    return hasTab(tab) && allowedSubs(tab).some(x => x[0] === sub);
+  });
+  card.style.display = jobs.length ? '' : 'none';
+  list.innerHTML = jobs.map(([to, label, hint]) => {
+    const go = to.startsWith('act:') ? `data-act="${escapeHtml(to.slice(4))}"` : `data-act="goto" data-to="${escapeHtml(to)}"`;
+    return `<button class="job" type="button" ${go}><span class="job-label">${escapeHtml(label)}</span><span class="job-hint">${escapeHtml(hint)}</span></button>`;
+  }).join('');
 }
 
 /* =========================================================================
@@ -1432,7 +1424,6 @@ Object.assign(ACTIONS, {
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
   goto: d => { const [tab, sub] = String(d.to || '').split('/'); switchTab(tab, sub); },
-  dismissWhatsNew: () => hideWhatsNew(),
 });
 function handleDelegatedClick(e) {
   const modalClose = e.target.closest('[data-modal-close]');
