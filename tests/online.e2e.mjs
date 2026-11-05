@@ -349,6 +349,75 @@ try {
     assert(await count('notices', "and audience = 'all'") === 1, 'the notice is not marked for parents');
   });
 
+  // ── The parent portal, as a guardian would use it on their phone ──
+  const pp = await context.newPage();
+  pp.setDefaultTimeout(10000);
+  pp.on('pageerror', e => errors.push('parent pageerror: ' + e.message));
+  pp.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('parent console: ' + m.text()); });
+  const codeAfter = before => { const m = S.smsOutbox.slice(before).find(x => /parent portal code/.test(x.message)); return m && /^(\d{6})/.exec(m.message)[1]; };
+
+  await step('a number the school does not hold gets no sign-in code', async () => {
+    await pp.goto(S.url + '/parent.html');
+    await pp.waitForSelector('#pPhoneForm', { state: 'visible' });
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0700 000 555');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pError', { state: 'visible' });
+    assert(/not on record/.test(await pp.textContent('#pError')), await pp.textContent('#pError'));
+    assert(S.smsOutbox.length === before, 'a stranger was texted');
+  });
+
+  await step('a guardian signs in with an SMS code and sees only their child, with the same balance', async () => {
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0772 123 456');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pCodeForm', { state: 'visible' });
+    const code = codeAfter(before);
+    assert(code && S.smsOutbox.at(-1).to === '+256772123456' && S.smsOutbox.at(-1).from === 'KHILL', JSON.stringify(S.smsOutbox.at(-1)));
+    await pp.fill('#pCode', code === '000000' ? '111111' : '000000');
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pError', { state: 'visible' });
+    assert(/wrong or has expired/.test(await pp.textContent('#pError')), await pp.textContent('#pError'));
+    await pp.fill('#pCode', code);
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    assert(/Nakato Sarah/.test(await pp.textContent('#pChildHead')) && !/Okello/.test(await pp.textContent('body')), 'wrong child shown');
+    assert(/UGX 275,000/.test(await pp.textContent('#pBalance')), 'balance ' + await pp.textContent('#pBalance'));
+  });
+
+  await step('the parent sees the published report card, attendance and notices for parents only', async () => {
+    await S.sql("insert into public.notices (school_id, id, title) values ($1, 'NSTAFF', 'Staff meeting at 4pm')", [school], DIRECTOR);
+    await pp.reload();
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    await pp.click('#pTabs [data-ptab="results"]');
+    const results = await pp.textContent('#pTabBody');
+    assert(/Mathematics/.test(results) && /Position 1st of 1/.test(results), results);
+    await pp.click('[data-act="pReport"]');
+    await pp.waitForSelector('.modal .report-card');
+    const card = await pp.textContent('.modal .report-card');
+    assert(/Nakato Sarah/.test(card) && /Position in class:\s*1st of 1/.test(card) && /UGX 275,000/.test(card), card.slice(0, 300));
+    await pp.click('.modal [data-modal-close]');
+    await pp.click('#pTabs [data-ptab="attendance"]');
+    assert((await pp.textContent('#pAbsent')).trim() === '1', 'absences ' + await pp.textContent('#pAbsent'));
+    await pp.click('#pTabs [data-ptab="notices"]');
+    const notices = await pp.textContent('#pTabBody');
+    assert(/Visiting day is Saturday/.test(notices) && !/Staff meeting/.test(notices), notices);
+  });
+
+  await step('the second guardian signs in too', async () => {
+    await pp.click('#pSignOut');
+    await pp.waitForSelector('#pPhoneForm', { state: 'visible' });
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0701 234 567');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pCodeForm', { state: 'visible' });
+    await pp.fill('#pCode', codeAfter(before));
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    assert(/Nakato Sarah/.test(await pp.textContent('#pChildHead')), 'second guardian did not see the child');
+    await pp.close();
+  });
+
   await step('"Forgot your password?" sends a reset link', async () => {
     await signOut();
     await page.click('#forgotPwdBtn');

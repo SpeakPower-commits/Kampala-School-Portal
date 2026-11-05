@@ -361,8 +361,10 @@ function nextTermFees(s, next) {
 function reportCardHtml(s, termId, opts = {}) {
   const t = termById(termId);
   const r = studentTermResult(s, termId);
-  const pos = classPositions(termId, s.class)[s.id];
-  const streamPos = s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null;
+  // The parent portal holds one child, not the class, so it passes the
+  // positions frozen when the results were published.
+  const pos = opts.position !== undefined ? opts.position : classPositions(termId, s.class)[s.id];
+  const streamPos = opts.streamPosition !== undefined ? opts.streamPosition : (s.stream ? classPositions(termId, s.class, s.stream)[s.id] : null);
   const att = daysPresent(s, t);
   const acct = studentAccount(s);
   const next = nextTermOf(t);

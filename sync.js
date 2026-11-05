@@ -424,6 +424,8 @@ window.SYNC = (function () {
     attach(client) { sb = client; },
     detach() { clearTimeout(timer); timer = null; schoolId = null; role = null; snapshot = null; last = null; lastSettings = null; importing = false; setStatus('idle'); },
     loadSchool,
+    /* Rows in the database's shape → the app's state (also used by the parent portal). */
+    stateFromRows,
     /* For app.js loadState(): the loaded school as JSON, or null before sign-in. */
     read() { return snapshot ? JSON.stringify(snapshot) : null; },
     schedule,
