@@ -56,6 +56,15 @@ const tab = async (name, sub) => {
 };
 const app = fn => page.evaluate(fn);
 const saved = async () => { const r = await page.evaluate(() => SYNC.flush()); assert(r.ok, 'not saved: ' + r.error); };
+// Poll the database (from the test, not the page) until a check comes true.
+async function eventually(check, timeout = 5000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    if (await check()) return true;
+    if (Date.now() > end) return false;
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
 // Wait until a check run inside the page comes true. This polls with
 // page.evaluate instead of page.waitForFunction: some Playwright versions run
 // waitForFunction's check as eval inside the page, which the portal's
@@ -116,11 +125,14 @@ try {
     await page.fill('#registerForm input[name="name"]', 'Nakato Sarah');
     await page.selectOption('#classSelect', 'S.4');
     await page.fill('#registerForm input[name="guardian"]', '0772123456');
+    await page.fill('#registerForm input[name="guardian2"]', '0701234567');
     await page.fill('#registerForm input[name="fee"]', '600000');
     await page.selectOption('#registerForm select[name="gender"]', 'Female');
     await page.click('#registerForm button[type="submit"]');
     await saved();
     assert(await count('learners') === 2, 'learners in database: ' + await count('learners'));
+    const g = await one("select guardian_phone, guardian2_phone from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
+    assert(g.guardian_phone === '0772123456' && g.guardian2_phone === '0701234567', 'guardians in database: ' + JSON.stringify(g));
     assert(await count('terms') === 1, 'terms in database: ' + await count('terms'));
     const bill = await one("select total, term_id from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
     assert(bill && Number(bill.total) === 600000 && bill.term_id, 'bill ' + JSON.stringify(bill));
@@ -206,6 +218,21 @@ try {
     assert(inv && inv.role === 'teacher' && JSON.stringify(inv.assigned_classes) === '["S.4"]', 'invite ' + JSON.stringify(inv));
   });
 
+  await step("the director sets up SMS with the school's Africa's Talking account", async () => {
+    await tab('admin', 'sms');
+    await until(() => /SMS is not set up/.test(document.getElementById('smsStatus').textContent));
+    await page.fill('#smsUsername', 'sandbox');
+    await page.fill('#smsApiKey', 'atsk_test_KHS_0001');
+    await page.fill('#smsSender', 'KHILL');
+    await page.check('#smsSandbox');
+    await page.click('#smsSettingsForm button[type="submit"]');
+    await until(() => /SMS is set up/.test(document.getElementById('smsStatus').textContent));
+    assert(/UGX 5,000/.test(await page.textContent('#smsStatus')), 'balance not shown: ' + await page.textContent('#smsStatus'));
+    const row = await one('select at_username, sender_id, key_hint, key_cipher from public.school_sms where school_id = $1', [school]);
+    assert(row && row.at_username === 'sandbox' && row.sender_id === 'KHILL' && row.key_hint === '0001' && !row.key_cipher.includes('atsk_test'), JSON.stringify(row));
+    assert(!(await page.inputValue('#smsApiKey')), 'the key stayed in the form');
+  });
+
   await step('signing out leaves nothing of the school in memory', async () => {
     await signOut();
     assert(await app(() => window.KSA.state().students.length) === 0, 'learners still in memory');
@@ -219,20 +246,35 @@ try {
     await page.click('#suSave');
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
     const names = await app(() => window.KSA.state().students.map(s => s.name));
     assert(JSON.stringify(names) === '["Nakato Sarah"]', 'teacher sees ' + JSON.stringify(names));
     assert(await app(() => window.KSA.state().payments.length + window.KSA.state().invoices.length) === 0, 'teacher received money records');
   });
 
   await step("the teacher's register reaches the database", async () => {
-    await tab('register', 'daily');
+    await tab('directory', 'daily');
     await page.selectOption('#regClass', 'S.4');
+    // Every child must be marked: with nobody marked, nothing is saved.
+    await page.click('#regSaveBtn');
+    await until(() => /not marked yet/.test(document.getElementById('toastHost').textContent));
     await page.click('#registerRoster .reg-row[data-student="KHS/2026/001"] [data-set-status="A"]');
     await page.click('#regSaveBtn');
     await saved();
     const reg = await one("select class, records from public.registers where school_id = $1", [school]);
     assert(reg && reg.class === 'S.4' && reg.records.some(r => r.studentId === 'KHS/2026/001' && r.status === 'A'), 'register ' + JSON.stringify(reg));
+  });
+
+  await step("the teacher texts the absent learner's guardian", async () => {
+    const before = S.smsOutbox.length;
+    await page.click('#registerAbsentees [data-act="smsAbsentees"]');
+    await page.waitForSelector('#smsSend');
+    assert(/1<\/strong> message\b/.test(await page.innerHTML('#smsSummary')), 'summary: ' + await page.textContent('#smsSummary'));
+    await page.click('#smsSend');
+    await until(() => /1 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    assert(sms.length === 1 && sms[0].to === '+256772123456' && sms[0].from === 'KHILL' && /Nakato Sarah \(S\.4\) was absent from school/.test(sms[0].message), JSON.stringify(sms));
   });
 
   await step('the bursar sees money but no marks, and records a payment', async () => {
@@ -252,18 +294,199 @@ try {
     assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
   });
 
-  await step("the bursar's bursary reaches the database and lowers this term's bill", async () => {
+  await step("the bursar's bursary shows the new bill first, waits for the database, and is refused without internet", async () => {
     await tab('payments', 'bursaries');
+    await page.selectOption('#bursaryClass', 'S.4');
     await page.selectOption('#bursaryStudent', 'KHS/2026/001');
     await page.click('#bursarySetBtn');
     await page.fill('#mdInput', '25');
+    const preview = (await page.textContent('#bursaryPreview')).replace(/\s+/g, ' ');
+    assert(/UGX 600,000 → UGX 450,000/.test(preview) && /UGX 150,000 off/.test(preview), 'preview: ' + preview);
     await page.click('#mdOk');
-    await saved();
+    // The "bill is now" message comes only once the database has the change.
+    await until(() => /This term's bill is now UGX 450,000/.test(document.getElementById('toastHost').textContent));
     const l = await one("select bursary_pct from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
     assert(l && Number(l.bursary_pct) === 25, 'bursary in database: ' + JSON.stringify(l));
     const bill = await one("select total from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
     assert(bill && Number(bill.total) === 450000, 'bill in database: ' + JSON.stringify(bill));
-    assert(await count('audit_log', "and action = 'BURSARY_AWARD'") === 1, 'no BURSARY_AWARD audit entry');
+    assert(await eventually(async () => await count('audit_log', "and action = 'BURSARY_AWARD'") === 1), 'no BURSARY_AWARD audit entry');
+    await context.setOffline(true);
+    try {
+      await page.click('#bursarySetBtn');
+      await page.fill('#mdInput', '40');
+      await page.click('#mdOk');
+      await until(() => /needs an internet connection/.test(document.getElementById('toastHost').textContent));
+    } finally { await context.setOffline(false); }
+    assert(await app(() => window.KSA.state().students.find(s => s.id === 'KHS/2026/001').bursaryPct) === 25, 'bursary changed without internet');
+    await saved();
+    const again = await one("select bursary_pct from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
+    assert(Number(again.bursary_pct) === 25, 'bursary in database after the refusal: ' + JSON.stringify(again));
+  });
+
+  await step('the bursar sends fee reminders by SMS to both guardians, with the balance', async () => {
+    const before = S.smsOutbox.length;
+    await tab('payments', 'dashboard');
+    // Who owes, one class at a time: nobody in P.7 owes; in S.4, Nakato Sarah.
+    await page.selectOption('#oweClass', 'P.7');
+    assert(await page.isDisabled('#bulkSmsBtn') && /Nobody in P\.7 owes fees/.test(await page.textContent('#oweSummary')), 'P.7: ' + await page.textContent('#oweSummary'));
+    await page.selectOption('#oweClass', 'S.4');
+    assert((await page.textContent('#bulkSmsBtn')).trim() === 'Text all 1 guardian in S.4', 'button: ' + await page.textContent('#bulkSmsBtn'));
+    await page.click('#bulkSmsBtn');
+    await page.waitForSelector('#smsSend');
+    await page.check('#smsBoth');
+    await until(() => document.getElementById('smsSend').textContent === 'Send 2 SMS' && !document.getElementById('smsSend').disabled);
+    await page.click('#smsSend');
+    await until(() => /2 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    // Bill 450,000 after the 25% bursary; paid 75,000 + 100,000 (the 250,000 was reversed).
+    assert(sms.length === 2 && sms.every(m => /Nakato Sarah \(S\.4\) is UGX 275,000/.test(m.message)), JSON.stringify(sms));
+    assert(JSON.stringify(sms.map(m => m.to).sort()) === '["+256701234567","+256772123456"]', 'numbers ' + sms.map(m => m.to));
+    const camp = await one("select options from public.sms_campaigns where school_id = $1 and kind = 'fees' and status <> 'draft' order by created_at desc limit 1", [school]);
+    assert(camp && camp.options.class === 'S.4', 'the reminders were not limited to S.4: ' + JSON.stringify(camp));
+  });
+
+  await step('the director publishes the term to parents and posts a notice for them by SMS', async () => {
+    await signOut();
+    await signIn(DIRECTOR, 'Director2026');
+    await page.waitForSelector('#appShell', { state: 'visible' });
+    await tab('academics', 'marks');
+    await page.selectOption('#msClass', 'S.4');
+    await page.selectOption('#msSubject', 'Mathematics');
+    await page.fill('#markSheetRoster .ms-score[data-student="KHS/2026/001"]', '82');
+    await page.click('#msSaveBtn');
+    await saved();
+    await tab('academics', 'reportcards');
+    await until(() => /is not published/.test(document.getElementById('publishStatus').textContent));
+    await page.click('#publishBtn');
+    await page.click('#mdOk');
+    await until(() => /is published/.test(document.getElementById('publishStatus').textContent));
+    const r = await one("select position, out_of, result from public.term_results where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(r && r.position === 1 && r.out_of === 1 && r.result, 'published result ' + JSON.stringify(r));
+    assert((await one('select bool_and(results_published) as p from public.terms where school_id = $1', [school])).p === true, 'term not marked published');
+
+    const before = S.smsOutbox.length;
+    await tab('noticeboard');
+    await page.fill('#noticeForm input[name="title"]', 'Visiting day is Saturday');
+    await page.fill('#noticeForm textarea[name="body"]', 'Parents are welcome from 10am.');
+    await page.selectOption('#noticeAudience', 'all');
+    await page.check('#noticeForm input[name="sms"]');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForSelector('#smsSend');
+    await page.click('#smsSend');
+    await until(() => /1 sent/.test(document.getElementById('smsProgressText').textContent));
+    await page.click('#smsCancel');
+    const sms = S.smsOutbox.slice(before);
+    assert(sms.length === 1 && sms[0].message === 'Visiting day is Saturday: Parents are welcome from 10am. - Kampala Hill Primary & Secondary', JSON.stringify(sms));
+    await saved();
+    assert(await count('notices', "and audience = 'all'") === 1, 'the notice is not marked for parents');
+  });
+
+  await step('the SMS log lists the three runs that went out, and not the preview that was changed', async () => {
+    await tab('admin', 'sms');
+    await until(() => document.querySelectorAll('#smsLogBody tr td:nth-child(2)').length === 3);
+    const log = await page.textContent('#smsLogBody');
+    assert(/Notice to guardians/.test(log) && /Fee reminders/.test(log) && /Absence messages · S\.4/.test(log), log);
+    assert(await count('sms_campaigns') === 3, 'runs in the database: ' + await count('sms_campaigns'));
+  });
+
+  await step('a conduct entry reaches the database with its date, what happened and how serious it is', async () => {
+    await tab('conduct');
+    await page.selectOption('#conductClass', 'S.4');
+    await page.selectOption('#conductStudent', 'KHS/2026/001');
+    await page.selectOption('#conductType', 'Detention');
+    const day = await app(() => addDaysISO(todayISO(), -1));
+    await page.fill('#conductDate', day);
+    await page.fill('#conductWhat', 'Missed evening prep');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForSelector('#conductDone', { state: 'visible' });
+    await saved();
+    const c = await one("select occurred_on::text as d, type, severity, reported_by from public.conduct where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(c && c.d === day && c.type === 'Detention' && c.severity === 'Major' && c.reported_by === 'Sarah Namubiru', 'conduct row: ' + JSON.stringify(c));
+  });
+
+  await step("a programme's athletes, chosen by name, reach the database", async () => {
+    await tab('sports', 'programmes');
+    await page.fill('#programForm input[name="name"]', 'Netball A');
+    await page.fill('#programForm input[name="sport"]', 'Netball');
+    await page.click('#programForm button[type="submit"]');
+    await saved();
+    const id = await app(() => window.KSA.state().programs.find(p => p.name === 'Netball A').id);
+    await page.click(`#programsGrid [data-act="programAthletes"][data-id="${id}"]`);
+    await page.check('.modal .pa-tick[value="KHS/2026/001"]');
+    await page.click('#paSave');
+    await saved();
+    const doc = await one("select data from public.school_docs where school_id = $1 and collection = 'programs' and id = $2", [school, id]);
+    assert(doc && JSON.stringify(doc.data.athleteIds) === '["KHS/2026/001"]', JSON.stringify(doc));
+  });
+
+  // ── The parent portal, as a guardian would use it on their phone ──
+  const pp = await context.newPage();
+  pp.setDefaultTimeout(10000);
+  pp.on('pageerror', e => errors.push('parent pageerror: ' + e.message));
+  pp.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('parent console: ' + m.text()); });
+  const codeAfter = before => { const m = S.smsOutbox.slice(before).find(x => /parent portal code/.test(x.message)); return m && /^(\d{6})/.exec(m.message)[1]; };
+
+  await step('a number the school does not hold gets no sign-in code', async () => {
+    await pp.goto(S.url + '/parent.html');
+    await pp.waitForSelector('#pPhoneForm', { state: 'visible' });
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0700 000 555');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pError', { state: 'visible' });
+    assert(/not on record/.test(await pp.textContent('#pError')), await pp.textContent('#pError'));
+    assert(S.smsOutbox.length === before, 'a stranger was texted');
+  });
+
+  await step('a guardian signs in with an SMS code and sees only their child, with the same balance', async () => {
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0772 123 456');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pCodeForm', { state: 'visible' });
+    const code = codeAfter(before);
+    assert(code && S.smsOutbox.at(-1).to === '+256772123456' && S.smsOutbox.at(-1).from === 'KHILL', JSON.stringify(S.smsOutbox.at(-1)));
+    await pp.fill('#pCode', code === '000000' ? '111111' : '000000');
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pError', { state: 'visible' });
+    assert(/wrong or has expired/.test(await pp.textContent('#pError')), await pp.textContent('#pError'));
+    await pp.fill('#pCode', code);
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    assert(/Nakato Sarah/.test(await pp.textContent('#pChildHead')) && !/Okello/.test(await pp.textContent('body')), 'wrong child shown');
+    assert(/UGX 275,000/.test(await pp.textContent('#pBalance')), 'balance ' + await pp.textContent('#pBalance'));
+  });
+
+  await step('the parent sees the published report card, attendance and notices for parents only', async () => {
+    await S.sql("insert into public.notices (school_id, id, title) values ($1, 'NSTAFF', 'Staff meeting at 4pm')", [school], DIRECTOR);
+    await pp.reload();
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    await pp.click('#pTabs [data-ptab="results"]');
+    const results = await pp.textContent('#pTabBody');
+    assert(/Mathematics/.test(results) && /Position 1st of 1/.test(results), results);
+    await pp.click('[data-act="pReport"]');
+    await pp.waitForSelector('.modal .report-card');
+    const card = await pp.textContent('.modal .report-card');
+    assert(/Nakato Sarah/.test(card) && /Position in class:\s*1st of 1/.test(card) && /UGX 275,000/.test(card), card.slice(0, 300));
+    await pp.click('.modal [data-modal-close]');
+    await pp.click('#pTabs [data-ptab="attendance"]');
+    assert((await pp.textContent('#pAbsent')).trim() === '1', 'absences ' + await pp.textContent('#pAbsent'));
+    await pp.click('#pTabs [data-ptab="notices"]');
+    const notices = await pp.textContent('#pTabBody');
+    assert(/Visiting day is Saturday/.test(notices) && !/Staff meeting/.test(notices), notices);
+  });
+
+  await step('the second guardian signs in too', async () => {
+    await pp.click('#pSignOut');
+    await pp.waitForSelector('#pPhoneForm', { state: 'visible' });
+    const before = S.smsOutbox.length;
+    await pp.fill('#pPhone', '0701 234 567');
+    await pp.click('#pSendCode');
+    await pp.waitForSelector('#pCodeForm', { state: 'visible' });
+    await pp.fill('#pCode', codeAfter(before));
+    await pp.click('#pVerify');
+    await pp.waitForSelector('#pChild', { state: 'visible' });
+    assert(/Nakato Sarah/.test(await pp.textContent('#pChildHead')), 'second guardian did not see the child');
+    await pp.close();
   });
 
   await step('"Forgot your password?" sends a reset link', async () => {

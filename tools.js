@@ -38,13 +38,13 @@ function downloadCSV(filename, rows) {
 }
 
 /* ── Learner import ────────────────────────────────────────────────────── */
-const IMPORT_COLUMNS = ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'termly_fee', 'boarding', 'uneb_index', 'special_needs', 'sport', 'opening_balance'];
+const IMPORT_COLUMNS = ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'guardian2_phone', 'termly_fee', 'boarding', 'uneb_index', 'special_needs', 'sport', 'opening_balance'];
 
 function downloadImportTemplate() {
   downloadCSV('learners-import-template.csv', [
     IMPORT_COLUMNS,
-    ['KSA/2026/0001', 'Nakato Sarah', 'S.2', 'East', 'Female', '0772123456', '650000', 'Day', '', '', 'Netball', '0'],
-    ['', 'Okello John', 'P.6', '', 'Male', '0701234567', '450000', 'Boarding', '', '', '', '120000'],
+    ['KSA/2026/0001', 'Nakato Sarah', 'S.2', 'East', 'Female', '0772123456', '0701234567', '650000', 'Day', '', '', 'Netball', '0'],
+    ['', 'Okello John', 'P.6', '', 'Male', '0752345678', '', '450000', 'Boarding', '', '', '', '120000'],
   ]);
 }
 function normaliseClass(v) {
@@ -78,27 +78,35 @@ function validateImport(rows) {
   const missing = ['name', 'class', 'guardian_phone'].filter(c => !header.includes(c));
   if (missing.length) throw new Error('The file is missing these columns: ' + missing.join(', ') + '. Download the template to see the layout.');
   const ids = new Set(state.students.map(s => s.id.toLowerCase()));
+  // The same child: same name, class and guardian's number.
+  const key = (name, cls, phone) => `${String(name).trim().toLowerCase()}|${cls}|${String(phone || '').replace(/\D/g, '').slice(-9)}`;
+  const known = new Map(state.students.map(s => [key(s.name, s.class, s.guardian), s]));
   return rows.slice(1).map((cells, i) => {
     const get = k => { const idx = header.indexOf(k); return idx >= 0 ? String(cells[idx] || '').trim() : ''; };
     const errors = [];
     const rec = {
       admissionNo: get('admission_no'), name: get('name'), class: normaliseClass(get('class')), stream: get('stream'),
-      gender: normaliseGender(get('gender')), guardian: get('guardian_phone'), fee: parseAmount(get('termly_fee')),
+      gender: normaliseGender(get('gender')), guardian: get('guardian_phone'), guardian2: get('guardian2_phone'), fee: parseAmount(get('termly_fee')),
       boardingStatus: normaliseBoarding(get('boarding')), unebIndexNo: get('uneb_index'), senFlag: get('special_needs'),
       sport: get('sport'), opening: parseAmount(get('opening_balance')),
     };
     if (!rec.name) errors.push('name missing');
     if (!CLASS_OPTIONS.includes(rec.class)) errors.push(`class "${get('class')}" not recognised`);
     if (!phoneValid(rec.guardian)) errors.push('guardian phone not a valid Ugandan number');
+    if (rec.guardian2 && !phoneValid(rec.guardian2)) errors.push('second guardian phone not a valid Ugandan number');
     if (rec.gender === null) errors.push('gender must be Male or Female');
     if (rec.boardingStatus === null) errors.push('boarding must be Day, Boarding or Weekly');
     if (rec.fee === null) errors.push('termly fee is not a number');
     if (rec.opening === null) errors.push('opening balance is not a number');
+    const k = key(rec.name, rec.class, rec.guardian);
+    const already = rec.name && known.get(k);
+    if (already) return { line: i + 2, rec, errors: [], already };
     if (rec.admissionNo) {
       if (!ADMISSION_RE.test(rec.admissionNo)) errors.push('admission no. has invalid characters');
       else if (ids.has(rec.admissionNo.toLowerCase())) errors.push('admission no. already used');
       else ids.add(rec.admissionNo.toLowerCase());
     }
+    if (!errors.length) known.set(k, { name: rec.name, id: '(earlier in this file)' });
     return { line: i + 2, rec, errors };
   });
 }
@@ -112,18 +120,21 @@ function importLearnersFile(file) {
       if (rows.length < 2) return toast('The file has no learner rows.', 'error');
       checked = validateImport(rows);
     } catch (err) { return toast(err.message || 'Could not read that file.', 'error'); }
-    const good = checked.filter(r => !r.errors.length);
+    const good = checked.filter(r => !r.errors.length && !r.already);
     const bad = checked.filter(r => r.errors.length);
+    const known = checked.filter(r => r.already);
+    const who = r => `${escapeHtml(r.rec.name || '(no name)')} <span class="card-desc">· ${escapeHtml(r.rec.class || '?')}${r.rec.stream ? ' ' + escapeHtml(r.rec.stream) : ''} · line ${r.line}</span>`;
+    const block = (title, cls, rows, extra) => rows.length ? `<div class="form-label ${cls}" style="margin-top:12px">${title} (${rows.length})</div>
+      <div class="scroll-box" style="max-height:220px">${rows.slice(0, 300).map(r => `<div class="roster-item"><div>${who(r)}${extra ? `<div class="card-desc ${cls}">${extra(r)}</div>` : ''}</div></div>`).join('')}</div>` : '';
     openModal({
-      title: 'Import learners', wide: true,
-      bodyHtml: `<div class="banner ${bad.length ? 'banner-warn' : 'banner-success'}" style="margin-bottom:12px">${icon(bad.length ? 'alert' : 'check')}<span><strong>${good.length}</strong> ready to import${bad.length ? ` · <strong>${bad.length}</strong> with problems (skipped — fix them in the file and import again)` : ''}.</span></div>
-        <div class="table-wrap" style="max-height:380px;overflow:auto"><table><thead><tr><th>Line</th><th>Name</th><th>Class</th><th>Guardian</th><th class="t-num">Fee</th><th class="t-num">Opening bal.</th><th>Status</th></tr></thead><tbody>
-        ${checked.slice(0, 300).map(r => `<tr><td class="t-muted">${r.line}</td><td>${escapeHtml(r.rec.name)}</td><td>${escapeHtml(r.rec.class)}${r.rec.stream ? ' ' + escapeHtml(r.rec.stream) : ''}</td><td>${escapeHtml(r.rec.guardian)}</td><td class="t-num">${r.rec.fee === null ? '—' : fmtMoney(r.rec.fee)}</td><td class="t-num">${r.rec.opening ? fmtMoney(r.rec.opening) : '—'}</td>
-          <td>${r.errors.length ? `<span class="badge badge-danger">${escapeHtml(r.errors.join('; '))}</span>` : '<span class="badge badge-success">OK</span>'}</td></tr>`).join('')}
-        </tbody></table></div>`,
+      title: 'Import from Excel', wide: true,
+      bodyHtml: `<div class="banner ${bad.length ? 'banner-warn' : 'banner-success'}" style="margin-bottom:4px">${icon(bad.length ? 'alert' : 'check')}<span><strong>${good.length}</strong> ready to import${known.length ? ` · <strong>${known.length}</strong> already in the school (skipped)` : ''}${bad.length ? ` · <strong>${bad.length}</strong> with problems (skipped: fix them in the file and import it again)` : ''}.</span></div>
+        ${block('Ready to import', 't-ok', good)}
+        ${block('Problems: fix these lines in the file', 't-bad', bad, r => escapeHtml(r.errors.join('; ')))}
+        ${block('Already in the school', 'card-desc', known, r => `as ${escapeHtml(r.already.name)} (${escapeHtml(r.already.id)})`)}`,
       footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="importGo" ${good.length ? '' : 'disabled'}>Import ${good.length} learner${good.length === 1 ? '' : 's'}</button>`,
       onOpen(root) {
-        root.querySelector('#importGo').addEventListener('click', () => { commitImport(good.map(r => r.rec)); closeModal(); });
+        root.querySelector('#importGo').addEventListener('click', () => { closeModal(); commitImport(good.map(r => r.rec)); });
       },
     });
   };
@@ -131,10 +142,10 @@ function importLearnersFile(file) {
 }
 function commitImport(recs) {
   recs.forEach(r => {
-    const id = r.admissionNo || 'S' + uid().slice(0, 6);
+    const id = r.admissionNo || newLearnerId();
     const s = {
       id, name: r.name, class: r.class, stream: r.stream, level: classifyLevel(r.class), combination: '',
-      guardian: r.guardian, fee: r.fee || 0, paid: 0, sport: r.sport, skillLevel: '', gender: r.gender || '',
+      guardian: r.guardian, guardian2: r.guardian2 || '', fee: r.fee || 0, paid: 0, sport: r.sport, skillLevel: '', gender: r.gender || '',
       boardingStatus: r.boardingStatus, unebIndexNo: r.unebIndexNo, senFlag: r.senFlag,
       performanceNotes: [], academics: [], bursaryPct: 0, feeComponents: [], injuryLog: [], athleteProfile: {}, comments: {},
       createdAt: todayISO(),
@@ -150,18 +161,25 @@ function commitImport(recs) {
   recomputePaid(); saveState(); renderAll();
   AUTH.audit('STUDENT_IMPORT', `${recs.length} learners`);
   toast(`Imported ${recs.length} learner${recs.length === 1 ? '' : 's'}.`, 'success');
+  const added = state.students.slice(-recs.length);
+  openModal({
+    title: `Imported ${recs.length} learner${recs.length === 1 ? '' : 's'}`,
+    bodyHtml: `<p class="card-desc" style="margin:0 0 8px">They are in Students → All students, billed for this term. Tap a name to check it.</p>
+      <div class="scroll-box" style="max-height:340px">${added.map(s => `<div class="roster-item"><div>${learnerLink(s.id, s.name)} <span class="card-desc">· ${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''} · ${escapeHtml(s.id)}</span></div></div>`).join('')}</div>`,
+    footHtml: '<button class="btn btn-primary" data-modal-close>Done</button>',
+  });
 }
 
 /* ── Exports ───────────────────────────────────────────────────────────── */
-function exportLearnersCSV(onlyDefaulters) {
+function exportLearnersCSV(onlyDefaulters, cls = '') {
   if (!can('canExport')) return toast('You do not have permission to export.', 'error');
-  let list = state.students.map(s => ({ s, a: studentAccount(s) }));
+  let list = state.students.filter(s => !cls || s.class === cls).map(s => ({ s, a: studentAccount(s) }));
   if (onlyDefaulters) list = list.filter(x => x.a.balance > 0).sort((a, b) => b.a.balance - a.a.balance);
-  downloadCSV(`${onlyDefaulters ? 'defaulters' : 'learners'}-${todayISO()}.csv`, [
-    ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'boarding', 'uneb_index', 'special_needs', 'sport', 'arrears', 'this_term_due', 'total_balance'],
-    ...list.map(({ s, a }) => [s.id, s.name, s.class, s.stream || '', s.gender, s.guardian, s.boardingStatus, s.unebIndexNo, s.senFlag, s.sport, a.arrears, a.currentDue, a.balance]),
+  downloadCSV(`${onlyDefaulters ? 'who-owes' : 'learners'}${cls ? '-' + cls.replace(/[^A-Za-z0-9]+/g, '') : ''}-${todayISO()}.csv`, [
+    ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'guardian2_phone', 'boarding', 'uneb_index', 'special_needs', 'sport', 'arrears', 'this_term_due', 'total_balance'],
+    ...list.map(({ s, a }) => [s.id, s.name, s.class, s.stream || '', s.gender, s.guardian, s.guardian2 || '', s.boardingStatus, s.unebIndexNo, s.senFlag, s.sport, a.arrears, a.currentDue, a.balance]),
   ]);
-  toast(onlyDefaulters ? `Exported ${list.length} defaulters.` : `Exported ${list.length} learners.`, 'success');
+  toast(onlyDefaulters ? `Downloaded ${list.length} learner${list.length === 1 ? '' : 's'} who owe${cls ? ' in ' + cls : ''}.` : `Downloaded ${list.length} learners.`, 'success');
 }
 function exportPaymentsCSV() {
   if (!can('canExport')) return toast('You do not have permission to export.', 'error');
@@ -199,7 +217,11 @@ function applyBranding() {
   if (preview) preview.innerHTML = logo ? `<img src="${logo}" alt="School logo" style="width:64px;height:64px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff">` : '<span class="card-desc">No logo — the crest is used.</span>';
   const removeBtn = el('logoRemoveBtn'); if (removeBtn) removeBtn.style.display = logo ? '' : 'none';
   const swatches = el('brandSwatches');
-  if (swatches) swatches.innerHTML = BRAND_PRESETS.map(b => `<label class="swatch" title="${b.name}"><input type="radio" name="brandPreset" value="${b.id}" ${b.id === p.id ? 'checked' : ''}><span style="background:${b.brand}"></span>${b.name}</label>`).join('');
+  // A colour picked but not saved yet stays picked (e.g. across a logo upload).
+  const form = el('settingsForm');
+  const picked = form && form.dataset.dirty && (document.querySelector('#brandSwatches input:checked') || {}).value;
+  const on = picked || p.id;
+  if (swatches) swatches.innerHTML = BRAND_PRESETS.map(b => `<label class="swatch" title="${b.name}"><input type="radio" name="brandPreset" value="${b.id}" ${b.id === on ? 'checked' : ''}><span style="background:${b.brand}"></span>${b.name}</label>`).join('');
 }
 function uploadLogo(file) {
   if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
@@ -229,7 +251,13 @@ function uploadLogo(file) {
   };
   reader.readAsDataURL(file);
 }
-function removeLogo() { delete state.settings.logo; saveState(); applyBranding(); toast('Logo removed.', 'success'); }
+async function removeLogo() {
+  if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
+  if (!await confirmDialog({ title: 'Remove the logo', message: 'Remove the school logo? The crest is used instead on the sign-in screen, receipts and report cards. This is saved straight away.', confirmLabel: 'Remove logo', danger: true })) return;
+  delete state.settings.logo; saveState(); applyBranding();
+  AUTH.audit('LOGO_REMOVE', '');
+  toast('Logo removed.', 'success');
+}
 
 /* ── Daily snapshots (IndexedDB) ───────────────────────────────────────── */
 /* One copy of the school's data per day, last 7 days, on this device only.
@@ -272,21 +300,21 @@ async function openSnapshots() {
   try { list = await snapTx('readonly', store => store.getAll()); } catch (_) { return toast('Snapshots are not available in this browser.', 'error'); }
   list = (list || []).sort((a, b) => b.date.localeCompare(a.date));
   openModal({
-    title: 'Restore a daily snapshot',
-    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">The portal keeps one copy of your data per day for the last ${SNAP_KEEP} days, on this device only. Restoring replaces everything with that day's copy.</p>
-      ${list.length ? list.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(s.date)}</div><div class="card-desc">${s.learners} learners · ${Math.round(s.data.length / 1024)} KB · saved ${escapeHtml(s.ts.slice(11, 16))}</div></div><button class="btn btn-outline btn-xs" data-snap="${escapeHtml(s.date)}">Restore</button></div>`).join('') : '<p class="empty">No snapshots yet. One is taken automatically each day the portal is used.</p>'}`,
+    title: 'Go back to a daily copy',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">The app keeps one copy of the school's records each day for the last ${SNAP_KEEP} days, on this device only. Going back replaces everything with that day's copy. It does not protect you if the computer is lost: use Back up now for that.</p>
+      ${list.length ? list.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(fmtDay(s.date))}</div><div class="card-desc">${s.learners} learners · copied ${escapeHtml(fmtWhen(s.ts))}</div></div><button class="btn btn-outline btn-xs" data-snap="${escapeHtml(s.date)}">Go back to this copy</button></div>`).join('') : '<p class="empty">No daily copies yet. One is made automatically each day the app is used.</p>'}`,
     footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>`,
     onOpen(root) {
       root.addEventListener('click', async e => {
         const b = e.target.closest('[data-snap]'); if (!b) return;
         const snap = list.find(s => s.date === b.dataset.snap); if (!snap) return;
         closeModal();
-        const ok = await confirmDialog({ title: 'Restore snapshot', message: `Replace all current data with the copy from ${snap.date}? Anything entered since then will be lost.`, confirmLabel: 'Restore snapshot', danger: true });
+        const ok = await confirmDialog({ title: 'Go back to a daily copy', message: `Replace all the school's records on this device with the copy from ${fmtDay(snap.date)}? Anything entered since then will be lost.`, confirmLabel: 'Go back to this copy', danger: true });
         if (!ok) return;
         state = migrate(JSON.parse(snap.data)); recomputePaid(); recomputeGrades();
         saveState(); applySettings(); renderAll();
         AUTH.audit('SNAPSHOT_RESTORE', snap.date);
-        toast(`Restored the snapshot from ${snap.date}.`, 'success');
+        toast(`Records are back as they were on ${fmtDay(snap.date)}.`, 'success');
       });
     },
   });
@@ -301,7 +329,7 @@ MODULES.push({
     on('importLearnersInput', 'change', e => { if (e.target.files[0]) importLearnersFile(e.target.files[0]); e.target.value = ''; });
     on('exportLearnersBtn', 'click', () => exportLearnersCSV(false));
     on('exportDefaultersBtn', 'click', () => exportLearnersCSV(true));
-    on('exportDefaultersBtn2', 'click', () => exportLearnersCSV(true));
+    on('exportDefaultersBtn2', 'click', () => exportLearnersCSV(true, (el('oweClass') || {}).value || ''));
     on('exportPaymentsBtn', 'click', exportPaymentsCSV);
     on('logoInput', 'change', e => { if (e.target.files[0]) uploadLogo(e.target.files[0]); e.target.value = ''; });
     on('logoRemoveBtn', 'click', removeLogo);

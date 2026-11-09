@@ -16,9 +16,10 @@ create schema auth;
 grant usage on schema auth to anon, authenticated, service_role;
 
 create table auth.users (
-  id    uuid primary key,
-  email text,
-  phone text
+  id                 uuid primary key,
+  email              text,
+  phone              text,
+  phone_confirmed_at timestamptz   -- set once the number is verified with an SMS code
 );
 
 create or replace function auth.jwt() returns jsonb

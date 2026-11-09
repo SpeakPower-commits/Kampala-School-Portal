@@ -38,9 +38,13 @@ const U = {
   outsider:  { id: '00000000-0000-4000-8000-000000000007', email: 'director@lakeview.ug' },
   stranger:  { id: '00000000-0000-4000-8000-000000000008', email: 'someone@example.com' },
   parent:    { id: '00000000-0000-4000-8000-000000000009', phone: '256772000001' },
+  parent2:   { id: '00000000-0000-4000-8000-00000000000a', phone: '256752000002' },
+  // Same number as `parent`, but never verified with an SMS code.
+  unverified:{ id: '00000000-0000-4000-8000-00000000000b', phone: '256772000001', verified: false },
 };
 for (const u of Object.values(U)) {
-  await db.query('insert into auth.users (id, email, phone) values ($1, $2, $3)', [u.id, u.email || null, u.phone || null]);
+  await db.query('insert into auth.users (id, email, phone, phone_confirmed_at) values ($1, $2, $3, $4)',
+    [u.id, u.email || null, u.phone || null, u.phone && u.verified !== false ? new Date().toISOString() : null]);
 }
 
 // Run SQL the way Supabase does for a request: as role "authenticated" with the
@@ -57,6 +61,14 @@ async function as(user, sql, params = []) {
   });
 }
 const pgArray = (list) => '{' + list.map(x => '"' + x + '"').join(',') + '}';
+// Run SQL as the Cloudflare Worker does with the Supabase secret key.
+async function asService(sql, params = []) {
+  return db.transaction(async (tx) => {
+    await tx.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ role: 'service_role' })]);
+    await tx.exec('set local role service_role');
+    return tx.query(sql, params);
+  });
+}
 
 // ── Checks ──────────────────────────────────────────────────────────────────
 const RLS = /row-level security/i;            // a policy refused the row
@@ -315,6 +327,156 @@ await denied('nothing more comes in after it finishes', U.outsider,
   `select public.import_rows($1, 'learners', '[{"id":"Y","admission_no":"Y","name":"Y"}]'::jsonb)`, [C], /Start bringing in/i);
 await denied('a finished import cannot be cancelled', U.outsider, 'select public.cancel_import($1)', [C], /No backup/i);
 await sees('the import is in the audit trail', U.outsider, "select count(*) as n from public.audit_log where school_id = $1 and action in ('IMPORT_START','IMPORT_CANCELLED','IMPORT_DONE')", [C], 4);
+
+section('Phone numbers');
+for (const [raw, want] of [['0772 123 456', '256772123456'], ['+256 772 123 456', '256772123456'], ['772123456', '256772123456'],
+  ['256772123456', '256772123456'], ['+254 712 345 678', '254712345678'], ['12345', ''], ['', '']]) {
+  const got = (await as(U.exec, 'select public.msisdn($1) as m', [raw])).rows[0].m;
+  check(`"${raw}" is read as "${want}"`, got === want, `got "${got}"`);
+}
+
+section('Parents see only their own children');
+// L1 (S.4): the parent is the first guardian. L3 (S.4): the parent is the
+// second guardian. L2 (P.7) belongs to parent2. L4 (S.4) belongs to neither.
+// At Lakeview (school B) the parent is also a guardian, written another way.
+await as(U.exec, "update public.learners set guardian_phone = '0772 000 001' where school_id = $1 and id = 'L1'", [A]);
+await as(U.exec, "update public.learners set guardian_phone = '0701 000 003', guardian2_phone = '+256 772 000 001' where school_id = $1 and id = 'L3'", [A]);
+await as(U.exec, "update public.learners set guardian_phone = '0752 000 002' where school_id = $1 and id = 'L2'", [A]);
+await as(U.exec, "insert into public.learners (school_id, id, admission_no, name, class, level, guardian_phone) values ($1, 'L4', 'KHS/003', 'Okot Paul', 'S.4', 'O Level', '0752 000 004')", [A]);
+await as(U.outsider, "update public.learners set guardian_phone = '772000001' where school_id = $1 and id = 'L1'", [B]);
+await as(U.teacherS4, `insert into public.registers (school_id, id, class, stream, reg_date, records) values ($1, 'R3', 'S.4', '', current_date,
+  '[{"studentId":"L1","status":"P"},{"studentId":"L4","status":"A"},{"studentId":"L3","status":"L"}]')`, [A]);
+await as(U.exec, "insert into public.notices (school_id, id, title, audience) values ($1, 'PN1', 'Visiting day is Saturday', 'all'), ($1, 'PN2', 'Staff meeting at 4pm', 'staff')", [A]);
+await as(U.exec, "insert into public.conduct (school_id, id, learner_id, occurred_on, type, severity, description) values ($1, 'PC1', 'L1', current_date, 'Commendation', 'Positive', 'Helped a classmate')", [A]);
+
+const portal = async (u) => (await as(u, 'select public.parent_portal() as p')).rows[0].p;
+const schoolOf = (p, id) => p.schools.find(s => s.school.id === id);
+let p = await portal(U.parent);
+check('the parent sees two schools', p.schools.length === 2, JSON.stringify(p.schools.map(s => s.school.name)));
+check('… their two children at Kampala Hill (as first and as second guardian)',
+  JSON.stringify(schoolOf(p, A).learners.map(l => l.id).sort()) === '["L1","L3"]', JSON.stringify(schoolOf(p, A).learners.map(l => l.id)));
+check('… and their child at Lakeview', JSON.stringify(schoolOf(p, B).learners.map(l => l.id)) === '["L1"]');
+check('the other parent sees only their own child', JSON.stringify((await portal(U.parent2)).schools.flatMap(s => s.learners.map(l => l.id))) === '["L2"]');
+check('a number never verified by SMS code sees nothing', (await portal(U.unverified)).schools.length === 0);
+check('a staff account without a phone sees nothing', (await portal(U.exec)).schools.length === 0);
+const regA = schoolOf(p, A).registers;
+check("register entries are cut down to the parent's own children", regA.length === 1 && JSON.stringify(regA[0].records.map(r => r.studentId).sort()) === '["L1","L3"]', JSON.stringify(regA));
+check('only the notices meant for parents', JSON.stringify(schoolOf(p, A).notices.map(n => n.id)) === '["PN1"]');
+check('reversed payments are left out', schoolOf(p, A).payments.length === 0, JSON.stringify(schoolOf(p, A).payments));
+check("the child's bills are there", JSON.stringify(schoolOf(p, A).invoices.map(i => i.id)) === '["I1"]');
+check('no special-needs or sports records are shared', schoolOf(p, A).learners.every(l => l.sen === '' && JSON.stringify(l.extra) === '{}'));
+check('nothing from unpublished terms: marks, comments, positions, conduct',
+  ['marks', 'comments', 'term_results', 'conduct'].every(k => schoolOf(p, A)[k].length === 0));
+await sees('a parent cannot read learners directly', U.parent, 'select count(*) as n from public.learners', [], 0);
+await sees('… nor bills', U.parent, 'select count(*) as n from public.invoices', [], 0);
+await sees('… nor marks', U.parent, 'select count(*) as n from public.marks', [], 0);
+await sees('… nor published results', U.parent, 'select count(*) as n from public.term_results', [], 0);
+await denied('a parent cannot run the internal helpers', U.parent, "select public.parent_school($1, '256772000001')", [A], PRIV);
+
+section('Publishing results');
+const resultRows = JSON.stringify([{ learner_id: 'L1', position: 1, out_of: 3, average: 78, result: 'Aggregate 8 · Division I' },
+  { learner_id: 'L3', position: 2, out_of: 3, average: 64, result: 'Aggregate 15 · Division II' }]);
+await denied('a teacher cannot publish results', U.teacherS4, "select public.publish_results($1, 'T2026-1', $2::jsonb)", [A, resultRows], /Only the Executive Director or the Administrator/i);
+await denied('nobody writes results directly', U.exec, "insert into public.term_results (school_id, learner_id, term_id) values ($1, 'L1', 'T2026-1')", [A], PRIV);
+const pub = await allowed('the administrator publishes the term', U.admin, "select public.publish_results($1, 'T2026-1', $2::jsonb) as n", [A, resultRows]);
+if (pub) check('… with both learners’ positions', Number(pub.rows[0].n) === 2);
+p = await portal(U.parent);
+check('the parent now sees the marks and comments', schoolOf(p, A).marks.length === 1 && schoolOf(p, A).comments.length === 1);
+check('… the position frozen at publishing', schoolOf(p, A).term_results.find(r => r.learner_id === 'L1').position === 1);
+check('… and the conduct shown on the report card', JSON.stringify(schoolOf(p, A).conduct.map(c => c.id)) === '["PC1"]');
+await sees('publishing is in the audit trail', U.exec, "select count(*) as n from public.audit_log where school_id = $1 and action = 'RESULTS_PUBLISH'", [A], 1);
+await allowed('the director withdraws the results', U.exec, "select public.unpublish_results($1, 'T2026-1')", [A]);
+check('… and they disappear for the parent', (schoolOf(await portal(U.parent), A).marks.length === 0));
+await as(U.admin, "select public.publish_results($1, 'T2026-1', $2::jsonb)", [A, resultRows]);
+await as(U.exec, "update public.learners set deleted_at = now() where school_id = $1 and id = 'L3'", [A]);
+check('a learner who has left disappears from the portal', JSON.stringify(schoolOf(await portal(U.parent), A).learners.map(l => l.id)) === '["L1"]');
+await as(U.exec, "update public.learners set deleted_at = null where school_id = $1 and id = 'L3'", [A]);
+
+section("SMS through the school's own account");
+await denied('nothing can be sent before the school sets up SMS', U.exec, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /not set up/i);
+await denied('users cannot store an account themselves', U.exec,
+  "select public.sms_store_settings($1, $2, 'kampalahill', 'KHS', true, 'x', '1234')", [A, U.exec.id], PRIV);
+try {
+  await asService("select public.sms_store_settings($1, $2, 'kampalahill', 'KHS', true, 'x', '1234')", [A, U.admin.id]);
+  check("the Worker cannot store an account for anyone but the director", false, 'was allowed');
+} catch (e) { check("the Worker cannot store an account for anyone but the director", /Executive Director/.test(e.message), e.message); }
+try {
+  await asService("select public.sms_store_settings($1, $2, 'kampalahill', 'KHS', true, 'CIPHERTEXT-not-a-key', 'w1x9')", [A, U.exec.id]);
+  check("the Worker stores the director's encrypted account", true);
+} catch (e) { check("the Worker stores the director's encrypted account", false, e.message); }
+await sees('the director sees the account name and the key hint', U.exec, "select count(*) as n from public.school_sms where at_username = 'kampalahill' and key_hint = 'w1x9'", [], 1);
+await denied('… but nobody can read the encrypted key', U.exec, 'select key_cipher from public.school_sms', [], PRIV);
+await sees('a teacher cannot see the account', U.teacherS4, 'select count(*) as n from public.school_sms', [], 0);
+await sees('only the director may change it', U.admin, "select count(*) as n from (select public.sms_can($1, 'settings') as u) x where u is not null", [A], 0);
+await sees('… and the director may', U.exec, "select count(*) as n from (select public.sms_can($1, 'settings') as u) x where u = $2", [A, U.exec.id], 1);
+for (const fn of ["public.sms_take_batch('00000000-0000-4000-8000-000000000000', 40)", "public.sms_hook_lookup('256772000001')",
+  "public.sms_settings_for('00000000-0000-4000-8000-000000000000')", "public.sms_record_results('00000000-0000-4000-8000-000000000000', '[]')"]) {
+  await denied(`a signed-in user cannot run ${fn.split('(')[0].replace('public.', '')}`, U.exec, `select ${fn}`, [], PRIV);
+}
+
+const prep = async (u, kind, opts) => (await as(u, 'select public.sms_create_campaign($1, $2, $3::jsonb) as c', [A, kind, JSON.stringify(opts)])).rows[0].c;
+let fees;
+try { fees = await prep(U.bursar, 'fees', { both: true }); check('the bursar prepares fee reminders', true); }
+catch (e) { check('the bursar prepares fee reminders', false, e.message); }
+if (fees) {
+  check('… to the one learner who owes (worked out from bills and valid payments)', fees.recipients === 1, JSON.stringify(fees));
+  check('… with the balance in the text', /Achen Grace M\. \(S\.4\).*UGX 900,000/.test(fees.sample), fees.sample);
+  check('… in the plain SMS alphabet, one page', fees.parts === 1, JSON.stringify(fees));
+}
+try {
+  const s4 = await prep(U.bursar, 'fees', { class: 'S.4' });
+  const p7 = await prep(U.bursar, 'fees', { class: 'P.7' });
+  check('fee reminders for one class reach only that class', s4.recipients === 1 && p7.recipients === 0, JSON.stringify({ s4, p7 }));
+  // Neither run is sent: the S.4 draft is withdrawn, and the empty P.7 run
+  // (stored as done) is cleared so the counts below are unchanged.
+  await as(U.bursar, 'select public.sms_cancel_campaign($1)', [s4.campaign_id]);
+  await db.query('delete from public.sms_campaigns where id = $1', [p7.campaign_id]);
+} catch (e) { check('fee reminders for one class reach only that class', false, e.message); }
+await denied('a teacher cannot send fee reminders', U.teacherS4, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /Bursary Officer/i);
+await denied('the head of sports cannot send anything', U.coach, "select public.sms_create_campaign($1, 'broadcast', '{\"message\":\"Hi all\"}')", [A], /Executive Director/i);
+await denied('a parent cannot send anything', U.parent, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /not a member/i);
+await denied('another school cannot send to these guardians', U.outsider, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /not a member/i);
+const absent = await prep(U.teacherS4, 'absence', { class: 'S.4', date: new Date().toISOString().slice(0, 10) }).catch(e => ({ error: e.message }));
+check("the S.4 teacher tells the absent learner's guardian", absent.recipients === 1 && /Okot Paul \(S\.4\) was absent/.test(absent.sample), JSON.stringify(absent));
+await denied('the S.4 teacher cannot message P.7 guardians', U.teacherS4, "select public.sms_create_campaign($1, 'absence', $2::jsonb)", [A, JSON.stringify({ class: 'P.7', date: '2026-02-10' })], /own classes/i);
+await denied('the bursar cannot send absence messages', U.bursar, "select public.sms_create_campaign($1, 'absence', $2::jsonb)", [A, JSON.stringify({ class: 'S.4', date: '2026-02-10' })], /own classes/i);
+const news = await prep(U.admin, 'broadcast', { message: 'School closes at noon on Friday.', both: true }).catch(e => ({ error: e.message }));
+check('a message to every guardian goes once per number, even to a guardian of two learners', news.recipients === 4, JSON.stringify(news));
+await denied('the bursar cannot message every guardian', U.bursar, "select public.sms_create_campaign($1, 'broadcast', '{\"message\":\"Hello\"}')", [A], /Executive Director/i);
+await sees('the bursar sees their own message run', U.bursar, 'select count(*) as n from public.sms_campaigns', [], 1);
+await sees('the director sees every message run', U.exec, 'select count(*) as n from public.sms_campaigns where school_id = $1', [A], 3);
+await sees('the bursar cannot read the message log', U.bursar, 'select count(*) as n from public.sms_messages', [], 0);
+await sees('another school sees none of it', U.outsider, 'select count(*) as n from public.sms_campaigns', [], 0);
+await denied('users cannot change a message run directly', U.exec, "update public.sms_campaigns set status = 'done'", [], PRIV);
+
+if (fees) {
+  const take = (await asService('select public.sms_take_batch($1, 40) as b', [fees.campaign_id])).rows[0].b;
+  check('the Worker takes the batch with the encrypted account', take.messages.length === 1 && take.settings.key_cipher === 'CIPHERTEXT-not-a-key' && take.messages[0].to === '256772000001', JSON.stringify(take));
+  const again = (await asService('select public.sms_take_batch($1, 40) as b', [fees.campaign_id])).rows[0].b;
+  check('a message being sent is never handed out twice', again.messages.length === 0, JSON.stringify(again));
+  const done = (await asService('select public.sms_record_results($1, $2::jsonb) as r', [fees.campaign_id,
+    JSON.stringify([{ id: take.messages[0].id, ok: true, message_id: 'ATXid_1', cost: 'UGX 25.0000' }])])).rows[0].r;
+  check('recording the result finishes the run', done.status === 'done' && done.sent === 1, JSON.stringify(done));
+  await sees('the finished run is in the audit trail', U.exec, "select count(*) as n from public.audit_log where school_id = $1 and action = 'SMS_SENT'", [A], 1);
+  const after = (await asService('select public.sms_take_batch($1, 40) as b', [fees.campaign_id])).rows[0].b;
+  check('a finished run sends nothing more', after.stopped === true && after.messages.length === 0);
+}
+await allowed('the teacher stops their own run', U.teacherS4, 'select public.sms_cancel_campaign($1)', [absent.campaign_id]);
+check('a stopped run sends nothing', (await asService('select public.sms_take_batch($1, 40) as b', [absent.campaign_id])).rows[0].b.stopped === true);
+check('a preview that was never sent leaves nothing behind', Number((await asService('select count(*) as n from public.sms_campaigns where id = $1', [absent.campaign_id])).rows[0].n) === 0
+  && Number((await asService('select count(*) as n from public.sms_messages where campaign_id = $1', [absent.campaign_id])).rows[0].n) === 0);
+await denied("the bursar cannot stop someone else's run", U.bursar, 'select public.sms_cancel_campaign($1)', [news.campaign_id], /cannot be stopped/i);
+await asService('select public.sms_take_batch($1, 1)', [news.campaign_id]);
+await allowed('the admin stops their run part-way through', U.admin, 'select public.sms_cancel_campaign($1)', [news.campaign_id]);
+check('… it stays in the log as stopped', (await asService('select status from public.sms_campaigns where id = $1', [news.campaign_id])).rows[0]?.status === 'cancelled');
+check('… and nothing more goes out', (await asService('select public.sms_take_batch($1, 40) as b', [news.campaign_id])).rows[0].b.stopped === true);
+
+const hook = (await asService("select public.sms_hook_lookup('+256 772 000 001') as h")).rows[0].h;
+check("a guardian's sign-in code goes through their school's account", hook && hook.school_id === A && hook.settings.username === 'kampalahill', JSON.stringify(hook));
+check('an unknown number gets no code', (await asService("select public.sms_hook_lookup('256700999999') as h")).rows[0].h === null);
+await denied('only the director can remove the account', U.admin, 'select public.sms_remove_settings($1)', [A], /Executive Director/i);
+await allowed('the director removes the account', U.exec, 'select public.sms_remove_settings($1)', [A]);
+check('… and sign-in codes stop for that school', (await asService("select public.sms_hook_lookup('256772000001') as h")).rows[0].h === null);
 
 console.log(failures ? `\n${failures} check(s) failed.` : '\nAll checks passed.');
 process.exit(failures ? 1 : 0);

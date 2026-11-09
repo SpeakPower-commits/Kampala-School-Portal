@@ -231,6 +231,15 @@ textarea.input { resize: vertical; min-height: 62px; }
 .nav-tab svg { width: 16px; height: 16px; }
 .nav-tab:hover { color: var(--ink); }
 .nav-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+/* The phone menu (shown at 640px and below instead of the tab strip) */
+.menu-btn { display: none; }
+.topbar-title .t-module { display: none; font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,0.8); }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.menu-item { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
+.menu-item svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--brand); }
+.menu-item[aria-current="page"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+.menu-item[aria-current="page"] svg { color: #fff; }
+.menu-acts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 .main { max-width: 1320px; margin: 0 auto; padding: 22px; width: 100%; flex: 1; }
 .panel { display: none; }
@@ -247,13 +256,37 @@ textarea.input { resize: vertical; min-height: 62px; }
 .subnav button:hover { color: var(--ink); border-color: var(--brand); }
 .subnav button[aria-selected="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
 
-/* What's new (dashboard) */
-.whats-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
-.wn-item { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; }
-.wn-where { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--brand); }
-.wn-title { font-size: 13.5px; font-weight: 700; color: var(--ink); }
-.wn-desc { font-size: 12.5px; color: var(--muted); flex: 1; }
-.wn-item .btn { align-self: flex-start; margin-top: 4px; }
+/* Parent portal (parent.html): one column, made for phones */
+.p-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--brand); color: #fff; position: sticky; top: 0; z-index: 20; }
+.p-top .crest svg, .p-top .crest img { width: 34px; height: 34px; }
+.p-top-title { flex: 1; display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.p-top-title small { opacity: 0.85; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-main { max-width: 640px; margin: 0 auto; padding: 16px; }
+.p-card { margin-bottom: 12px; }
+.p-kid { display: block; width: 100%; text-align: left; cursor: pointer; margin-bottom: 12px; font: inherit; color: inherit; }
+.p-kid:hover { border-color: var(--brand); }
+.p-kid-name { font-size: 17px; font-weight: 700; color: var(--ink); }
+.p-kid-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.p-bal { font-weight: 700; }
+.p-bal.owe { color: var(--danger); }
+.p-bal.clear { color: var(--success); }
+.p-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+.p-table td { padding: 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.p-table td.t-num { text-align: right; padding-left: 10px; }
+.p-total td { font-weight: 700; }
+.p-att { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; text-align: center; }
+.p-att strong { display: block; font-size: 22px; color: var(--ink); }
+.p-att span { font-size: 12px; color: var(--muted); }
+.p-code { font-size: 22px; letter-spacing: 0.3em; text-align: center; }
+.p-foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0; }
+.p-report { overflow-x: auto; }
+
+/* Today's jobs (dashboard): the everyday tasks, one tap each */
+.jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.job { display: flex; flex-direction: column; gap: 3px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); padding: 12px 14px; cursor: pointer; font-family: var(--sans); }
+.job:hover, .job:focus-visible { border-color: var(--brand); background: #fff; }
+.job-label { font-size: 14px; font-weight: 700; color: var(--brand); }
+.job-hint { font-size: 12.5px; color: var(--muted); }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .page-head { margin-bottom: 18px; }
@@ -401,7 +434,8 @@ tbody tr:hover td { background: var(--panel-soft); }
 .user-card + .user-card { margin-top: 9px; }
 .avatar { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
 
-.audit-row { display: flex; align-items: baseline; gap: 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-what { font-weight: 600; }
 .audit-row:last-child { border-bottom: none; }
 .audit-ts { color: var(--faint); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .audit-user { font-weight: 600; color: var(--brand-dark); min-width: 70px; }
@@ -445,6 +479,95 @@ details.disclosure .disclosure-body { padding: 15px; }
 .seg button.on-A { background: var(--danger-bg); color: #7f1d1d; }
 .seg button.on-L { background: var(--warn-bg); color: #78350f; }
 .seg button.on-E { background: var(--info-bg); color: #1e3a8a; }
+/* Register buttons in words: Present · Absent · Late · Excused */
+.seg.seg-words button { min-width: 0; padding: 8px 12px; font-size: 13px; }
+/* The running line above a register: who is absent, by name */
+.reg-summary { margin: 12px 0 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); font-size: 13.5px; line-height: 1.55; }
+.t-ok { color: var(--success); font-weight: 600; }
+.t-bad { color: var(--danger); font-weight: 700; }
+.t-warn { color: var(--warn); font-weight: 600; }
+/* A learner's name that opens their learner page */
+.link-btn { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.link-btn:hover { color: var(--ink); }
+/* Who was absent */
+/* Registers: a child not yet marked, and one the teacher missed on Save */
+.reg-row .reg-unmarked { display: none; color: var(--warn); font-weight: 700; }
+.reg-row.is-unmarked .reg-unmarked { display: inline; }
+.reg-row.is-unmarked { box-shadow: inset 4px 0 0 var(--warn-bg); }
+.reg-row.needs-mark { box-shadow: inset 4px 0 0 var(--danger); background: var(--danger-bg); }
+.abs-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.abs-item:last-child { border-bottom: none; }
+.abs-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.abs-names { margin-top: 6px; line-height: 1.7; }
+.abs-label { font-weight: 700; margin-right: 2px; }
+/* Term attendance sheet: the class as on the paper register */
+.ts-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.ts { width: auto; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.ts th, .ts td { padding: 6px 7px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.ts thead th { background: var(--panel-soft); font-size: 11px; font-weight: 700; text-transform: none; letter-spacing: 0; line-height: 1.25; color: var(--muted); }
+.ts .ts-name { position: sticky; left: 0; z-index: 1; background: #fff; text-align: left; min-width: 128px; border-right: 1px solid var(--line); }
+.ts thead .ts-name, .ts tfoot .ts-name { background: var(--panel-soft); }
+.ts tbody tr:hover td { background: inherit; }
+.ts .ts-P { color: var(--success); }
+.ts .ts-A { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
+.ts .ts-L { color: var(--warn); font-weight: 700; }
+.ts .ts-E { color: #1e3a8a; }
+.ts .ts-none { color: var(--faint); }
+.ts .ts-tot { font-weight: 700; border-left: 1px solid var(--line); }
+.ts tr.ts-low .ts-name { box-shadow: inset 4px 0 0 var(--danger); }
+.ts tfoot td { background: var(--panel-soft); font-weight: 700; border-bottom: none; }
+/* Enter marks: a score box and the grade it gives */
+.ms-entry { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ms-entry .ms-score { width: 86px; }
+.ms-grade { min-width: 44px; font-weight: 700; color: var(--brand); }
+/* Class results and report cards lists */
+.cr-grade { font-size: 11px; font-weight: 700; color: var(--brand); }
+.cr-pos { display: inline-block; min-width: 38px; color: var(--muted); font-weight: 700; }
+.rc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.rc-item:last-child { border-bottom: none; }
+/* Students: one row per child */
+.dir-list { margin-top: 6px; }
+.dir-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.dir-row:last-child { border-bottom: none; }
+.dir-main { min-width: 0; flex: 1 1 260px; }
+.dir-main a { color: inherit; }
+.dir-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.dir-owes { font-size: 13.5px; white-space: nowrap; }
+.link-btn.t-bad { color: var(--danger); }
+/* Fees: Record a payment beside the Payments list (stacked on a phone) */
+.pay-grid { grid-template-columns: minmax(280px, 360px) 1fr; align-items: start; }
+.pay-acct { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 13px; font-size: 13.5px; background: var(--panel-soft); }
+.pay-acct-head { padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.pay-acct-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.pay-acct-row:last-child { border-bottom: none; }
+.pay-acct-row strong { white-space: nowrap; }
+.pay-done { border-color: #a7e0bb; background: var(--success-bg); }
+.pay-done.is-pending { border-color: #f3d38a; background: var(--warn-bg); }
+.pay-done-title { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+.pay-filters .input { width: auto; flex: 1 1 150px; }
+.pay-pick { grid-template-columns: minmax(110px, 0.7fr) 1.6fr; }
+.dir-row.fees-total { border-top: 2px solid var(--line-strong); }
+/* Reports: class grid and EMIS figures (each count opens the names) */
+.rp-grid thead th { white-space: normal; min-width: 56px; vertical-align: bottom; }
+.rp-grid td { font-size: 13.5px; }
+.rp-grid .link-btn { font-weight: 700; }
+.dir-row.is-void .dir-main { opacity: 0.75; }
+.pay-struck { text-decoration: line-through; color: var(--faint); font-weight: 600; }
+.pay-void-why { margin-top: 3px; font-size: 12.5px; color: var(--danger); }
+/* Forms in numbered groups (Admit a student) */
+.fs-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 14px; margin: 0; }
+.fs-group legend { font-weight: 700; color: var(--brand); padding: 0 6px; font-size: 13.5px; }
+.fs-group .form-row + .form-row { margin-top: 12px; }
+/* The learner page (one child: details, attendance, marks, fees, sports) */
+.lp-tabs { margin: 0 0 14px; }
+.lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }
+.lp-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 9px 13px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.lp-row:last-child { border-bottom: none; }
+.lp-label { color: var(--muted); font-weight: 600; }
+.lp-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.lp-tiles .stat-value { font-size: 18px; line-height: 1.3; }
+.lp-tiles.lp-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lp-marks th, .lp-marks td { padding: 9px 8px; }
 
 /* School colour swatches */
 .swatch { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px 6px 7px; border: 1px solid var(--line); border-radius: 20px; font-size: 12.5px; cursor: pointer; }
@@ -467,6 +590,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .topbar-title { flex: 1; }
   .topbar-spacer, .role-chip { display: none; }
   .topbar-btn { padding: 8px 9px; }
+  /* One Menu button instead of a strip that hides most modules and unlabelled icons */
+  .menu-btn { display: inline-flex; }
+  .topbar-inner > .topbar-btn:not(.menu-btn) { display: none !important; }
+  .navbar { display: none; }
+  .topbar-title .t-module { display: block; }
+  .subnav { flex-wrap: wrap; overflow-x: visible; }
   .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .stat { padding: 12px 13px; }
   .stat-row { gap: 10px; margin-bottom: 14px; }
@@ -477,13 +606,24 @@ details.disclosure .disclosure-body { padding: 15px; }
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .modal-foot { justify-content: stretch; }
   .modal-foot .btn { flex: 1; }
-  /* What's new as a compact list, so today's attendance is not pushed off screen */
-  .whats-new { gap: 8px; }
-  .wn-item { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 10px 12px; }
-  .wn-where { width: 100%; }
-  .wn-title { flex: 1; }
-  .wn-desc { display: none; }
-  .wn-item .btn { margin-top: 0; }
+  /* Today's jobs two to a row on a phone */
+  .jobs { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .job { padding: 10px 11px; }
+  /* A report card on a phone screen: tighter marks table, and no blank
+     "Initials" column (that is for pen on the printed copy). Print is unchanged. */
+  .modal .rc-marks .rc-ini { display: none; }
+  .modal .rc-marks { font-size: 11px !important; }
+  .modal .rc-marks th, .modal .rc-marks td { padding: 4px 3px !important; }
+  .modal .rc-marks th { letter-spacing: 0; }
+  /* Registers on a phone: the name on one line, the four buttons across the next */
+  .reg-row { flex-wrap: wrap; gap: 8px; }
+  .reg-row .reg-name { flex: 1 1 100%; }
+  .seg.seg-words { width: 100%; }
+  .seg.seg-words button { flex: 1; padding: 10px 4px; }
+  .lp-row { grid-template-columns: 1fr; gap: 2px; }
+  .dir-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+  .pay-grid, .pay-pick { grid-template-columns: 1fr; }
+  .pay-filters .input { flex: 1 1 100%; }
 }
 
 /* =========================================================================
@@ -495,6 +635,11 @@ details.disclosure .disclosure-body { padding: 15px; }
   #authScreen, .topbar, .navbar, #sessionBar, #toastHost, .no-print, .modal-overlay { display: none !important; }
   #appShell, #appShell .main { display: block !important; }
   .panel { display: none !important; }
+  /* The term sheet on paper: no sideways scrolling, smaller cells */
+  .ts-wrap { overflow: visible; border: none; }
+  .ts { font-size: 9px; }
+  .ts th, .ts td { padding: 3px 4px; border: 1px solid #999; }
+  .ts .ts-name { position: static; min-width: 0; }
   #printArea { display: block !important; }
   @page { margin: 12mm; }
   .report-card { page-break-after: always; break-after: page; }

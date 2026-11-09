@@ -9,22 +9,34 @@
  *
  *   node supabase/dev/server.mjs      then open http://127.0.0.1:54321
  *
- * It is not a full Supabase. It understands the requests auth-online.js and
- * sync.js make: password sign-in, sign-up, password change and reset; select,
- * insert, upsert, update and delete with eq/neq/is/in/gt/gte/lt/lte filters,
- * ordering and paging; and database function calls (rpc).
+ * It is not a full Supabase. It understands the requests auth-online.js,
+ * sync.js and parent.js make: password sign-in, sign-up, password change and
+ * reset; phone sign-in with an SMS code (sent through the Send SMS hook, i.e.
+ * the real Worker); select, insert, upsert, update and delete with
+ * eq/neq/is/in/gt/gte/lt/lte filters, ordering and paging; database function
+ * calls (rpc); and the secret key, which runs as service_role.
+ *
+ * It also runs the real Cloudflare Worker (worker/index.js) for /api/*, and a
+ * pretend Africa's Talking at /__at/* that records every SMS in smsOutbox.
  */
 import { PGlite } from '@electric-sql/pglite';
 import http from 'node:http';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import worker from '../../worker/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
 const SECRET = 'local-stand-in-only';   // signs the stand-in's own test tokens
 export const ANON_KEY = 'local-anon-key';
+export const SECRET_KEY = 'local-secret-key';          // the Supabase secret key: runs as service_role
+// Test-only Worker secrets (fixed, so tests can sign hooks themselves).
+export const HOOK_SECRET = 'v1,whsec_' + Buffer.alloc(32, 7).toString('base64');
+export const SMS_KEY_SECRET = Buffer.alloc(32, 9).toString('base64');
+// The pretend Africa's Talking accepts API keys that start with this.
+export const AT_TEST_KEY_PREFIX = 'atsk_';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -44,9 +56,12 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
     await db.exec(readFileSync(join(repo, 'supabase/migrations', f), 'utf8'));
   }
 
-  const users = new Map();      // email -> { id, email, password, confirmed, createdAt }
-  const refresh = new Map();    // refresh token -> email
+  const users = new Map();      // email, or 'phone:<digits>' -> { id, email, phone, password, confirmed, phoneConfirmedAt, createdAt }
+  const refresh = new Map();    // refresh token -> users key
   const outbox = [];            // emails the stand-in "sent" (sign-up confirmations, reset links)
+  const smsOutbox = [];         // texts the pretend Africa's Talking "sent"
+  const otps = new Map();       // phone digits -> { code, expires }
+  let atMessageId = 0, atRequests = 0;
 
   /* ── Tokens ──────────────────────────────────────────────────────────── */
   function sign(payload) {
@@ -64,19 +79,40 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
     return claims.exp && claims.exp < Date.now() / 1000 ? null : claims;
   }
   const userJson = u => ({
-    id: u.id, aud: 'authenticated', role: 'authenticated', email: u.email, phone: '',
-    email_confirmed_at: u.confirmed ? u.createdAt : null, confirmed_at: u.confirmed ? u.createdAt : null,
-    app_metadata: { provider: 'email', providers: ['email'] }, user_metadata: {}, identities: [],
+    id: u.id, aud: 'authenticated', role: 'authenticated', email: u.email || '', phone: u.phone || '',
+    email_confirmed_at: u.confirmed ? u.createdAt : null, phone_confirmed_at: u.phoneConfirmedAt || null,
+    confirmed_at: u.confirmed ? u.createdAt : u.phoneConfirmedAt || null,
+    app_metadata: { provider: u.phone ? 'phone' : 'email', providers: [u.phone ? 'phone' : 'email'] }, user_metadata: {}, identities: [],
     created_at: u.createdAt, updated_at: u.createdAt, is_anonymous: false,
   });
+  const keyOf = u => (u.email ? u.email : 'phone:' + u.phone);
   function session(u) {
     const now = Math.floor(Date.now() / 1000), ttl = 3600;
     const token = randomUUID().replace(/-/g, '');
-    refresh.set(token, u.email);
+    refresh.set(token, keyOf(u));
     return {
-      access_token: sign({ sub: u.id, email: u.email, role: 'authenticated', aud: 'authenticated', iat: now, exp: now + ttl, session_id: randomUUID(), aal: 'aal1' }),
+      access_token: sign({ sub: u.id, email: u.email || '', phone: u.phone || '', role: 'authenticated', aud: 'authenticated', iat: now, exp: now + ttl, session_id: randomUUID(), aal: 'aal1' }),
       token_type: 'bearer', expires_in: ttl, expires_at: now + ttl, refresh_token: token, user: userJson(u),
     };
+  }
+
+  /* ── The Worker and the Send SMS hook ────────────────────────────────── */
+  const workerEnv = origin => ({
+    SUPABASE_URL: origin, SUPABASE_PUBLISHABLE_KEY: ANON_KEY, SUPABASE_SECRET_KEY: SECRET_KEY,
+    SEND_SMS_HOOK_SECRET: HOOK_SECRET, SMS_KEY_SECRET, AT_BASE_URL: origin + '/__at',
+    ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) },
+  });
+  // Supabase Auth calls the hook with a Standard Webhooks signature.
+  async function callSmsHook(origin, payload) {
+    const id = 'msg_' + randomUUID(), ts = String(Math.floor(Date.now() / 1000)), body = JSON.stringify(payload);
+    const key = Buffer.from(HOOK_SECRET.slice('v1,whsec_'.length), 'base64');
+    const signature = 'v1,' + createHmac('sha256', key).update(`${id}.${ts}.${body}`).digest('base64');
+    const res = await worker.fetch(new Request(origin + '/api/hooks/send-sms', {
+      method: 'POST', body,
+      headers: { 'content-type': 'application/json', 'webhook-id': id, 'webhook-timestamp': ts, 'webhook-signature': signature },
+    }), workerEnv(origin));
+    const out = await res.json().catch(() => ({}));
+    return { status: res.status, message: out && out.error && out.error.message };
   }
   async function addUser(email, password, { confirmed = true } = {}) {
     email = String(email).toLowerCase();
@@ -88,16 +124,46 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
 
   /* ── Running SQL as the caller, the way Supabase does ────────────────── */
   function asCaller(claims, fn) {
+    const role = claims && ['authenticated', 'service_role'].includes(claims.role) ? claims.role : 'anon';
     return db.transaction(async tx => {
       await tx.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(claims || { role: 'anon' })]);
-      await tx.exec(`set local role ${claims && claims.role === 'authenticated' ? 'authenticated' : 'anon'}`);
+      await tx.exec(`set local role ${role}`);
       return fn(tx);
     });
   }
 
   /* ── /auth/v1 ────────────────────────────────────────────────────────── */
   const authFail = (status, code, msg) => ({ status, body: { code: status, error_code: code, msg } });
-  async function auth(method, path, url, body, bearer) {
+  async function auth(method, path, url, body, bearer, origin) {
+    // Phone sign-in: a 6-digit code goes out through the Send SMS hook.
+    if (method === 'POST' && path === 'otp' && body.phone) {
+      const phone = String(body.phone).replace(/[^0-9]/g, '');
+      if (phone.length < 9) return authFail(422, 'validation_failed', 'Invalid phone number format (E.164 required)');
+      let u = users.get('phone:' + phone);
+      if (!u) {
+        u = { id: randomUUID(), email: '', phone, confirmed: false, phoneConfirmedAt: null, createdAt: new Date().toISOString() };
+        await db.query('insert into auth.users (id, email, phone) values ($1, null, $2)', [u.id, phone]);
+        users.set('phone:' + phone, u);
+      }
+      const code = String(randomInt(0, 1e6)).padStart(6, '0');
+      otps.set(phone, { code, expires: Date.now() + 300000 });
+      const hook = await callSmsHook(origin, { user: userJson(u), sms: { otp: code } });
+      if (hook.status !== 200) return { status: hook.status >= 400 && hook.status < 600 ? hook.status : 500, body: { code: hook.status, error_code: 'hook_error', msg: hook.message || 'Error sending SMS' } };
+      return { status: 200, body: {} };
+    }
+    if (method === 'POST' && path === 'verify' && body.type === 'sms') {
+      const phone = String(body.phone || '').replace(/[^0-9]/g, '');
+      const pending = otps.get(phone), u = users.get('phone:' + phone);
+      if (!u || !pending || pending.expires < Date.now() || pending.code !== String(body.token || '')) {
+        return authFail(403, 'otp_expired', 'Token has expired or is invalid');
+      }
+      otps.delete(phone);
+      if (!u.phoneConfirmedAt) {
+        u.phoneConfirmedAt = new Date().toISOString();
+        await db.query('update auth.users set phone_confirmed_at = $2 where id = $1', [u.id, u.phoneConfirmedAt]);
+      }
+      return { status: 200, body: session(u) };
+    }
     if (method === 'POST' && path === 'token') {
       const grant = url.searchParams.get('grant_type');
       if (grant === 'password') {
@@ -107,10 +173,10 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
         return { status: 200, body: session(u) };
       }
       if (grant === 'refresh_token') {
-        const email = refresh.get(body.refresh_token);
-        if (!email) return authFail(400, 'refresh_token_not_found', 'Invalid Refresh Token: Refresh Token Not Found');
+        const key = refresh.get(body.refresh_token);
+        if (!key) return authFail(400, 'refresh_token_not_found', 'Invalid Refresh Token: Refresh Token Not Found');
         refresh.delete(body.refresh_token);
-        return { status: 200, body: session(users.get(email)) };
+        return { status: 200, body: session(users.get(key)) };
       }
       return authFail(400, 'validation_failed', 'Unsupported grant type');
     }
@@ -255,10 +321,35 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
     throw httpError(405, 'PGRST000', 'Method not allowed');
   }
 
+  /* ── A pretend Africa's Talking (tests only) ─────────────────────────── */
+  // Keys starting with atsk_ are accepted. A number ending in 999 is refused,
+  // as an invalid number would be.
+  function pretendAfricasTalking(req, url, raw, send) {
+    const key = String(req.headers.apikey || '');
+    if (!key.startsWith(AT_TEST_KEY_PREFIX) || key.includes('bad')) return send(401, 'The supplied authentication is invalid', 'text/plain');
+    if (url.pathname === '/__at/version1/user' && req.method === 'GET') {
+      return send(200, { UserData: { balance: 'UGX 5000.0000' } });
+    }
+    if (url.pathname === '/__at/version1/messaging' && req.method === 'POST') {
+      const form = new URLSearchParams(raw);
+      const to = String(form.get('to') || '').split(',').filter(Boolean);
+      const request = ++atRequests;   // which request each text came in, to check grouping
+      const recipients = to.map(number => {
+        const ok = !number.endsWith('999');
+        smsOutbox.push({ request, username: form.get('username'), from: form.get('from') || '', to: number, message: form.get('message'), ok });
+        return ok
+          ? { statusCode: 101, number, status: 'Success', cost: 'UGX 25.0000', messageId: 'ATXid_' + (++atMessageId) }
+          : { statusCode: 403, number, status: 'InvalidPhoneNumber', cost: '0', messageId: 'None' };
+      });
+      return send(201, { SMSMessageData: { Message: `Sent to ${recipients.filter(r => r.statusCode === 101).length}/${to.length}`, Recipients: recipients } });
+    }
+    return send(404, 'Not found', 'text/plain');
+  }
+
   function pgStatus(e, claims) {
     if (e.status) return e.status;
     const code = e.code || '';
-    if (code === '42501') return claims && claims.role === 'authenticated' ? 403 : 401;
+    if (code === '42501') return claims && ['authenticated', 'service_role'].includes(claims.role) ? 403 : 401;
     if (code === '23505' || code === '23503') return 409;
     if (code === 'P0002') return 404;
     return 400;
@@ -288,14 +379,27 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
     try {
       let raw = '';
       for await (const chunk of req) raw += chunk;
+      const origin = `http://${req.headers.host}`;
+      // The Cloudflare Worker answers /api/*, exactly as on the real site.
+      if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v);
+        const r = await worker.fetch(new Request(url.href, { method: req.method, headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : raw }), workerEnv(origin));
+        res.writeHead(r.status, Object.fromEntries(r.headers));
+        return res.end(Buffer.from(await r.arrayBuffer()));
+      }
+      if (url.pathname.startsWith('/__at/')) return pretendAfricasTalking(req, url, raw, send);
       const body = raw ? JSON.parse(raw) : null;
       const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       if (url.pathname.startsWith('/auth/v1/')) {
-        const r = await auth(req.method, url.pathname.slice(9), url, body || {}, bearer);
+        const r = await auth(req.method, url.pathname.slice(9), url, body || {}, bearer, origin);
         return send(r.status, r.body);
       }
       if (url.pathname.startsWith('/rest/v1/')) {
-        const claims = verify(bearer);   // the anon key is not a token: signed-out caller
+        // The secret key (with no user session) runs as service_role; the
+        // publishable key is not a token: a signed-out caller.
+        const secret = req.headers.apikey === SECRET_KEY && (!bearer || bearer === SECRET_KEY);
+        const claims = secret ? { role: 'service_role' } : verify(bearer);
         try {
           const r = await rest(req.method, url.pathname.slice(9), url, body, req.headers, claims);
           return send(r.status, r.body);
@@ -317,8 +421,10 @@ export async function startStandIn({ port = 54321, host = '127.0.0.1', autoConfi
   return {
     url: `http://${host}:${actualPort}`,
     anonKey: ANON_KEY,
+    secretKey: SECRET_KEY,
     db,
     outbox,
+    smsOutbox,
     addUser,
     /* Run SQL as a user (by email) or, with no email, as the database owner. */
     async sql(text, params = [], email = null) {

@@ -7,7 +7,9 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Installing Chromium's system packages can take over 10 minutes on a slow
+    # Ubuntu mirror; the tests themselves take about 3.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +24,9 @@ jobs:
 
       - name: Database security tests (row-level security)
         run: node supabase/tests/rls.test.mjs
+
+      - name: Worker tests (SMS API and the parent sign-in hook)
+        run: node tests/worker.test.mjs
 
       - name: Online edition tests (local stand-in for Supabase)
         run: node tests/online.e2e.mjs

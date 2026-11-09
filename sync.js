@@ -57,15 +57,18 @@ window.SYNC = (function () {
     TABLES.forEach(t => { out[t] = new Map(); });
     const put = (table, key, row) => out[table].set(key, row);
 
+    // results_published is left out on purpose: only publish_results() and
+    // unpublish_results() change it, so a screen loaded before results were
+    // published can never quietly withdraw them.
     (st.terms || []).forEach(t => put('terms', t.id, {
       id: t.id, year: String(t.year), term: t.term, start_date: day(t.startDate), end_date: day(t.endDate),
-      is_active: !!t.isActive, opened_at: t.openedAt || null, results_published: !!t.resultsPublished,
+      is_active: !!t.isActive, opened_at: t.openedAt || null,
     }));
     (st.students || []).forEach(s => {
       put('learners', s.id, {
         id: s.id, admission_no: s.id, name: s.name, class: s.class || '', stream: s.stream || '',
         level: s.level || 'Other', combination: s.combination || '', gender: s.gender || '',
-        boarding: s.boardingStatus || 'Day', guardian_phone: s.guardian || '', fee: Math.round(num(s.fee)),
+        boarding: s.boardingStatus || 'Day', guardian_phone: s.guardian || '', guardian2_phone: s.guardian2 || '', fee: Math.round(num(s.fee)),
         bursary_pct: num(s.bursaryPct), uneb_index: s.unebIndexNo || '', sen: s.senFlag || '',
         sport: s.sport || '', skill: s.skillLevel || '',
         extra: { performanceNotes: s.performanceNotes || [], injuryLog: s.injuryLog || [], athleteProfile: s.athleteProfile || {} },
@@ -109,6 +112,7 @@ window.SYNC = (function () {
     }));
     (st.notices || []).forEach(n => put('notices', n.id, {
       id: n.id, title: n.title, body: n.body || '', category: n.category || 'General', posted_by: n.postedBy || '', posted_at: n.postedAt || null,
+      audience: n.audience === 'all' ? 'all' : 'staff',
     }));
     DOCS.forEach(col => (st[col] || []).forEach(d => put('school_docs', col + '/' + d.id, { collection: col, id: d.id, data: d })));
     return out;
@@ -130,7 +134,7 @@ window.SYNC = (function () {
       const x = l.extra || {};
       const s = {
         id: l.id, name: l.name, class: l.class, stream: l.stream, level: l.level, combination: l.combination,
-        guardian: l.guardian_phone, fee: num(l.fee), paid: 0, gender: l.gender, boardingStatus: l.boarding,
+        guardian: l.guardian_phone, guardian2: l.guardian2_phone || '', fee: num(l.fee), paid: 0, gender: l.gender, boardingStatus: l.boarding,
         unebIndexNo: l.uneb_index, senFlag: l.sen, sport: l.sport, skillLevel: l.skill, bursaryPct: num(l.bursary_pct),
         performanceNotes: x.performanceNotes || [], injuryLog: x.injuryLog || [], athleteProfile: x.athleteProfile || {},
         academics: [], comments: {}, feeComponents: [], createdAt: String(l.created_at || '').slice(0, 10),
@@ -160,7 +164,7 @@ window.SYNC = (function () {
     }));
     st.registers = r.registers.sort((a, b) => String(a.reg_date).localeCompare(String(b.reg_date))).map(g => ({ id: g.id, class: g.class, stream: g.stream, date: g.reg_date, records: g.records || [], markedBy: g.marked_by }));
     st.conduct = r.conduct.filter(c => live(c.learner_id)).sort((a, b) => String(a.occurred_on).localeCompare(String(b.occurred_on))).map(c => ({ id: c.id, studentId: c.learner_id, date: c.occurred_on, type: c.type, severity: c.severity, description: c.description, reportedBy: c.reported_by }));
-    st.notices = r.notices.sort((a, b) => String(b.posted_at).localeCompare(String(a.posted_at))).map(n => ({ id: n.id, title: n.title, body: n.body, category: n.category, postedBy: n.posted_by, postedAt: n.posted_at }));
+    st.notices = r.notices.sort((a, b) => String(b.posted_at).localeCompare(String(a.posted_at))).map(n => ({ id: n.id, title: n.title, body: n.body, category: n.category, postedBy: n.posted_by, postedAt: n.posted_at, audience: n.audience || 'staff' }));
     r.school_docs.forEach(d => { if (DOCS.includes(d.collection)) st[d.collection].push(d.data); });
     return st;
   }
@@ -420,6 +424,8 @@ window.SYNC = (function () {
     attach(client) { sb = client; },
     detach() { clearTimeout(timer); timer = null; schoolId = null; role = null; snapshot = null; last = null; lastSettings = null; importing = false; setStatus('idle'); },
     loadSchool,
+    /* Rows in the database's shape → the app's state (also used by the parent portal). */
+    stateFromRows,
     /* For app.js loadState(): the loaded school as JSON, or null before sign-in. */
     read() { return snapshot ? JSON.stringify(snapshot) : null; },
     schedule,
