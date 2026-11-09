@@ -1323,6 +1323,20 @@ let currentTab = null;
 const lastSub = {};
 /* A fourth entry 'online' marks a sub-tab that exists only in the online edition. */
 function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION)); }
+/* The phone menu: every module, and the account buttons, in words. */
+function openMenu() {
+  const tabs = [...document.querySelectorAll('#navBar .nav-tab')].map(b => b.dataset.tab);
+  const acts = [['exportBtn', 'Back up now'], ['importLabel', 'Restore from a backup'], ['changePwdBtn', 'Change my password'], ['logoutBtn', 'Sign out']]
+    .filter(([id]) => el(id) && el(id).style.display !== 'none');
+  const who = currentSession ? `${currentSession.displayName} · ${(ROLE_PERMISSIONS[currentSession.role] || {}).label || currentSession.role}` : '';
+  openModal({
+    title: 'Menu',
+    bodyHtml: `<div class="menu-grid">${tabs.map(t => `<button type="button" class="menu-item" data-act="menuGo" data-tab="${escapeHtml(t)}"${t === currentTab ? ' aria-current="page"' : ''}>${icon(t, 20)}<span>${escapeHtml(TAB_LABELS[t] || t)}</span></button>`).join('')}</div>
+      <div class="menu-acts">${acts.map(([id, label]) => `<button type="button" class="btn btn-outline btn-block" data-act="menuDo" data-target="${id}">${escapeHtml(label)}</button>`).join('')}</div>
+      ${who ? `<p class="card-desc" style="margin-top:12px">Signed in as ${escapeHtml(who)}</p>` : ''}`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Close</button>',
+  });
+}
 function buildNav(tabs) {
   const nav = el('navBar');
   nav.innerHTML = tabs.map(t => `<button class="nav-tab" data-tab="${t}">${icon(t, 16)}<span>${TAB_LABELS[t] || t}</span></button>`).join('');
@@ -1330,11 +1344,15 @@ function buildNav(tabs) {
 function switchTab(tab, sub) {
   if (!hasTab(tab)) { toast('You do not have access to that section.', 'error'); return; }
   currentTab = tab;
+  const mod = el('currentModule'); if (mod) mod.textContent = TAB_LABELS[tab] || '';
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = el('panel-' + tab);
   if (panel) panel.classList.add('active');
   showSub(tab, sub);
+  // On a narrow screen the strip scrolls: keep the open module in view.
+  const active = document.querySelector(`.nav-tab[data-tab="${tab}"]`);
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   // The KPI strip belongs on each role's home module; elsewhere it is clutter.
   const metrics = el('metricsRow');
   if (metrics) metrics.classList.toggle('hidden', tab !== AUTH.getDefaultTab());
@@ -1403,6 +1421,8 @@ Object.assign(ACTIONS, {
   voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
   deleteProgram: d => deleteProgram(d.id),
   programAthletes: d => openProgramAthletes(d.id),
+  menuGo: d => { closeModal(); switchTab(d.tab); },
+  menuDo: d => { closeModal(); if (d.target === 'importLabel') el('importInput').click(); else if (el(d.target)) el(d.target).click(); },
   // From Sessions: open that session on the list above, ready to change.
   openSession: d => {
     switchTab('sports', 'training');
@@ -1939,6 +1959,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (el('topCrest')) el('topCrest').innerHTML = crestSVG();
   el('loginForm').addEventListener('submit', handleLogin);
   el('changePwdBtn').addEventListener('click', () => openChangePwd(false));
+  el('menuBtn').addEventListener('click', openMenu);
   el('logoutBtn').addEventListener('click', handleLogout);
   if (el('forgotPwdBtn')) el('forgotPwdBtn').addEventListener('click', openForgotPassword);
   if (el('signUpBtn')) el('signUpBtn').addEventListener('click', openSignUp);

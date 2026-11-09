@@ -468,6 +468,25 @@ async function classResults(page, cls) {
     assert(await page.isVisible('#absenceList') && await page.inputValue('#absFrom') === today && await page.inputValue('#absTo') === today, 'Who is absent today did not open on today');
   });
 
+  await step('on a phone, one Menu lists every module and the account buttons in words', async () => {
+    const before = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      assert(await page.isVisible('#menuBtn') && !(await page.isVisible('.navbar')) && !(await page.isVisible('#logoutBtn')), 'phone top bar not switched to the Menu');
+      await page.click('#menuBtn');
+      await page.waitForSelector('.modal .menu-grid');
+      const items = await page.$$eval('.modal .menu-item', bs => bs.map(b => b.textContent.trim()));
+      assert(items.length === 10 && items.includes('Reports') && items.includes('Administration'), 'menu items: ' + items.join('|'));
+      const acts = await page.$$eval('.modal .menu-acts button', bs => bs.map(b => b.textContent.trim()));
+      assert(acts.includes('Sign out') && acts.includes('Change my password'), 'account buttons: ' + acts.join('|'));
+      await page.click('.modal .menu-item[data-tab="reports"]');
+      assert(await page.isVisible('#panel-reports') && (await page.textContent('#currentModule')) === 'Reports', 'Menu did not open Reports');
+    } finally {
+      if (await page.isVisible('.modal-overlay')) await page.click('.modal [data-modal-close]');
+      await page.setViewportSize(before || { width: 1280, height: 720 });
+    }
+  });
+
   await step('Who was absent names the child, and "Change this register" opens that register', async () => {
     await tab(page, 'register', 'recent');
     const list = (await page.textContent('#absenceList')).replace(/\s+/g, ' ');

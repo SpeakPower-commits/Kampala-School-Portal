@@ -231,6 +231,15 @@ textarea.input { resize: vertical; min-height: 62px; }
 .nav-tab svg { width: 16px; height: 16px; }
 .nav-tab:hover { color: var(--ink); }
 .nav-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+/* The phone menu (shown at 640px and below instead of the tab strip) */
+.menu-btn { display: none; }
+.topbar-title .t-module { display: none; font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,0.8); }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.menu-item { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
+.menu-item svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--brand); }
+.menu-item[aria-current="page"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+.menu-item[aria-current="page"] svg { color: #fff; }
+.menu-acts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 .main { max-width: 1320px; margin: 0 auto; padding: 22px; width: 100%; flex: 1; }
 .panel { display: none; }
@@ -541,6 +550,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .topbar-title { flex: 1; }
   .topbar-spacer, .role-chip { display: none; }
   .topbar-btn { padding: 8px 9px; }
+  /* One Menu button instead of a strip that hides most modules and unlabelled icons */
+  .menu-btn { display: inline-flex; }
+  .topbar-inner > .topbar-btn:not(.menu-btn) { display: none !important; }
+  .navbar { display: none; }
+  .topbar-title .t-module { display: block; }
+  .subnav { flex-wrap: wrap; overflow-x: visible; }
   .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .stat { padding: 12px 13px; }
   .stat-row { gap: 10px; margin-bottom: 14px; }
