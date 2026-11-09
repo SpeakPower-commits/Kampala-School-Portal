@@ -98,7 +98,7 @@
       <div class="grid grid-2">
         <div class="card card-pad" id="attTodayCard">
           <div class="card-head" style="margin-bottom:12px"><div><div class="card-title">Attendance today</div><p class="card-desc">From the daily class registers.</p></div>
-            <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="register/daily">Open the register</button></div>
+            <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="directory/daily">Open the register</button></div>
           <div id="attTodayBody"></div>
         </div>
         <div class="card card-pad">
@@ -112,7 +112,7 @@
       </div>
     </section>
 
-    <!-- STUDENTS: all students · admit a student · import from Excel -->
+    <!-- STUDENTS: all students · take register · who was absent · term sheet · admit a student · import from Excel -->
     <section id="panel-directory" class="panel">
       <div class="card card-pad" data-sub="list">
         <div class="card-title">All students</div>
@@ -125,6 +125,40 @@
         <div class="reg-summary" id="dirSummary" style="display:none" aria-live="polite"></div>
         <div class="dir-list" id="studentTableBody"></div>
         <div class="pager" id="studentPager"></div>
+      </div>
+      <div class="card card-pad" data-sub="daily">
+        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save register. Nobody is counted present until you mark them.</p></div>
+          <div class="pill-list" id="registerToday"></div></div>
+        <div class="form-row" style="align-items:end">
+          <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
+          <div id="regStreamWrap"><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
+          <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
+        </div>
+        <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
+        <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
+        <div id="registerAbsentees" style="margin-top:14px"></div>
+      </div>
+      <div class="card card-pad" data-sub="recent">
+        <div class="card-title">Who was absent</div>
+        <p class="card-desc">Every register taken, with the names of the children who were absent, late or excused. Tap a name to see that child's attendance.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="absClass">Class</label><select class="input" id="absClass"></select></div>
+          <div><label class="form-label" for="absFrom">From</label><input class="input" id="absFrom" type="date"></div>
+          <div><label class="form-label" for="absTo">To</label><input class="input" id="absTo" type="date"></div>
+        </div>
+        <div id="absTop" style="margin-top:12px"></div>
+        <div id="absenceList" style="margin-top:4px"></div>
+      </div>
+      <div class="card card-pad" data-sub="sheet">
+        <div class="card-head"><div><div class="card-title">Term attendance sheet</div><p class="card-desc">Like the paper register: one line per child, one column per day a register was taken, with each child's totals.</p></div>
+          <button class="btn btn-outline btn-sm" id="tsPrintBtn" type="button">Print</button></div>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="tsClass">Class</label><select class="input" id="tsClass"></select></div>
+          <div id="tsStreamWrap"><label class="form-label" for="tsStream">Stream</label><select class="input" id="tsStream"></select></div>
+          <div><label class="form-label" for="tsMonth">Period</label><select class="input" id="tsMonth"></select></div>
+        </div>
+        <div id="termSheet" style="margin-top:12px"></div>
       </div>
       <div class="card card-pad" id="regStudentCard" data-sub="admit">
         <div class="card-title">Admit a new student</div>
@@ -187,44 +221,6 @@
           <label class="btn btn-primary btn-block" style="cursor:pointer;justify-content:flex-start">Import a CSV file<input id="importLearnersInput" type="file" accept=".csv,text/csv" hidden></label>
           <button class="btn btn-outline btn-block" id="exportLearnersBtn" type="button" style="justify-content:flex-start">Export all learners (CSV)</button>
         </div>
-      </div>
-    </section>
-
-    <!-- ATTENDANCE: take register · who was absent · term sheet -->
-    <section id="panel-register" class="panel">
-      <div class="card card-pad" data-sub="daily">
-        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.</p></div>
-          <div class="pill-list" id="registerToday"></div></div>
-        <div class="form-row" style="align-items:end">
-          <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
-          <div id="regStreamWrap"><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
-          <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
-        </div>
-        <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
-        <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
-        <div class="toolbar" style="margin-top:12px"><button class="btn btn-outline" id="regAllPresentBtn" type="button">Mark everyone present</button><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
-        <div id="registerAbsentees" style="margin-top:14px"></div>
-      </div>
-      <div class="card card-pad" data-sub="recent">
-        <div class="card-title">Who was absent</div>
-        <p class="card-desc">Every register taken, with the names of the children who were absent, late or excused. Tap a name to see that child's attendance.</p>
-        <div class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label" for="absClass">Class</label><select class="input" id="absClass"></select></div>
-          <div><label class="form-label" for="absFrom">From</label><input class="input" id="absFrom" type="date"></div>
-          <div><label class="form-label" for="absTo">To</label><input class="input" id="absTo" type="date"></div>
-        </div>
-        <div id="absTop" style="margin-top:12px"></div>
-        <div id="absenceList" style="margin-top:4px"></div>
-      </div>
-      <div class="card card-pad" data-sub="sheet">
-        <div class="card-head"><div><div class="card-title">Term attendance sheet</div><p class="card-desc">Like the paper register: one line per child, one column per day a register was taken, with each child's totals.</p></div>
-          <button class="btn btn-outline btn-sm" id="tsPrintBtn" type="button">Print</button></div>
-        <div class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label" for="tsClass">Class</label><select class="input" id="tsClass"></select></div>
-          <div id="tsStreamWrap"><label class="form-label" for="tsStream">Stream</label><select class="input" id="tsStream"></select></div>
-          <div><label class="form-label" for="tsMonth">Period</label><select class="input" id="tsMonth"></select></div>
-        </div>
-        <div id="termSheet" style="margin-top:12px"></div>
       </div>
     </section>
 
@@ -420,7 +416,7 @@
       </div>
       <div class="card card-pad" id="trainingFormCard" data-sub="training">
         <div class="card-title">Mark training attendance</div>
-        <p class="card-desc" id="trainingNote">Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.</p>
+        <p class="card-desc" id="trainingNote">Tap Present or Absent for every athlete, then press Save session. Nobody is counted present until you mark them.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="attendanceProgram">Programme</label><select class="input" id="attendanceProgram"><option value="">Choose a programme…</option></select></div>
           <div><label class="form-label" for="attendanceDate">Session date</label><input class="input" id="attendanceDate" type="date"></div>

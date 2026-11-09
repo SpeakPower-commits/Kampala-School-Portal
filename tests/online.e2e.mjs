@@ -246,15 +246,18 @@ try {
     await page.click('#suSave');
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
     const names = await app(() => window.KSA.state().students.map(s => s.name));
     assert(JSON.stringify(names) === '["Nakato Sarah"]', 'teacher sees ' + JSON.stringify(names));
     assert(await app(() => window.KSA.state().payments.length + window.KSA.state().invoices.length) === 0, 'teacher received money records');
   });
 
   await step("the teacher's register reaches the database", async () => {
-    await tab('register', 'daily');
+    await tab('directory', 'daily');
     await page.selectOption('#regClass', 'S.4');
+    // Every child must be marked: with nobody marked, nothing is saved.
+    await page.click('#regSaveBtn');
+    await until(() => /not marked yet/.test(document.getElementById('toastHost').textContent));
     await page.click('#registerRoster .reg-row[data-student="KHS/2026/001"] [data-set-status="A"]');
     await page.click('#regSaveBtn');
     await saved();

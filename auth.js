@@ -50,7 +50,7 @@ const DEFAULT_USERS = [
 const ROLE_PERMISSIONS = {
   exec: {
     label: 'Executive Director', color: '#0b5d3b', badge: 'Executive',
-    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: true, canManageUsers: true,
     canManageSettings: true, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: true, canRecordPayment: true,
@@ -63,7 +63,7 @@ const ROLE_PERMISSIONS = {
   },
   admin: {
     label: 'School Administrator', color: '#1d4ed8', badge: 'Administrator',
-    tabs: ['overview', 'directory', 'register', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
+    tabs: ['overview', 'directory', 'academics', 'payments', 'sports', 'conduct', 'reports', 'noticeboard', 'admin'],
     canExport: true, canImport: true, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: true, canEditStudents: true,
     canDeleteConduct: true, canAwardBursary: false, canRecordPayment: true,
@@ -102,7 +102,7 @@ const ROLE_PERMISSIONS = {
   },
   teacher: {
     label: 'Teacher', color: '#0e7490', badge: 'Teacher',
-    tabs: ['register', 'academics', 'noticeboard'],
+    tabs: ['directory', 'academics', 'noticeboard'],
     canExport: false, canImport: false, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
     canDeleteConduct: false, canAwardBursary: false, canRecordPayment: false,

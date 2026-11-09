@@ -123,9 +123,9 @@ async function classResults(page, cls) {
   await step('the director sees ten modules with plain names', async () => {
     assert(await page.isVisible('#appShell'), 'app shell hidden');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["overview","directory","register","academics","payments","sports","conduct","reports","noticeboard","admin"]', 'modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["overview","directory","academics","payments","sports","conduct","reports","noticeboard","admin"]', 'modules ' + JSON.stringify(tabs));
     const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
-    assert(labels.join('|') === 'Dashboard|Students|Attendance|Academics|Fees|Sports|Discipline|Reports|Notices|Administration', 'labels ' + labels.join('|'));
+    assert(labels.join('|') === 'Dashboard|Students|Academics|Fees|Sports|Discipline|Reports|Notices|Administration', 'labels ' + labels.join('|'));
   });
 
   await step('school settings apply across the app', async () => {
@@ -622,15 +622,34 @@ async function classResults(page, cls) {
   });
 
   /* ───────────────────────── Phase 1: register ───────────────────────── */
-  await step('class register records absences and offers guardian SMS (Attendance → Daily register)', async () => {
-    await tab(page, 'register', 'daily');
+  await step('Students → Take register: nobody is present until the teacher marks them, and the register saves only when everyone is marked', async () => {
+    await tab(page, 'directory', 'daily');
+    const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(subs.join('|') === 'All students|Take register|Who was absent|Term sheet|Admit a student|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
+    assert(!(await page.$('#regAllPresentBtn')), 'the "Mark everyone present" button is still there');
     await page.selectOption('#regClass', 'S.4');
+    // Every child starts unmarked.
+    const marks = await page.$$eval('#registerRoster .reg-row', rs => rs.map(r => r.dataset.status));
+    assert(marks.length === 2 && marks.every(m => m === ''), 'rows start marked: ' + JSON.stringify(marks));
+    assert(await page.$$eval('#registerRoster .reg-row [aria-checked="true"]', b => b.length) === 0, 'a button is lit before the teacher taps it');
+    let line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/2 not marked yet/.test(line) && /0 present/.test(line), 'running line before marking: ' + line);
+    // One child marked absent, the other not marked: Save is refused and names her.
     await page.click(`#registerRoster .reg-row[data-student="${secondId}"] [data-set-status="A"]`);
-    const line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
-    assert(/2 learners · 1 present · 1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
     assert(await page.textContent(`#registerRoster .reg-row[data-student="${secondId}"] .on-A`) === 'Absent', 'the button does not say Absent');
     await page.click('#regSaveBtn');
     await page.waitForTimeout(150);
+    assert(await page.evaluate(() => (state.registers || []).length) === 0, 'a register with an unmarked child was saved');
+    assert(/1 child is not marked yet \(Nakato Sarah\)/.test(await page.textContent('#toastHost')), 'refusal does not name the child: ' + await page.textContent('#toastHost'));
+    assert(await page.$eval('#registerRoster .reg-row[data-student="NPA/2026/001"]', r => r.classList.contains('needs-mark')), 'the unmarked child is not highlighted');
+    // The teacher marks her present: now everyone is marked and it saves.
+    await page.click('#registerRoster .reg-row[data-student="NPA/2026/001"] [data-set-status="P"]');
+    line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/everyone marked/.test(line) && /1 present/.test(line) && /1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
+    await page.click('#regSaveBtn');
+    await page.waitForTimeout(150);
+    const saved = await page.evaluate(() => state.registers[0].records.map(r => r.status).sort().join(''));
+    assert(saved === 'AP', 'saved marks: ' + saved);
     const rec = await page.evaluate(id => state.registers[0].records.find(r => r.studentId === id).status, secondId);
     assert(rec === 'A', 'status saved = ' + rec);
     assert(/Mugisha Brian/.test(await page.textContent('#registerAbsentees')), 'absentee list missing');
@@ -651,7 +670,7 @@ async function classResults(page, cls) {
     await tab(page, 'overview');
     assert(await page.isVisible('#jobsCard'), "Today's jobs not shown");
     const jobs = await page.$$eval('#jobsList .job', bs => bs.map(b => b.dataset.to || 'act:' + b.dataset.act));
-    for (const to of ['register/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    for (const to of ['directory/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
     await page.click('#jobsList [data-to="academics/reportcards"]');
     assert(await page.isVisible('#rcList') && !(await page.isVisible('#markSheetRoster')), 'did not land on Academics → Report cards');
     const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
@@ -670,7 +689,7 @@ async function classResults(page, cls) {
       await page.click('#menuBtn');
       await page.waitForSelector('.modal .menu-grid');
       const items = await page.$$eval('.modal .menu-item', bs => bs.map(b => b.textContent.trim()));
-      assert(items.length === 10 && items.includes('Reports') && items.includes('Administration'), 'menu items: ' + items.join('|'));
+      assert(items.length === 9 && items.includes('Students') && !items.includes('Attendance') && items.includes('Administration'), 'menu items: ' + items.join('|'));
       const acts = await page.$$eval('.modal .menu-acts button', bs => bs.map(b => b.textContent.trim()));
       assert(acts.includes('Sign out') && acts.includes('Change my password'), 'account buttons: ' + acts.join('|'));
       await page.click('.modal .menu-item[data-tab="reports"]');
@@ -682,7 +701,7 @@ async function classResults(page, cls) {
   });
 
   await step('Who was absent names the child, and "Change this register" opens that register', async () => {
-    await tab(page, 'register', 'recent');
+    await tab(page, 'directory', 'recent');
     const list = (await page.textContent('#absenceList')).replace(/\s+/g, ' ');
     assert(/S\.4/.test(list) && /1 of 2 present/.test(list) && /Absent: Mugisha Brian/.test(list), 'list: ' + list);
     assert(/Mugisha Brian \(1 day\)/.test(await page.textContent('#absTop')), 'most-absent line missing');
@@ -694,7 +713,7 @@ async function classResults(page, cls) {
   });
 
   await step('the term sheet shows each child by day, like the paper register, with totals', async () => {
-    await tab(page, 'register', 'sheet');
+    await tab(page, 'directory', 'sheet');
     await page.selectOption('#tsClass', 'S.4');
     const rows = await page.$$eval('#termSheet .ts tbody tr', trs => trs.map(tr => [...tr.cells].map(td => td.textContent.trim())));
     const brian = rows.find(r => r[0] === 'Mugisha Brian');
@@ -706,7 +725,7 @@ async function classResults(page, cls) {
   });
 
   await step("a child's name opens their learner page, with the dates absent", async () => {
-    await tab(page, 'register', 'recent');
+    await tab(page, 'directory', 'recent');
     await page.click(`#absenceList [data-act="learner"][data-id="${secondId}"]`);
     await page.waitForSelector('.modal #learnerBody');
     try {
@@ -869,12 +888,16 @@ async function classResults(page, cls) {
     await page.waitForTimeout(150);
     const card = await page.$eval(`#programsGrid [data-id="${progId}"][data-act="programAthletes"]`, b => b.closest('.tile').textContent.replace(/\s+/g, ' '));
     assert(card.includes('Athletes (2)') && card.includes(a1.name) && card.includes(a2.name), 'athletes not listed on the programme: ' + card);
-    // A session: tap Absent for one athlete; the line, the sessions list and who-attends name them.
+    // A session: every athlete starts unmarked; the coach marks each one.
     await page.click('#subNav [data-sub="training"]');
     await page.selectOption('#attendanceProgram', progId);
     assert(await page.inputValue('#attendanceDate') === await page.evaluate(() => todayISO()), 'session date is not today');
     await page.click(`#attendanceRoster .reg-row[data-student="${a2.id}"] [data-set-att="A"]`);
     assert((await page.textContent('#trainSummary')).includes('1 missed: ' + a2.name), 'running line: ' + await page.textContent('#trainSummary'));
+    await page.click('#saveAttendanceBtn');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.attendance.length) === 0, 'a session with an unmarked athlete was saved');
+    await page.click(`#attendanceRoster .reg-row[data-student="${a1.id}"] [data-set-att="P"]`);
     await page.click('#saveAttendanceBtn');
     await page.waitForTimeout(150);
     const sessions = (await page.textContent('#sessionList')).replace(/\s+/g, ' ');
@@ -963,17 +986,24 @@ async function classResults(page, cls) {
     assert(/Achieng Mary/.test(list) && /20%/.test(list) && /70,000/.test(list), 'bursary list: ' + list);
   });
 
-  await step('teacher sees only the register, academics and assigned classes', async () => {
+  await step('teacher: Students (their classes, the register, no fees), Academics and Notices only', async () => {
     await page.click('#logoutBtn');
     await page.waitForSelector('#mdOk');
     await page.click('#mdOk');
     await signIn(page, 'tkato', 'Teach2026x');
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
     const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
-    assert(labels.join('|') === 'Attendance|Academics|Notices', 'teacher labels ' + labels.join('|'));
-    await tab(page, 'register');
+    assert(labels.join('|') === 'Students|Academics|Notices', 'teacher labels ' + labels.join('|'));
+    await tab(page, 'directory');
+    const tsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(tsubs.join('|') === 'My classes|Take register|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
+    await page.click('#subNav [data-sub="list"]');
+    const mine = await page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(mine.length === 2 && mine.every(r => /S\.4/.test(r)), 'teacher list is not their class: ' + mine.join(' | '));
+    assert(!mine.some(r => /Owes|Paid up|UGX/.test(r)) && !(await page.isVisible('#dirShow')), 'the teacher sees fees: ' + mine.join(' | '));
+    await page.click('#subNav [data-sub="daily"]');
     const classes = await page.$$eval('#regClass option', o => o.map(x => x.value).filter(Boolean));
     assert(JSON.stringify(classes) === '["S.4"]', 'teacher classes ' + JSON.stringify(classes));
     await tab(page, 'academics');

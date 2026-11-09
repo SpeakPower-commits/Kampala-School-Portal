@@ -10,7 +10,7 @@
 
 const LEARNER_SECTIONS = [
   ['details', 'Details', () => true],
-  ['attendance', 'Attendance', () => hasTab('register') || hasTab('overview')],
+  ['attendance', 'Attendance', () => can('canMarkRegister') || hasTab('overview')],
   ['marks', 'Marks', () => hasTab('academics')],
   ['fees', 'Fees', () => hasTab('payments')],
   ['sports', 'Sports', () => hasTab('sports')],

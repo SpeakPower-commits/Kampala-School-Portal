@@ -622,10 +622,14 @@ function renderStudentTable() {
   fillSelect('dirClass', '<option value="">All classes</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
   const raw = (el('searchInput').value || '').trim().toLowerCase();
   const words = raw.split(/\s+/).filter(Boolean), digits = raw.replace(/\D/g, '');
-  const cls = el('dirClass').value, show = el('dirShow').value;
+  const money = hasTab('payments');   // a teacher's list shows no fees
+  const showWrap = el('dirShow') && el('dirShow').parentElement; if (showWrap) showWrap.style.display = money ? '' : 'none';
+  const title = document.querySelector('#panel-directory [data-sub="list"] .card-title');
+  if (title) title.textContent = AUTH.currentUserClasses() ? 'My classes' : 'All students';
+  const cls = el('dirClass').value, show = money ? el('dirShow').value : '';
   const order = c => { const i = CLASS_OPTIONS.indexOf(c); return i < 0 ? 999 : i; };
-  const inClass = state.students.filter(s => (!cls || s.class === cls) && (!raw || studentSearchMatch(s, words, digits)))
-    .map(s => ({ s, owes: studentAccount(s).balance }));
+  const inClass = visibleStudents().filter(s => (!cls || s.class === cls) && (!raw || studentSearchMatch(s, words, digits)))
+    .map(s => ({ s, owes: money ? studentAccount(s).balance : 0 }));
   const owing = inClass.filter(x => x.owes > 0).length;
   const list = inClass.filter(x => !show || (show === 'owe' ? x.owes > 0 : x.owes <= 0))
     .sort((a, b) => order(a.s.class) - order(b.s.class) || (a.s.stream || '').localeCompare(b.s.stream || '') || a.s.name.localeCompare(b.s.name));
@@ -636,9 +640,9 @@ function renderStudentTable() {
   const sum = el('dirSummary');
   if (sum) {
     sum.style.display = inClass.length ? '' : 'none';
-    sum.innerHTML = `<strong>${inClass.length}</strong> learner${inClass.length === 1 ? '' : 's'}${cls ? ' in ' + escapeHtml(cls) : ''}${raw ? ' matching your search' : ''} · `
-      + (owing ? `<button type="button" class="link-btn t-bad" data-act="dirShowOwe">${owing} owe fees</button>` : '<span class="t-ok">nobody owes fees</span>')
-      + ` · ${inClass.length - owing} paid up`;
+    sum.innerHTML = `<strong>${inClass.length}</strong> learner${inClass.length === 1 ? '' : 's'}${cls ? ' in ' + escapeHtml(cls) : ''}${raw ? ' matching your search' : ''}`
+      + (!money ? '' : ' · ' + (owing ? `<button type="button" class="link-btn t-bad" data-act="dirShowOwe">${owing} owe fees</button>` : '<span class="t-ok">nobody owes fees</span>')
+        + ` · ${inClass.length - owing} paid up`);
   }
   const tel = g => { const n = normalizePhone(g); return n ? `<a href="tel:${escapeHtml(n)}">${escapeHtml(g)}</a>` : escapeHtml(g || '—'); };
   body.innerHTML = slice.length ? slice.map(({ s, owes }) => {
@@ -651,7 +655,7 @@ function renderStudentTable() {
         <div class="card-desc">Guardian ${tel(s.guardian)}${s.guardian2 ? ' · ' + tel(s.guardian2) : ''}</div>
       </div>
       <div class="dir-side">
-        <div class="dir-owes ${owes > 0 ? 't-bad' : 't-ok'}">${owes > 0 ? 'Owes ' + fmtMoney(owes) : 'Paid up'}</div>
+        ${money ? `<div class="dir-owes ${owes > 0 ? 't-bad' : 't-ok'}">${owes > 0 ? 'Owes ' + fmtMoney(owes) : 'Paid up'}</div>` : '<div></div>'}
         <div class="row-actions"><button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>${editBtn}${delBtn}</div>
       </div>
     </div>`;
@@ -771,27 +775,33 @@ function renderAttendanceRoster() {
   const presentMap = {};
   if (existing) (existing.records || []).forEach(r => { presentMap[r.studentId] = r.present; });
   roster.innerHTML = athletes.map(s => {
-    const st = presentMap[s.id] === false ? 'A' : 'P';
-    return `<div class="roster-item reg-row" data-student="${escapeHtml(s.id)}" data-status="${st}">
-      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</div></div>
+    const st = presentMap[s.id] === true ? 'P' : presentMap[s.id] === false ? 'A' : '';
+    return `<div class="roster-item reg-row${st ? '' : ' is-unmarked'}" data-student="${escapeHtml(s.id)}" data-status="${st}">
+      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}<span class="reg-unmarked"> · Not marked</span></div></div>
       <div class="seg seg-words" role="radiogroup" aria-label="Training attendance for ${escapeHtml(s.name)}">${[['P', 'Present'], ['A', 'Absent']].map(([k, label]) => `<button type="button" role="radio" aria-checked="${k === st}" class="${k === st ? 'on-' + k : ''}" data-set-att="${k}">${label}</button>`).join('')}</div>
     </div>`;
   }).join('');
   const note = el('trainingNote');
-  if (note) note.textContent = existing ? 'This session was saved before. Change anyone and press Save session to update it.' : 'Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.';
+  if (note) note.textContent = existing ? 'This session was saved before. Change anyone and press Save session to update it.' : 'Tap Present or Absent for every athlete, then press Save session. Nobody is counted present until you mark them.';
   renderTrainingSummary();
 }
 function renderTrainingSummary() {
   const box = el('trainSummary'); if (!box) return;
   const rows = [...document.querySelectorAll('#attendanceRoster .reg-row')];
   if (!rows.length) { box.style.display = 'none'; return; }
-  const missed = rows.filter(r => r.dataset.status === 'A').map(r => escapeHtml((state.students.find(s => s.id === r.dataset.student) || {}).name || ''));
+  const nameOf = r => escapeHtml((state.students.find(s => s.id === r.dataset.student) || {}).name || '');
+  const missed = rows.filter(r => r.dataset.status === 'A').map(nameOf);
+  const unmarked = rows.filter(r => !r.dataset.status).map(nameOf);
+  const present = rows.filter(r => r.dataset.status === 'P').length;
   box.style.display = '';
-  box.innerHTML = `<strong>${rows.length}</strong> athlete${rows.length === 1 ? '' : 's'} · <span class="t-ok">${rows.length - missed.length} present</span> · `
-    + (missed.length ? `<span class="t-bad">${missed.length} missed: ${missed.join(', ')}</span>` : '<span class="t-ok">nobody missed</span>');
+  box.innerHTML = `<strong>${rows.length}</strong> athlete${rows.length === 1 ? '' : 's'}`
+    + (unmarked.length ? ` · <span class="t-warn">${unmarked.length} not marked yet: ${unmarked.join(', ')}</span>` : '')
+    + ` · <span class="t-ok">${present} present</span>`
+    + (missed.length ? ` · <span class="t-bad">${missed.length} missed: ${missed.join(', ')}</span>` : '');
 }
 function setAttendanceRow(row, st) {
   row.dataset.status = st;
+  row.classList.remove('is-unmarked', 'needs-mark');
   row.querySelectorAll('[data-set-att]').forEach(b => { const on = b.dataset.setAtt === st; b.className = on ? 'on-' + st : ''; b.setAttribute('aria-checked', on); });
   renderTrainingSummary();
 }
@@ -1566,14 +1576,14 @@ function applySettings() {
 /* Ten modules. The ids are historical ("register" is Attendance, "payments" is
    Fees, "conduct" is Discipline); only what people read changed. */
 const TAB_LABELS = {
-  overview: 'Dashboard', directory: 'Students', register: 'Attendance', academics: 'Academics', payments: 'Fees',
+  overview: 'Dashboard', directory: 'Students', academics: 'Academics', payments: 'Fees',
   sports: 'Sports', conduct: 'Discipline', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
 };
 /* Sub-tabs inside a module: [id, label, permission needed]. Cards in
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
-  directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
-  register: [['daily', 'Take register'], ['recent', 'Who was absent'], ['sheet', 'Term sheet']],
+  // Attendance lives under Students: the register, who was absent and the term sheet.
+  directory: [['list', 'All students'], ['daily', 'Take register', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
   academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
@@ -1583,7 +1593,11 @@ const SUB_TABS = {
 let currentTab = null;
 const lastSub = {};
 /* A fourth entry 'online' marks a sub-tab that exists only in the online edition. */
-function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION)); }
+function allowedSubs(tab) {
+  return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION))
+    // A teacher's list is their own classes.
+    .map(x => x[0] === 'list' && tab === 'directory' && AUTH.currentUserClasses() ? ['list', 'My classes', ...x.slice(2)] : x);
+}
 /* The phone menu: every module, and the account buttons, in words. */
 function openMenu() {
   const tabs = [...document.querySelectorAll('#navBar .nav-tab')].map(b => b.dataset.tab);
@@ -1642,8 +1656,8 @@ function showSub(tab, sub) {
 /* The everyday tasks this person can do, one tap each:
    [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
 const TODAYS_JOBS = [
-  ['register/daily', "Take today's register", 'Tap the children who are not here', () => can('canMarkRegister')],
-  ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => hasTab('register')],
+  ['directory/daily', "Take today's register", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
+  ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => can('canMarkRegister')],
   ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
   ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
   ['payments/record', 'Record a payment', 'The receipt prints straight away', () => can('canRecordPayment')],
@@ -1793,6 +1807,7 @@ function setupBindings() {
     if (date > todayISO()) return toast('You cannot mark a session for a future date.', 'error');
     const rows = document.querySelectorAll('#attendanceRoster .reg-row');
     if (!rows.length) return toast('No athletes to mark.', 'error');
+    if (refuseUnmarked([...rows], 'athlete')) return;
     saveAttendance(programId, date, Array.from(rows).map(r => ({ studentId: r.dataset.student, present: r.dataset.status !== 'A' })));
   });
   on('attendanceRoster', 'click', e => {

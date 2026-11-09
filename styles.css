@@ -489,6 +489,11 @@ details.disclosure .disclosure-body { padding: 15px; }
 .link-btn { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
 .link-btn:hover { color: var(--ink); }
 /* Who was absent */
+/* Registers: a child not yet marked, and one the teacher missed on Save */
+.reg-row .reg-unmarked { display: none; color: var(--warn); font-weight: 700; }
+.reg-row.is-unmarked .reg-unmarked { display: inline; }
+.reg-row.is-unmarked { box-shadow: inset 4px 0 0 var(--warn-bg); }
+.reg-row.needs-mark { box-shadow: inset 4px 0 0 var(--danger); background: var(--danger-bg); }
 .abs-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .abs-item:last-child { border-bottom: none; }
 .abs-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
