@@ -520,19 +520,23 @@
 
     <!-- REPORTS: statistics · EMIS -->
     <section id="panel-reports" class="panel">
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Enrolment by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Class-by-class breakdown</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Class</th><th>Level</th><th class="t-center">Students</th><th class="t-center">Avg</th><th class="t-center">Cleared</th><th class="t-num">Outstanding</th><th class="t-center">Athletes</th></tr></thead><tbody id="classStatsBody"></tbody></table></div>
+      <div data-sub="statistics"><p class="card-desc" style="margin:0 0 10px">Every number is a button: tap it to see those children by name, and tap a name to open the child's page.</p></div>
+      <div class="banner banner-warn" id="reportWarnings" style="display:none" data-sub="statistics"></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Learners by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Class by class</div>
+        <p class="card-desc">In school order, from Baby Class to S.6.</p>
+        <div id="classStatsBody" style="margin-top:10px"></div>
       </div>
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Sports participation</div><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Sports programmes</div><p class="card-desc">Athletes on each programme's list in Sports.</p><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
       <div class="grid grid-3" data-sub="statistics">
         <div class="card card-pad"><div class="card-title">Gender</div><div id="genderStats" style="margin-top:12px"></div></div>
-        <div class="card card-pad"><div class="card-title">Boarding status</div><div id="boardingStats" style="margin-top:12px"></div></div>
-        <div class="card card-pad"><div class="card-title">Special needs (SEN)</div><div id="senStats" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Day and boarding</div><div id="boardingStats" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Special needs</div><div id="senStats" style="margin-top:12px"></div></div>
       </div>
       <div class="card card-pad" id="emisCard" style="display:none" data-sub="emis">
-        <div class="card-head"><div><div class="card-title">EMIS report</div><p class="card-desc">Uganda Education Management Information System — termly enrolment statistics.</p></div>
-          <button class="btn btn-primary btn-sm" id="exportEmisBtn" type="button">Export EMIS CSV</button></div>
+        <div class="card-head"><div><div class="card-title">EMIS figures</div><p class="card-desc">The termly enrolment figures the Ministry asks for in EMIS (Education Management Information System): learners in each class by gender, day or boarding, and special needs. 1 Fix any warnings below (EMIS needs every class and gender) · 2 press Download · 3 copy the figures into the EMIS form.</p></div>
+          <button class="btn btn-primary btn-sm" id="exportEmisBtn" type="button">Download EMIS figures (Excel)</button></div>
+        <div class="banner banner-warn" id="emisWarnings" style="display:none;margin-top:4px"></div>
         <div id="emisPreview" style="margin-top:12px"></div>
       </div>
     </section>

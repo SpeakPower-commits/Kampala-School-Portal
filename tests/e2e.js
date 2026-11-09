@@ -547,6 +547,31 @@ async function classResults(page, cls) {
     await page.selectOption('#conductPeriod', 'term');
   });
 
+  await step('Reports: classes in school order, every number opens those children, and EMIS per class with no money', async () => {
+    await tab(page, 'reports', 'statistics');
+    const classes = await page.$$eval('#classStatsBody tbody .ts-name', ts => ts.map(t => t.textContent.trim()));
+    assert(classes.indexOf('P.7') >= 0 && classes.indexOf('P.7') < classes.indexOf('S.4'), 'class order: ' + classes.join(', '));
+    await page.click('#classStatsBody [data-act="reportList"][data-cls="S.4"][data-key="all"]');
+    await page.waitForSelector('.modal .roster-item');
+    const names = await page.$$eval('.modal .roster-item [data-act="learner"]', bs => bs.map(b => b.textContent).sort());
+    const expected = await page.evaluate(() => state.students.filter(s => s.class === 'S.4').map(s => s.name).sort());
+    assert(expected.length >= 2 && JSON.stringify(names) === JSON.stringify(expected), `S.4 learners: ${names} vs ${expected}`);
+    await page.click('#modalHost [data-modal-close]');
+    const girls = await page.evaluate(() => state.students.filter(s => s.gender === 'Female').length);
+    assert(new RegExp('^' + girls + '$').test((await page.textContent('#genderStats [data-key="girls"]')).trim()), 'girls count is not a button with the right number');
+    // A class the app does not know, or a missing gender, is named as a warning (EMIS needs both).
+    const w = await page.evaluate(() => { state.students.push({ id: 'TMP1', name: 'Temp Child', class: 'Form 2', gender: '' }); const h = reportWarningsHtml(); state.students.pop(); return h; });
+    assert(/class the app does not recognise/.test(w) && /no gender set/.test(w), 'warnings: ' + w);
+    await page.click('#subNav [data-sub="emis"]');
+    const preview = (await page.textContent('#emisPreview')).replace(/\s+/g, ' ');
+    assert(/Boys/.test(preview) && /Girls/.test(preview) && /S\.4/.test(preview) && /Total/.test(preview), 'EMIS preview: ' + preview);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#exportEmisBtn')]);
+    const text = require('fs').readFileSync(await dl.path(), 'utf8');
+    assert(text.charCodeAt(0) === 0xFEFF, 'the EMIS file has no byte-order mark, so Excel garbles it');
+    assert(/"Class","Boys","Girls","Total"/.test(text) && /"S\.4"/.test(text) && /"P\.7"/.test(text) && /\n"Total"/.test(text), 'EMIS file: ' + text);
+    assert(!/UGX|Outstanding|Cleared|fee/i.test(text), 'EMIS file carries money: ' + text);
+  });
+
   await step('grading scales can be edited and restored (Academics → Grading scales)', async () => {
     await tab(page, 'academics', 'grading');
     const text = await page.inputValue('#bands-primary');

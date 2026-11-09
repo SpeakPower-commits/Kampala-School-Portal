@@ -994,32 +994,91 @@ function renderConductTable() {
   }).join('') : `<div class="empty">${state.conduct.length ? 'No entries match. Choose All classes, Good and bad, or All terms.' : 'No conduct entries yet.'}</div>`;
 }
 
+/* ── Reports: every number opens the children behind it ────────────────── */
+/* The columns of the class grid. Each count is a button (data-act="reportList")
+   that lists those children by name. */
+function sportsAthleteIds() { return new Set((state.programs || []).flatMap(p => programAthletes(p).map(s => s.id))); }
+function reportColumns() {
+  const inSport = sportsAthleteIds();
+  return [
+    ['all', 'Learners', () => true],
+    ['boys', 'Boys', s => s.gender === 'Male'],
+    ['girls', 'Girls', s => s.gender === 'Female'],
+    ['nogender', 'Gender not set', s => s.gender !== 'Male' && s.gender !== 'Female'],
+    ['day', 'Day', s => (s.boardingStatus || 'Day') === 'Day'],
+    ['boarding', 'Boarders', s => s.boardingStatus === 'Boarding'],
+    ['weekly', 'Weekly boarders', s => s.boardingStatus === 'Weekly'],
+    ['sen', 'Special needs', s => !!s.senFlag],
+    ...(hasTab('payments') ? [['owe', 'Owe fees', s => studentAccount(s).balance > 0]] : []),
+    ['sport', 'In sports', s => inSport.has(s.id)],
+  ];
+}
+/* Who a report button stands for: a class or level (or the whole school), and a column. */
+function reportLearners(d) {
+  const col = reportColumns().find(c => c[0] === (d.key || 'all'));
+  if (!col) return { title: '', list: [] };
+  let list = state.students.filter(col[2]);
+  let where = 'whole school';
+  if (d.cls) { list = list.filter(s => s.class === d.cls); where = d.cls; }
+  if (d.level) { list = list.filter(s => s.level === d.level); where = d.level; }
+  if (d.unknownClass) { list = list.filter(s => !CLASS_OPTIONS.includes(s.class)); where = 'a class the app does not recognise'; }
+  if (d.sen) { list = list.filter(s => s.senFlag === d.sen); where = d.sen; }
+  if (d.prog) {
+    const p = state.programs.find(x => x.id === d.prog);
+    const ids = new Set(p ? programAthletes(p).map(s => s.id) : []);
+    list = list.filter(s => ids.has(s.id)); where = p ? p.name : 'programme';
+  }
+  return { title: `${col[1]} · ${where}`, list };
+}
+/* A list of children by name (each opens their page), sorted by class then name. */
+function showLearnerList(title, learners) {
+  const list = [...learners].sort((a, b) => classRank(a.class) - classRank(b.class) || a.name.localeCompare(b.name));
+  openModal({
+    title: `${escapeHtml(title)} (${list.length})`,
+    bodyHtml: list.length ? `<div class="scroll-box" style="max-height:60vh">${list.map(s => `<div class="roster-item"><div>${learnerLink(s.id, s.name)} <span class="card-desc">· ${escapeHtml(classAndStream(s))}${s.gender ? ' · ' + escapeHtml(s.gender) : ''}</span></div></div>`).join('')}</div>`
+      : '<p class="card-desc">Nobody.</p>',
+    footHtml: '<button class="btn btn-primary" data-modal-close>Close</button>',
+  });
+}
+const reportBtn = (n, attrs) => n ? `<button type="button" class="link-btn" data-act="reportList" ${attrs}>${n}</button>` : '<span class="t-muted">0</span>';
+const attr = (k, v) => `data-${k}="${escapeHtml(v)}"`;
+
+/* Problems that make the figures wrong, with the children's names. */
+function reportWarningsHtml() {
+  const unknown = state.students.filter(s => !CLASS_OPTIONS.includes(s.class));
+  const nogender = state.students.filter(s => s.gender !== 'Male' && s.gender !== 'Female');
+  const parts = [];
+  if (unknown.length) parts.push(`<strong>${reportBtn(unknown.length, attr('unknown-class', '1'))}</strong> learner${unknown.length === 1 ? ' has' : 's have'} a class the app does not recognise (for example "${escapeHtml(unknown[0].class || 'blank')}"). Edit them and choose a class from the list.`);
+  if (nogender.length) parts.push(`<strong>${reportBtn(nogender.length, attr('key', 'nogender'))}</strong> learner${nogender.length === 1 ? ' has' : 's have'} no gender set. Edit them so they are counted as boys or girls.`);
+  return parts.length ? `${icon('alert')}<div>${parts.join('<br>')}</div>` : '';
+}
 function renderStatisticalReports() {
+  const s = state.students;
+  const cols = reportColumns();
+  const warn = reportWarningsHtml();
+  ['reportWarnings', 'emisWarnings'].forEach(id => { const w = el(id); if (w) { w.innerHTML = warn; w.style.display = warn ? '' : 'none'; } });
+
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   if (el('levelStats')) el('levelStats').innerHTML = levels.map(l => {
-    const cnt = state.students.filter(s => s.level === l).length;
-    const col = state.students.filter(s => s.level === l).reduce((a, s) => a + studentPaid(s), 0);
-    return `<div class="stat is-info"><div class="stat-label">${l}</div><div class="stat-value">${cnt}</div><div class="stat-sub" style="color:var(--success)">${fmtMoney(col)}</div></div>`;
+    const n = s.filter(x => x.level === l).length;
+    return n || l !== 'Other' ? `<div class="stat is-info"><div class="stat-label">${l}</div><div class="stat-value">${reportBtn(n, attr('level', l))}</div></div>` : '';
   }).join('');
 
-  const classMap = {};
-  state.students.forEach(s => { (classMap[s.class] = classMap[s.class] || []).push(s); });
-  const rows = Object.keys(classMap).sort();
-  if (el('classStatsBody')) el('classStatsBody').innerHTML = rows.length ? rows.map(k => {
-    const list = classMap[k];
-    const avgScores = list.map(s => studentAcademicSummary(s).avg).filter(v => v > 0);
-    const avg = avgScores.length ? Math.round(avgScores.reduce((a, b) => a + b, 0) / avgScores.length) : 0;
-    const cleared = list.filter(s => studentBalance(s) <= 0).length;
-    const outstanding = list.reduce((a, s) => a + studentBalance(s), 0);
-    return `<tr><td style="font-weight:600">${escapeHtml(k)}</td><td>${escapeHtml(list[0].level)}</td><td class="t-center">${list.length}</td><td class="t-center">${avg ? avg + '%' : '—'}</td><td class="t-center" style="color:var(--success)">${cleared}/${list.length}</td><td class="t-num" style="color:var(--danger)">${fmtMoney(outstanding)}</td><td class="t-center" style="color:var(--brand)">${list.filter(s => s.sport).length}</td></tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">No data.</td></tr>';
+  const box = el('classStatsBody');
+  if (box) {
+    const classes = classesWithLearners();
+    const cell = (list, c, extra) => `<td>${reportBtn(list.filter(c[2]).length, attr('key', c[0]) + ' ' + extra)}</td>`;
+    box.innerHTML = classes.length ? `<div class="ts-wrap"><table class="ts rp-grid"><thead><tr><th class="ts-name">Class</th>${cols.map(c => `<th>${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>
+      ${classes.map(k => { const list = s.filter(x => x.class === k); return `<tr><td class="ts-name">${escapeHtml(k)}${CLASS_OPTIONS.includes(k) ? '' : ' <span class="t-warn" title="Not a class the app recognises">?</span>'}</td>${cols.map(c => cell(list, c, attr('cls', k))).join('')}</tr>`; }).join('')}
+      </tbody><tfoot><tr><td class="ts-name">Whole school</td>${cols.map(c => cell(s, c, '')).join('')}</tr></tfoot></table></div>`
+      : '<p class="card-desc">No learners yet.</p>';
+  }
 
-  const sportCounts = {};
-  state.students.forEach(s => { if (s.sport) sportCounts[s.sport] = (sportCounts[s.sport] || 0) + 1; });
-  const entries = Object.entries(sportCounts).sort((a, b) => b[1] - a[1]);
-  const sm = Math.max(1, ...entries.map(e => e[1]));
-  if (el('sportStats')) el('sportStats').innerHTML = entries.length ? entries.map(([sport, n]) => `
-    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600">${escapeHtml(sport)}</span><span>${n}</span></div><div class="bar"><span class="gold" style="width:${(n / sm) * 100}%"></span></div></div>`).join('') : '<p class="card-desc">No sports data.</p>';
+  const progs = (state.programs || []).map(p => ({ p, n: programAthletes(p).length })).sort((a, b) => b.n - a.n || a.p.name.localeCompare(b.p.name));
+  const most = Math.max(1, ...progs.map(x => x.n));
+  if (el('sportStats')) el('sportStats').innerHTML = progs.length ? progs.map(({ p, n }) => `
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600">${escapeHtml(p.name)} <span class="card-desc">· ${escapeHtml(p.sport)}</span></span><span>${reportBtn(n, attr('key', 'all') + ' ' + attr('prog', p.id))} athlete${n === 1 ? '' : 's'}</span></div><div class="bar"><span class="gold" style="width:${(n / most) * 100}%"></span></div></div>`).join('')
+    : '<p class="card-desc">No sports programmes yet.</p>';
 
   renderGenderBoardingSenStats();
   renderEMISPreview();
@@ -1027,54 +1086,65 @@ function renderStatisticalReports() {
 
 function statBars(target, data) {
   const totalN = Math.max(1, data.reduce((a, d) => a + d[1], 0));
-  target.innerHTML = data.map(([l, n, col]) => `
-    <div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600;color:${col}">${l}</span><span>${n} (${Math.round(n / totalN * 100)}%)</span></div><div class="bar"><span style="background:${col};width:${Math.round(n / totalN * 100)}%"></span></div></div>`).join('');
+  target.innerHTML = data.map(([l, n, col, key]) => `
+    <div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600;color:${col}">${l}</span><span>${reportBtn(n, attr('key', key))} (${Math.round(n / totalN * 100)}%)</span></div><div class="bar"><span style="background:${col};width:${Math.round(n / totalN * 100)}%"></span></div></div>`).join('');
 }
 function renderGenderBoardingSenStats() {
   const s = state.students;
-  if (el('genderStats')) statBars(el('genderStats'), [['Male', s.filter(x => x.gender === 'Male').length, '#1d4ed8'], ['Female', s.filter(x => x.gender === 'Female').length, '#be185d'], ['Not set', s.filter(x => !x.gender).length, '#94a3b8']]);
-  if (el('boardingStats')) statBars(el('boardingStats'), [['Day scholar', s.filter(x => (x.boardingStatus || 'Day') === 'Day').length, '#0b5d3b'], ['Boarding', s.filter(x => x.boardingStatus === 'Boarding').length, '#6d28d9'], ['Weekly', s.filter(x => x.boardingStatus === 'Weekly').length, '#1d4ed8']]);
+  const cols = Object.fromEntries(reportColumns().map(c => [c[0], c[2]]));
+  const count = k => s.filter(cols[k]).length;
+  if (el('genderStats')) statBars(el('genderStats'), [['Boys', count('boys'), '#1d4ed8', 'boys'], ['Girls', count('girls'), '#be185d', 'girls'], ['Not set', count('nogender'), '#94a3b8', 'nogender']]);
+  if (el('boardingStats')) statBars(el('boardingStats'), [['Day', count('day'), '#0b5d3b', 'day'], ['Boarders', count('boarding'), '#6d28d9', 'boarding'], ['Weekly boarders', count('weekly'), '#1d4ed8', 'weekly']]);
   const senEl = el('senStats');
   if (senEl) {
     const withSEN = s.filter(x => x.senFlag);
-    if (!withSEN.length) senEl.innerHTML = '<p class="card-desc">No special-needs learners recorded.</p>';
+    if (!withSEN.length) senEl.innerHTML = '<p class="card-desc">No learners with special needs recorded.</p>';
     else {
       const types = {}; withSEN.forEach(x => { types[x.senFlag] = (types[x.senFlag] || 0) + 1; });
-      senEl.innerHTML = `<div style="font-weight:700;margin-bottom:8px">${withSEN.length} SEN learner${withSEN.length > 1 ? 's' : ''}</div>` + Object.entries(types).map(([t, n]) => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)"><span>${escapeHtml(t)}</span><span style="font-weight:700">${n}</span></div>`).join('');
+      senEl.innerHTML = `<div style="font-weight:700;margin-bottom:8px">${reportBtn(withSEN.length, attr('key', 'sen'))} learner${withSEN.length > 1 ? 's' : ''} with special needs</div>`
+        + Object.entries(types).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)"><span>${escapeHtml(t)}</span><span style="font-weight:700">${reportBtn(n, attr('key', 'sen') + ' ' + attr('sen', t))}</span></div>`).join('');
     }
   }
 }
 
+/* EMIS: learners per class by gender, day/boarding and special needs, with
+   totals. No money: fees stay in the Fees downloads. */
+const EMIS_COLUMNS = [
+  ['Boys', s => s.gender === 'Male'], ['Girls', s => s.gender === 'Female'], ['Total', () => true],
+  ['Day', s => (s.boardingStatus || 'Day') === 'Day'], ['Boarders', s => s.boardingStatus === 'Boarding'], ['Weekly boarders', s => s.boardingStatus === 'Weekly'],
+  ['Special needs', s => !!s.senFlag],
+];
+function emisRows() {
+  const classes = classesWithLearners();
+  const row = list => EMIS_COLUMNS.map(([, f]) => list.filter(f).length);
+  return { classes, rows: classes.map(c => [c, ...row(state.students.filter(s => s.class === c))]), total: ['Total', ...row(state.students)] };
+}
 function renderEMISPreview() {
   const card = el('emisCard'); if (!card) return;
   card.style.display = can('canViewEMIS') ? '' : 'none';
   if (!can('canViewEMIS')) return;
-  const el2 = el('emisPreview'); if (!el2) return;
-  const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
+  const box = el('emisPreview'); if (!box) return;
   const ct = getCurrentTerm();
-  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — open one under Fees → Terms &amp; fee structures'}</strong></p>
-    <div class="table-wrap"><table><thead><tr><th>Level</th><th class="t-center">Total</th><th class="t-center">Male</th><th class="t-center">Female</th><th class="t-center">Boarding</th><th class="t-center">Day</th><th class="t-center">SEN</th><th class="t-center">Cleared</th></tr></thead><tbody>
-    ${levels.map(lvl => { const list = state.students.filter(s => s.level === lvl); return `<tr><td style="font-weight:600">${lvl}</td><td class="t-center">${list.length}</td><td class="t-center">${list.filter(s => s.gender === 'Male').length}</td><td class="t-center">${list.filter(s => s.gender === 'Female').length}</td><td class="t-center">${list.filter(s => s.boardingStatus === 'Boarding').length}</td><td class="t-center">${list.filter(s => (s.boardingStatus || 'Day') === 'Day').length}</td><td class="t-center">${list.filter(s => s.senFlag).length}</td><td class="t-center" style="color:var(--success)">${list.filter(s => studentBalance(s) <= 0).length}</td></tr>`; }).join('')}
-    </tbody></table></div>`;
+  const { rows, total } = emisRows();
+  box.innerHTML = `<p class="card-desc" style="margin-bottom:10px">${ct ? escapeHtml(termLabel(ct)) : 'No term open: open one under Fees → Terms & fee structures'} · ${state.students.length} learners</p>
+    ${rows.length ? `<div class="ts-wrap"><table class="ts rp-grid"><thead><tr><th class="ts-name">Class</th>${EMIS_COLUMNS.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>
+      ${rows.map(r => `<tr><td class="ts-name">${escapeHtml(r[0])}</td>${r.slice(1).map(n => `<td>${n}</td>`).join('')}</tr>`).join('')}
+    </tbody><tfoot><tr><td class="ts-name">Total</td>${total.slice(1).map(n => `<td>${n}</td>`).join('')}</tr></tfoot></table></div>` : '<p class="card-desc">No learners yet.</p>'}`;
 }
 function exportEMIS() {
-  if (!can('canViewEMIS')) return;
+  if (!can('canViewEMIS')) return toast('You do not have permission.', 'error');
   const ct = getCurrentTerm();
-  const termLabel = ct ? `${ct.year}_${ct.term.replace(/ /g, '_')}` : 'Term_Unknown';
-  const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
-  const rows = [
-    ['EMIS Report — ' + schoolName()],
-    [`Term: ${ct ? ct.year + ' ' + ct.term : 'Not set'} | Generated: ${todayISO()}`], [],
-    ['Level', 'Total Enrolment', 'Male', 'Female', 'Boarding', 'Day', 'Weekly', 'SEN', 'Cleared Fees', 'Outstanding (' + currency() + ')'],
-  ];
-  const addRow = (label, list) => rows.push([label, list.length, list.filter(s => s.gender === 'Male').length, list.filter(s => s.gender === 'Female').length, list.filter(s => s.boardingStatus === 'Boarding').length, list.filter(s => (s.boardingStatus || 'Day') === 'Day').length, list.filter(s => s.boardingStatus === 'Weekly').length, list.filter(s => s.senFlag).length, list.filter(s => studentBalance(s) <= 0).length, list.reduce((a, s) => a + studentBalance(s), 0)]);
-  levels.forEach(lvl => addRow(lvl, state.students.filter(s => s.level === lvl)));
-  addRow('TOTAL', state.students);
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `EMIS_Report_${termLabel}.csv`; a.click(); URL.revokeObjectURL(a.href);
-  toast('EMIS report exported.', 'success');
+  const { rows, total } = emisRows();
+  downloadCSV(`EMIS-${schoolName().replace(/[^A-Za-z0-9]+/g, '-')}-${ct ? termLabel(ct).replace(/\s+/g, '-') : 'no-term'}.csv`, [
+    [`EMIS figures — ${schoolName()}`],
+    [`${ct ? termLabel(ct) : 'No term open'} · downloaded ${fmtDay(todayISO())}`],
+    [],
+    ['Class', ...EMIS_COLUMNS.map(c => c[0])],
+    ...rows,
+    total,
+  ]);
+  AUTH.audit('EMIS_EXPORT', ct ? termLabel(ct) : '');
+  toast('EMIS figures downloaded.', 'success');
 }
 
 /* ── Select / datalist population ──────────────────────────────────────── */
@@ -1609,6 +1679,7 @@ Object.assign(ACTIONS, {
   waConduct: d => sendConduct(d.id, d.to || '1', true),
   conductAnother: () => { const b = el('conductDone'); if (b) b.style.display = 'none'; const sel = el('conductStudent'); if (sel) sel.focus(); },
   editNotice: d => editNotice(d.id),
+  reportList: d => { const r = reportLearners(d); if (r.title) showLearnerList(r.title, r.list); },
   editStudent: d => openStudentEdit(d.id, d.back === '1'),
   dirShowOwe: () => { el('dirShow').value = 'owe'; studentPage = 1; renderStudentTable(); },
   admitAnother: () => { el('admitDone').style.display = 'none'; const n = document.querySelector('#registerForm input[name="name"]'); if (n) n.focus(); },
