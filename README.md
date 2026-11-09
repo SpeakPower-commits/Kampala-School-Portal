@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v3.7.0
+### Offline-first school administration for Ugandan schools & academies — v3.9.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -62,8 +62,8 @@ Every name opens that child's page, and every number in Reports opens the childr
 
 | Module | Sub-tabs |
 |--------|----------|
-| **Dashboard** | Today's jobs (one tap each), fees at a glance, and today's attendance with the absent children's names |
-| **Students** | All students · Take register · Who was absent · Term sheet · Admit a student · Import from Excel |
+| **Dashboard** | A teacher's **My work today** (their register and their subjects' marks); for the office, **Marks still missing**, Today's jobs (one tap each), fees at a glance, and today's attendance with the absent children's names |
+| **Students** | All students · Attendance today · Who was absent · Term sheet · Admit a new learner · Import from Excel |
 | **Academics** | Enter marks · Class results · Comments · Report cards · Grading scales |
 | **Fees** | Record payment (and the Payments list) · Fees dashboard (and Who owes) · Terms & fee structures · Bursaries |
 | **Sports** | Programmes · Training attendance · Competitions & squads · Athletes · Bursary candidates |
@@ -80,9 +80,9 @@ Every name opens that child's page, and every number in Reports opens the childr
 |------|------|--------|
 | **Executive Director** | All nine modules | Full access, staff accounts, school profile, "who did what", data reset |
 | **School Administrator** | All nine modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
-| **Bursary Officer** | Fees, Reports, Notices | Record and reverse payments, give any learner a bursary, fee reports |
+| **Bursary Officer** | Fees, Students (all students and admissions), Reports, Notices | Admit new learners and correct their details (never remove them), record and reverse payments, give any learner a bursary, fee reports |
 | **Head of Sports** | Sports, Notices | Programmes, training attendance, competitions, squads, athlete profiles, bursary candidates |
-| **Teacher** | Students (My classes and the register, no fees), Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments, text the guardians of absent learners (online) |
+| **Teacher** | Dashboard (**My work today**), Students (My classes and the register, no fees), Academics, Notices — **their own classes only** | Call the register for the class they are class teacher of, type marks in **their own subjects only** (colleagues' columns are shown but locked), write class-teacher comments, text the guardians of absent learners (online) |
 | **Parent** (online) | The parent portal (`parent.html`) | Their own children only: fees, receipts, published report cards, attendance, notices for parents |
 
 ---
@@ -100,12 +100,16 @@ Every name opens that child's page, and every number in Reports opens the childr
 4. Under **Fees → Terms & fee structures**, open the current term, then enter
    what each class or level pays (mark boarding-only items) and, if you use
    them, the installment plan.
-5. Add learners under **Students** — one by one with **Admit a student**, or all
+5. Add learners under **Students** — one by one with **Admit a new learner** (the office: director, administrator or bursar), or all
    at once with **Import from Excel** (download the template, fill it in Excel,
    save as CSV). Use the opening-balance column for fees owed from before.
 6. Under **Administration → Staff & who did what**, press **Add a staff member**
-   for each teacher: name, username, role **Teacher**, their classes and a first
-   password (they choose their own when they first sign in).
+   for each teacher: name, username, role **Teacher**, a first password (they
+   choose their own when they first sign in), and **who teaches what**:
+   - **Class teacher of**: the class whose roll they call each morning;
+   - **Subjects they teach**: one row per subject and class, e.g. Mathematics · S.4 and
+     Mathematics · S.3. They type marks only in these; their home screen lists them.
+   The classes they may open follow from these rows.
 7. Press **Back up now** under **Administration → Backup & restore**.
 
 ## Running a term
@@ -113,21 +117,31 @@ Every name opens that child's page, and every number in Reports opens the childr
 | When | Where | What |
 |------|-------|------|
 | Start of term | Fees → Terms & fee structures | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
-| Every morning | Students → Take register | Each class teacher marks every child; message the guardians of absent learners. The Dashboard names the absent children and shows which classes are still to be marked. |
+| Every morning | Students → Attendance today (or the teacher's **My work today**) | Each class teacher marks every child; message the guardians of absent learners. The Dashboard names the absent children, shows which classes are still to be marked, and flags any child absent 3 days in a row. |
 | Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, then press **Print receipt**. |
 | Weekly | Fees → Fees dashboard | Under **Who owes**, choose a class and send reminders; check the share of this term's bills paid. |
 | Every week | Administration → Backup & restore | **Back up now** (offline edition) and keep the file safe. |
-| Test / exam time | Academics → Enter marks | Enter a subject for the whole class (beginning, mid or end of term). |
-| End of term | Academics → Comments, then Report cards | Write comments, check **Class results**, then view or print each card, or **Print all** for the class. |
+| Test / exam time | My work today, or Academics → Enter marks | Each subject teacher types their pile of scripts into the mark sheet (beginning, mid or end of term). The director's Dashboard lists **Marks still missing**, by subject, teacher and name. |
+| End of term | Academics → Class results, Comments, then Report cards | Check **Marks progress** (every subject has every child's mark), write comments, then view or print each card, or **Print all** for the class. Report cards warn if any marks are still missing. |
 
 ## How to: the daily jobs
 
-**Take the register** (class teacher, every morning)
-1. **Students → Take register.** Choose the class (and stream). Every child starts **Not marked**:
-   nobody is counted present until you mark them.
+**A teacher's day starts on My work today** (Dashboard)
+- **Attendance today · S.4** (the class teacher's class): "Not taken yet", or who took it and the
+  names of the absent. **Take today's attendance** opens it. A child absent **3 days or more in a
+  row** is named with the guardian's number to call.
+- **One card per subject taught**, e.g. **Mathematics · S.4**, with the three exams:
+  "Beginning of term 40 of 40 ✓ · Mid-term 34 of 40 · 6 to go · End of term not started" and the
+  names still to enter. Tap an exam: its mark sheet opens with everything chosen.
+
+**Take attendance** (class teacher, every morning)
+1. **Students → Attendance today** (or **Take today's attendance** on My work today). The children
+   are those admitted to the class; choose the class (and stream). Every child starts **Not marked**:
+   nobody is counted present until you mark them. The day is today; **Another day…** corrects an
+   earlier one.
 2. Tap **Present**, **Absent**, **Late** or **Excused** for every child. The line above the list
    says who is not marked yet and names the absent and late.
-3. Press **Save register**. If anyone is still not marked, nothing is saved: they are named
+3. Press **Save attendance**. If anyone is still not marked, nothing is saved: they are named
    and highlighted. Once saved, the absent children are listed with SMS and WhatsApp buttons
    for their guardians.
 
@@ -139,13 +153,30 @@ Every name opens that child's page, and every number in Reports opens the childr
   each child's totals. Press **Print** for the file.
 - Tap a child's name for their page, which lists the dates they were absent.
 
-**Enter marks** (subject teacher)
-1. **Academics → Enter marks.** Choose the class, the subject and the exam.
-2. Type each child's score. The grade shows as you type, and Enter moves to the next child.
-3. Press **Save marks**.
+**Enter marks** (subject teacher) — the mark sheet: one row per child, one column per subject,
+so each box is one child's paper in one subject.
+1. From **My work today**, tap the exam on your subject's card (or **Academics → Enter marks**,
+   choose the class and press **Beginning of term**, **Mid-term** or **End of term**).
+2. Set **out of** under the subject to what the paper was marked out of (e.g. 50). Type each
+   score as written on the script: 38 out of 50 shows **76%** and its grade. **Find a child**
+   jumps to one name; Enter moves down to the next child. Your own subjects are highlighted;
+   colleagues' columns are shown but locked.
+3. Press **Save marks**. A mark outside the paper's total is refused; changing a mark already
+   saved asks first ("Nakato Sarah's Mathematics from 76% to 80%"). Every save is in "who did what".
+
+**One child's marks** (a make-up paper, a child who joined late)
+- Tap the child's name → **Marks** → **Enter marks**: every subject for the chosen exam, by
+  the same rules.
+
+**Which marks are still missing** (director of studies, head teacher)
+- **Dashboard → Marks still missing:** every unfinished sheet this term, e.g.
+  "S.4 · Physics — End of term: 34 of 40 · Mr. Kato", with the names. **Open** goes to it.
+- **Academics → Class results → Marks progress:** each subject's BOT, MOT and EOT counts
+  ("34/40"), the subject teacher, and who is still to be entered.
 
 **Report cards** (end of term)
-1. **Academics → Class results:** check every child's marks, average and position.
+1. **Academics → Class results:** check **Marks progress** first, then every child's marks,
+   average and position.
 2. **Academics → Comments:** write the comments (or **Suggest for blanks**), then **Save comments**.
 3. **Academics → Report cards:** choose the class and term, and fill in "Printed on every card".
    - **View** shows one child's card.
@@ -181,7 +212,7 @@ percentage and check the new bill before pressing **Save bursary**.
 **Find, admit or correct a learner**
 - **Students → All students:** choose a class, or search a name (any word order) or a guardian's
   number. "N owe fees" lists those who owe.
-- **Admit a student:** fill in the numbered groups and press **Admit student**; the same name in the
+- **Admit a new learner** (the office: director, administrator or bursar): fill in the numbered groups and press **Admit student**; the same name in the
   same class asks first. **Import from Excel** skips learners already in the school.
 
 **Discipline**
@@ -441,7 +472,8 @@ before printing report cards.
 | Can't install as an app | It must be served over HTTPS (or `localhost`), not `file://` |
 | Restore failed | The file must be a `.json` backup exported by this app |
 | Update not showing | The app is network-first; reconnect once and refresh |
-| Teacher sees no classes | Edit the teacher's account and tick their classes |
+| Teacher sees no classes | Edit the teacher's account: set **Class teacher of** and the **subjects they teach** |
+| A teacher cannot type in a subject | Its column is locked because it is not one of their subjects: add the subject to their account, or let its own teacher enter it |
 | A learner is billed the wrong amount | Check **Fee structures** for that term (a class beats a level, a level beats "All classes"), then **Apply to learners** |
 | Import rejected rows | The preview lists the problem on each row; fix them in the sheet and import again |
 

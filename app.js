@@ -608,11 +608,15 @@ function updateMetrics() {
     const mine = visibleStudents();
     const classes = visibleClasses();
     const today = todayISO();
-    const done = classes.filter(c => (state.registers || []).some(r => r.class === c && r.date === today)).length;
+    // The register a teacher answers for is their own class's (when they are a class teacher).
+    const own = myTeaching().classTeacherOf;
+    const regs = own ? [own] : classes;
+    const done = regs.filter(c => (state.registers || []).some(r => r.class === c && r.date === today)).length;
     cards = [
       { label: 'My classes', value: classes.length },
       { label: 'Learners', value: mine.length, cls: 'is-info' },
-      { label: "Today's registers", value: `${done} / ${classes.length}`, cls: done === classes.length ? 'is-success' : 'is-gold' },
+      own ? { label: `Today's register · ${escapeHtml(own)}`, value: done ? 'Taken' : 'Not taken', cls: done ? 'is-success' : 'is-gold' }
+        : { label: "Today's registers", value: `${done} / ${classes.length}`, cls: done === classes.length ? 'is-success' : 'is-gold' },
     ];
   } else {
     cards = [
@@ -628,6 +632,11 @@ function updateMetrics() {
       <div class="stat-label">${c.label}</div>
       <div class="stat-value ${c.money ? 'money' : ''}">${c.value}</div>${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
     </div>`).join('');
+
+  // A teacher's home is their own work (My work today), not the whole school.
+  const teacher = role === 'teacher';
+  const show = (id, on) => { const e = el(id); if (e) e.style.display = on ? '' : 'none'; };
+  show('attTodayCard', !teacher); show('levelCard', !teacher); show('recentPayCard', hasTab('payments'));
 
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   const counts = levels.map(l => s.filter(x => x.level === l).length);
@@ -1488,7 +1497,12 @@ function renderUsersList() {
     : 'Everyone who can sign in to this app on this device only. Give each new person a first password; they must change it the first time they sign in.';
   const avatar = u => `<div class="avatar" style="background:${ROLE_COLOURS[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div>`;
   const role = u => `<span style="color:${ROLE_COLOURS[u.role] || '#64748b'};font-weight:600">${escapeHtml(ROLE_NAMES[u.role] || u.role)}</span>`;
-  const classes = u => u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : '';
+  const classes = u => {
+    if (u.role !== 'teacher') return '';
+    const t = teachingOf(u.username);
+    const parts = [t.classTeacherOf ? 'Class teacher of ' + t.classTeacherOf : '', t.teaches.length ? 'Teaches ' + t.teaches.map(x => `${x.subject} (${x.class})`).join(', ') : ''].filter(Boolean);
+    return `<div class="card-desc">${escapeHtml(parts.join(' · ') || 'Classes: ' + ((u.assignedClasses || []).join(', ') || 'none yet'))}</div>`;
+  };
   const me = u => u.id === currentSession.userId;
   if (ONLINE_EDITION) {
     box.innerHTML = users.length ? users.map(u => `<div class="user-card">${avatar(u)}<div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}${me(u) ? ' <span class="card-desc">(you)</span>' : ''}</div><div class="card-desc">${escapeHtml(u.username)} · ${role(u)}</div>${classes(u)}</div>
@@ -1519,6 +1533,10 @@ function loadUserForEdit(userId) {
   if (ONLINE_EDITION) el('editUsername').readOnly = true;   // an account's email cannot be changed here
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = (u.assignedClasses || []).includes(cb.value); });
   toggleAssignedClasses();
+  const t = teachingOf(u.username);
+  el('editClassTeacher').value = t.classTeacherOf || '';
+  el('editTeaches').innerHTML = '';
+  t.teaches.forEach(x => addTeachRow(x.class, x.subject));
   setStaffFormMode(u);
   el('staffFormBox').open = true;
   el('editDisplayName').focus();
@@ -1529,7 +1547,22 @@ function clearUserEditForm() {
   el('editRole').value = '';
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = false; });
   toggleAssignedClasses();
+  if (el('editClassTeacher')) el('editClassTeacher').value = '';
+  if (el('editTeaches')) el('editTeaches').innerHTML = '';
   setStaffFormMode(null);
+}
+/* One "subject they teach" row: the class, then that class's subjects. */
+function addTeachRow(cls = '', subject = '') {
+  const box = el('editTeaches'); if (!box) return;
+  const row = document.createElement('div');
+  row.className = 'teach-row';
+  const subjOptions = c => '<option value="">Subject…</option>' + (c ? subjectsFor(c) : []).map(x => `<option${x.toLowerCase() === String(subject).toLowerCase() ? ' selected' : ''}>${escapeHtml(x)}</option>`).join('');
+  row.innerHTML = `<select class="input tr-class" aria-label="Class"><option value="">Class…</option>${CLASS_OPTIONS.map(c => `<option${c === cls ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>
+    <select class="input tr-subject" aria-label="Subject">${subjOptions(cls)}</select>
+    <button class="btn btn-ghost btn-xs t-bad" type="button" aria-label="Remove this subject">Remove</button>`;
+  row.querySelector('.tr-class').addEventListener('change', e => { subject = ''; row.querySelector('.tr-subject').innerHTML = subjOptions(e.target.value); });
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  box.appendChild(row);
 }
 /* Teachers are limited to the classes ticked here. */
 function renderAssignedClassOptions() {
@@ -1539,6 +1572,8 @@ function renderAssignedClassOptions() {
 }
 function toggleAssignedClasses() {
   renderAssignedClassOptions();
+  const ct = el('editClassTeacher');
+  if (ct && !ct.dataset.ready) { ct.dataset.ready = '1'; ct.innerHTML = '<option value="">Not a class teacher</option>' + CLASS_OPTIONS.map(c => `<option>${escapeHtml(c)}</option>`).join(''); }
   const wrap = el('assignedClassesWrap');
   if (wrap) wrap.style.display = el('editRole').value === 'teacher' ? '' : 'none';
 }
@@ -1552,8 +1587,14 @@ async function handleUserEditSubmit(e) {
   if (!username || !displayName) return toast(ONLINE_EDITION ? 'Type their name and email address.' : 'Type their name and a username.', 'error');
   if (!ROLE_NAMES[role]) return toast('Choose the role: what this person does decides what they can see.', 'error');
   const data = { username, displayName, role };
-  data.assignedClasses = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
-  if (role === 'teacher' && !data.assignedClasses.length) return toast('Tick at least one class for this teacher.', 'error');
+  // A teacher: the class they are class teacher of, and the subjects they teach in which classes.
+  const classTeacherOf = role === 'teacher' ? (el('editClassTeacher').value || '') : '';
+  const teaches = role === 'teacher' ? [...document.querySelectorAll('#editTeaches .teach-row')].map(r => ({ class: r.querySelector('.tr-class').value, subject: r.querySelector('.tr-subject').value }))
+    .filter(x => x.class || x.subject) : [];
+  if (teaches.some(x => !x.class || !x.subject)) return toast('Each subject they teach needs both the class and the subject.', 'error');
+  const ticked = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
+  data.assignedClasses = role === 'teacher' ? [...new Set([...ticked, classTeacherOf, ...teaches.map(x => x.class)].filter(Boolean))] : [];
+  if (role === 'teacher' && !data.assignedClasses.length) return toast('Choose the class this teacher is class teacher of, or a subject they teach.', 'error');
   // Offline, a new account without a password could never sign in.
   if (!ONLINE_EDITION && !id && !password) return toast('Give the new account a first password. They will choose their own when they first sign in.', 'error');
   if (id) data.id = id;
@@ -1566,6 +1607,9 @@ async function handleUserEditSubmit(e) {
   }
   const res = await AUTH.upsertUser(data);
   if (!res.ok) return toast(res.error, 'error');
+  // Who teaches what lives in the school settings, read by every device.
+  setTeaching(username, role === 'teacher' && (classTeacherOf || teaches.length) ? { name: displayName, classTeacherOf, teaches } : null);
+  saveState(); renderAll();
   if (ONLINE_EDITION && res.invited) toast(`${displayName} is invited. Ask them to open the portal, choose "First time here?" and use ${username}.`, 'success');
   else toast(id ? `${displayName}'s account is saved.` : `${displayName} can now sign in as ${username}${ONLINE_EDITION ? '' : ' with the first password you gave'}.`, 'success');
   clearUserEditForm(); el('staffFormBox').open = false;
@@ -1603,7 +1647,7 @@ const AUDIT_WORDS = {
   PAYMENT_RECORD: ['money', 'Recorded a payment'], PAYMENT_VOID: ['money', 'Reversed a payment'],
   BURSARY_AWARD: ['money', 'Changed a bursary'], TERM_OPEN: ['money', 'Opened a term and billed learners'], TERM_REBILL: ['money', 'Applied the fee structures'],
   STUDENT_REGISTER: ['learners', 'Admitted a learner'], STUDENT_EDIT: ['learners', "Changed a learner's details"], STUDENT_DELETE: ['learners', 'Removed a learner'],
-  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
+  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], MARKS_SAVE: ['learners', 'Saved marks'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
   NOTICE_POST: ['learners', 'Posted a notice'], NOTICE_EDIT: ['learners', 'Changed a notice'], NOTICE_DELETE: ['learners', 'Deleted a notice'],
   RESULTS_PUBLISH: ['learners', 'Published results to parents'], EMIS_EXPORT: ['learners', 'Downloaded the EMIS figures'],
   USER_UPSERT: ['staff', 'Added or changed a staff account'], USER_INVITE: ['staff', 'Invited a staff member'], USER_UPDATE: ['staff', 'Changed a staff account'],
@@ -1696,7 +1740,7 @@ const TAB_LABELS = {
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
   // Attendance lives under Students: the register, who was absent and the term sheet.
-  directory: [['list', 'All students'], ['daily', 'Take register', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
+  directory: [['list', 'All students'], ['daily', 'Attendance today', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a new learner', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
   academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
@@ -1769,15 +1813,15 @@ function showSub(tab, sub) {
 /* The everyday tasks this person can do, one tap each:
    [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
 const TODAYS_JOBS = [
-  ['directory/daily', "Take today's register", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
+  ['directory/daily', "Today's attendance", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
   ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => can('canMarkRegister')],
-  ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
+  ['academics/marks', 'Enter marks', 'The class mark sheet: each child\'s paper, subject by subject', () => can('canAddAcademic')],
   ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
   ['payments/record', 'Record a payment', 'Then print the receipt', () => can('canRecordPayment')],
   ['payments/dashboard', 'Who owes fees', 'Class by class, with reminders', () => hasTab('payments')],
   ['sports/training', 'Mark training', 'Every athlete present or absent', () => can('canMarkAttendance')],
   ['directory/list', 'Find a child', 'By name, class or guardian number', () => hasTab('directory')],
-  ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
+  ['directory/admit', 'Admit a new learner', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
   ['conduct', 'Log a discipline case', 'Or a commendation, with the message to the guardian', () => can('canLogConduct')],
   ['noticeboard', 'Post a notice', 'For staff' + (ONLINE_EDITION ? ', or staff and parents' : ''), () => can('canPostNotice')],
   ['act:backupNow', 'Back up now', 'Download a copy of everything on this device', () => !ONLINE_EDITION && can('canExport')],
@@ -1943,6 +1987,7 @@ function setupBindings() {
   const uef = el('userEditForm'); if (uef) uef.addEventListener('submit', handleUserEditSubmit);
   on('clearUserBtn', 'click', () => { clearUserEditForm(); el('staffFormBox').open = false; });
   on('addStaffBtn', 'click', openStaffForm);
+  on('addTeachBtn', 'click', () => addTeachRow());
   on('auditFilter', 'change', () => { auditLimit = 100; renderAuditLog(); });
   on('settingsForm', 'input', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });
   on('settingsForm', 'change', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });

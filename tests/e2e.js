@@ -451,6 +451,50 @@ async function classResults(page, cls) {
     assert(/1st\s*Nakato Sarah/.test(res) && /2nd\s*Mugisha Brian/.test(res) && /Biology/.test(res), 'positions not shown in class results: ' + res);
   });
 
+  await step('Enter marks is the mark sheet: a child per row, a subject per column; "out of 50" is kept as %, out-of-range is refused, changes ask first', async () => {
+    await tab(page, 'academics', 'marks');
+    await page.selectOption('#msClass', 'S.4');
+    await page.selectOption('#msSubject', '');   // the whole mark sheet
+    await page.click('#msExamSeg [data-exam="MOT"]');
+    assert(await page.inputValue('#msExam') === 'MOT', 'exam button did not choose Mid-term');
+    const cols = await page.$$eval('#markSheetRoster thead .ms-subj', t => t.map(x => x.textContent));
+    assert(cols.includes('Mathematics') && cols.includes('English Language') && cols.length >= 8, 'subject columns: ' + cols.join(', '));
+    assert(await page.$$eval('#markSheetRoster tbody .ms-row', r => r.length) === 2, 'not one row per child');
+    const box = (id, subj) => `#markSheetRoster .ms-score[data-student="${id}"][data-subject="${subj}"]`;
+    // The Mathematics paper was marked out of 50: 38 is 76%.
+    await page.fill('#markSheetRoster .ms-outof[data-subject="Mathematics"]', '50');
+    await page.fill(box('NPA/2026/001', 'Mathematics'), '38');
+    await page.fill(box(secondId, 'English Language'), '64');
+    assert(/76%/.test(await page.textContent('#markSheetRoster .ms-row[data-student="NPA/2026/001"]')), '38 out of 50 is not shown as 76%');
+    // A score above the paper's total is refused, naming the child and the subject; nothing is saved.
+    await page.fill(box(secondId, 'Mathematics'), '60');
+    await page.click('#msSaveBtn');
+    await page.waitForTimeout(150);
+    assert(/Mugisha Brian \(Mathematics: 60 is not between 0 and 50\)/.test(await page.textContent('#toastHost')), 'refusal: ' + await page.textContent('#toastHost'));
+    const mot = () => page.evaluate(() => state.students.filter(s => s.class === 'S.4').flatMap(s => (s.academics || []).filter(a => a.examSet === 'MOT').map(a => `${s.name}|${a.subject}|${a.score}`)).sort().join(' ; '));
+    assert(await mot() === '', 'marks saved despite an out-of-range score');
+    await page.fill(box(secondId, 'Mathematics'), '45');
+    await page.click('#msSaveBtn');
+    await page.waitForTimeout(150);
+    assert(await mot() === 'Mugisha Brian|English Language|64 ; Mugisha Brian|Mathematics|90 ; Nakato Sarah|Mathematics|76', 'saved: ' + await mot());
+    // Changing a saved mark asks first, naming the child, the subject and both marks.
+    await page.fill(box('NPA/2026/001', 'Mathematics'), '40');
+    await page.click('#msSaveBtn');
+    await page.waitForSelector('#mdOk');
+    assert(/Nakato Sarah's Mathematics from 76% to 80%/.test(await page.textContent('#modalHost')), 'change prompt: ' + await page.textContent('#modalHost'));
+    await page.click('#mdOk');
+    await page.waitForTimeout(150);
+    assert(/Mathematics\|80/.test(await mot()), 'change not saved: ' + await mot());
+    // Class averages, and "Find a child".
+    assert(/Class average/.test(await page.textContent('#markSheetRoster tfoot')), 'no class average row');
+    await page.fill('#msFind', 'mugisha');
+    assert(await page.$$eval('#markSheetRoster tbody .ms-row', rs => rs.filter(r => r.style.display !== 'none').length) === 1, 'Find a child did not narrow the sheet');
+    await page.fill('#msFind', '');
+    // Leave the later checks as they were: remove these mid-term marks again.
+    await page.evaluate(() => { state.students.forEach(s => { s.academics = (s.academics || []).filter(a => a.examSet !== 'MOT'); }); saveState(); renderAll(); });
+    await page.click('#msExamSeg [data-exam="EOT"]');
+  });
+
   await step('Primary uses PLE grading: four subjects, aggregate and division', async () => {
     await tab(page, 'directory', 'admit');
     await page.fill('#registerForm input[name="name"]', 'Achieng Mary');
@@ -635,7 +679,7 @@ async function classResults(page, cls) {
   await step('Students → Take register: nobody is present until the teacher marks them, and the register saves only when everyone is marked', async () => {
     await tab(page, 'directory', 'daily');
     const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
-    assert(subs.join('|') === 'All students|Take register|Who was absent|Term sheet|Admit a student|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
+    assert(subs.join('|') === 'All students|Attendance today|Who was absent|Term sheet|Admit a new learner|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
     assert(!(await page.$('#regAllPresentBtn')), 'the "Mark everyone present" button is still there');
     await page.selectOption('#regClass', 'S.4');
     // Every child starts unmarked.
@@ -761,9 +805,17 @@ async function classResults(page, cls) {
     await page.click('#userEditForm button[type="submit"]');
     await page.waitForTimeout(300);
     assert(await count() === before && /Choose the role/.test(await page.textContent('#toastHost')), 'saved without a role');
-    // No password for a new account: refused (it could never sign in).
+    // Who teaches what: class teacher of S.4, and Mathematics in S.4. A subject
+    // row with no subject is refused.
     await page.selectOption('#editRole', 'teacher');
-    await page.check('#editAssignedClasses input[value="S.4"]');
+    await page.selectOption('#editClassTeacher', 'S.4');
+    await page.click('#addTeachBtn');
+    await page.selectOption('#editTeaches .tr-class', 'S.4');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForTimeout(300);
+    assert(await count() === before && /needs both the class and the subject/.test(await page.textContent('#toastHost')), 'saved a subject row with no subject');
+    await page.selectOption('#editTeaches .tr-subject', 'Mathematics');
+    // No password for a new account: refused (it could never sign in).
     await page.fill('#editPassword', '');
     await page.click('#userEditForm button[type="submit"]');
     await page.waitForTimeout(300);
@@ -773,10 +825,35 @@ async function classResults(page, cls) {
     await page.waitForTimeout(400);
     const list = await page.textContent('#usersList');
     assert(/Mr\. Kato/.test(list) && /Teacher/.test(list) && /Must choose a new password/.test(list), 'teacher not listed as needing a new password: ' + list);
-    // Editing says whose account it is.
+    assert(/Class teacher of S\.4 · Teaches Mathematics \(S\.4\)/.test(list), 'what the teacher teaches is not listed: ' + list);
+    const kato = await page.evaluate(() => ({ classes: AUTH.getUsers().find(u => u.username === 'tkato').assignedClasses, teaching: state.settings.teaching.tkato }));
+    assert(JSON.stringify(kato) === '{"classes":["S.4"],"teaching":{"name":"Mr. Kato","classTeacherOf":"S.4","teaches":[{"class":"S.4","subject":"Mathematics"}]}}', 'saved: ' + JSON.stringify(kato));
+    // Editing says whose account it is, and shows what they teach.
     await page.click('#usersList [data-act="editUser"] >> nth=-1');
     assert(/^Editing /.test(await page.textContent('#staffFormTitle')), 'edit title: ' + await page.textContent('#staffFormTitle'));
+    assert(await page.inputValue('#editClassTeacher') === 'S.4' && await page.inputValue('#editTeaches .tr-subject') === 'Mathematics', 'the edit form does not show what they teach');
     await page.click('#clearUserBtn');
+  });
+
+  await step('Marks progress names who has no mark yet and whose subject it is; report cards warn first; the dashboard lists marks still missing', async () => {
+    const res = await classResults(page, 'S.4');
+    assert(/Marks progress/.test(res), 'no marks progress: ' + res);
+    const row = await page.$eval('#classResults .ms-progress tbody tr:has-text("Mathematics")', tr => [...tr.cells].map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+    assert(/^Mathematics\s*Mr\. Kato$/.test(row[0]) && row.slice(1).join('|') === '—|—|0/2', 'Mathematics progress: ' + JSON.stringify(row));
+    assert(/Mathematics · End of term \(Mr\. Kato\): 2 still to enter — Mugisha Brian, Nakato Sarah/.test(res), 'missing names: ' + res);
+    assert(/Biology\s*—\s*—\s*2\/2 ✓/.test(res), 'a complete subject is not ticked: ' + res);
+    // Report cards warn before printing.
+    await tab(page, 'academics', 'reportcards');
+    await page.selectOption('#rcClass', 'S.4');
+    const warn = (await page.textContent('#rcWarn')).replace(/\s+/g, ' ');
+    assert(/Marks still missing/.test(warn) && /Mathematics: 2 learners have no End of term mark \(Mr\. Kato\) — Mugisha Brian, Nakato Sarah/.test(warn), 'report card warning: ' + warn);
+    // The director's dashboard: marks still missing, school-wide; one tap opens that sheet ready.
+    await tab(page, 'overview');
+    const work = (await page.textContent('#myWorkCard')).replace(/\s+/g, ' ');
+    assert(/Marks still missing/.test(work) && /S\.4 · Mathematics — End of term: 0 of 2 · Mr\. Kato/.test(work) && /Still to enter: Mugisha Brian, Nakato Sarah/.test(work), 'dashboard: ' + work);
+    await page.click('#myWorkCard .work-gap:has-text("Mathematics") [data-act="openSheet"]');
+    assert(await page.inputValue('#msClass') === 'S.4' && await page.inputValue('#msSubject') === 'Mathematics' && await page.inputValue('#msExam') === 'EOT', 'the sheet did not open ready');
+    assert(!(await page.$eval(`#markSheetRoster .ms-score[data-student="${secondId}"]`, i => i.disabled)), 'the director cannot type in it');
   });
 
   await step('an old account with no password gets a message at sign-in, not a stuck button', async () => {
@@ -1029,7 +1106,11 @@ async function classResults(page, cls) {
     await signIn(page, 'bursary', 'Bursary@2026');
     await changePassword(page, 'Bursary@2026', 'Bursar2026Xyz');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["payments","directory","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    // The office admits learners: the bursar has Admit and Import, and no register.
+    await tab(page, 'directory');
+    const bsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(bsubs.join('|') === 'All students|Admit a new learner|Import from Excel', 'bursar Students sub-tabs: ' + bsubs.join('|'));
     await tab(page, 'payments', 'bursaries');
     const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);   // a P.7 pupil, not an athlete
     const before = (await acct(pid)).currentBilled;
@@ -1053,12 +1134,12 @@ async function classResults(page, cls) {
     await changePassword(page, 'Teach2026x', 'Teach2026New');   // a first password must be replaced
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["overview","directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
     const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
-    assert(labels.join('|') === 'Students|Academics|Notices', 'teacher labels ' + labels.join('|'));
+    assert(labels.join('|') === 'Dashboard|Students|Academics|Notices', 'teacher labels ' + labels.join('|'));
     await tab(page, 'directory');
     const tsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
-    assert(tsubs.join('|') === 'My classes|Take register|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
+    assert(tsubs.join('|') === 'My classes|Attendance today|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
     await page.click('#subNav [data-sub="list"]');
     const mine = await page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
     assert(mine.length === 2 && mine.every(r => /S\.4/.test(r)), 'teacher list is not their class: ' + mine.join(' | '));
@@ -1071,6 +1152,75 @@ async function classResults(page, cls) {
     assert(JSON.stringify(markClasses) === '["S.4"]', 'teacher can enter marks for other classes: ' + JSON.stringify(markClasses));
     const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.dataset.sub));
     assert(JSON.stringify(subs) === '["marks","results","comments","reportcards"]', 'teacher academics sub-tabs ' + JSON.stringify(subs));
+  });
+
+  await step("a teacher's home is their own work: the class register and each subject they teach, with how far the marking has got", async () => {
+    await tab(page, 'overview');
+    assert(await page.isVisible('#myWorkCard') && await page.textContent('#myWorkTitle') === 'My work today', 'no My work today');
+    for (const id of ['attTodayCard', 'levelCard', 'recentPayCard']) assert(!(await page.isVisible('#' + id)), id + ' shows on a teacher\'s home');
+    const work = (await page.textContent('#myWorkBody')).replace(/\s+/g, ' ');
+    assert(/Attendance today · S\.4/.test(work) && /Taken/.test(work) && /1 present · 1 absent: Mugisha Brian/.test(work), 'class teacher card: ' + work);
+    assert(/Mathematics · S\.4/.test(work) && /End of term\s*0 of 2 · 2 to go/.test(work) && /End of term: still to enter — Mugisha Brian, Nakato Sarah/.test(work), 'subject card: ' + work);
+    assert(/Beginning of term\s*not started/.test(work), 'an exam not given yet: ' + work);
+    // One tap opens that mark sheet with everything chosen; their column is open.
+    await page.click('#myWorkBody .work-exam[data-exam="EOT"]');
+    assert(await page.inputValue('#msClass') === 'S.4' && await page.inputValue('#msSubject') === 'Mathematics' && await page.inputValue('#msExam') === 'EOT', 'the sheet did not open ready');
+    await page.fill(`#markSheetRoster .ms-score[data-student="${secondId}"]`, '55');
+    await page.fill('#markSheetRoster .ms-score[data-student="NPA/2026/001"]', '82');
+    await page.click('#msSaveBtn');
+    await page.waitForTimeout(150);
+    const math = await page.evaluate(id => (state.students.find(s => s.id === id).academics || []).find(a => a.termId === getCurrentTerm().id && a.subject === 'Mathematics' && a.examSet === 'EOT'), secondId);
+    assert(math && math.score === 55, 'the teacher\'s mark was not saved: ' + JSON.stringify(math));
+    // The whole sheet: the other subjects are shown but locked; theirs is highlighted.
+    await page.selectOption('#msSubject', '');
+    await page.waitForTimeout(100);
+    const cols = await page.$$eval('#markSheetRoster thead th.ms-col', ths => ths.map(t => `${t.querySelector('.ms-subj').textContent}:${t.classList.contains('ms-mine') ? 'mine' : 'other'}:${t.querySelector('.ms-outof').disabled ? 'locked' : 'open'}`));
+    assert(cols[0] === 'Mathematics:mine:open' && cols.slice(1).every(c => /:other:locked$/.test(c)), 'columns: ' + cols.join(', '));
+    assert(await page.$eval(`#markSheetRoster .ms-score[data-student="${secondId}"][data-subject="Physics"]`, i => i.disabled), 'a colleague\'s column can be typed in');
+    assert(/You type in Mathematics/.test(await page.textContent('#markSheetRoster')), 'no note about locked columns');
+    // The home card now says the End of term marks are done.
+    await tab(page, 'overview');
+    assert(/End of term\s*2 of 2 ✓/.test((await page.textContent('#myWorkBody')).replace(/\s+/g, ' ')), 'progress not updated');
+  });
+
+  await step("one learner, every subject: a make-up paper is entered from the learner's page, by the same rules", async () => {
+    await page.evaluate(() => openLearner('NPA/2026/001', 'marks'));
+    await page.waitForSelector('.modal [data-act="learnerMarks"]');
+    await page.click('.modal [data-act="learnerMarks"]');
+    await page.waitForSelector('.modal .lm-row');
+    assert((await page.textContent('.modal h3')).includes('Enter marks — Nakato Sarah'), 'title: ' + await page.textContent('.modal h3'));
+    const row = subj => `.modal .lm-row[data-subject="${subj}"]`;
+    assert(!(await page.$eval(row('Mathematics') + ' .lm-score', i => i.disabled)) && await page.$eval(row('Physics') + ' .lm-score', i => i.disabled), 'locks on the learner page');
+    assert(await page.inputValue(row('Mathematics') + ' .lm-score') === '82', 'the saved mark is not shown');
+    // 43 out of 50 is 86%; changing a saved mark asks first.
+    await page.fill(row('Mathematics') + ' .lm-outof', '50');
+    await page.fill(row('Mathematics') + ' .lm-score', '43');
+    assert(/86%/.test(await page.textContent(row('Mathematics') + ' .lm-pct')), 'percentage not shown');
+    await page.click('#lmSave');
+    await page.waitForSelector('#mdOk');
+    assert(/Nakato Sarah's Mathematics from 82% to 86%/.test(await page.textContent('#modalHost')), 'change prompt: ' + await page.textContent('#modalHost'));
+    await page.click('#mdOk');
+    await page.waitForSelector('.modal #learnerBody');
+    const m = await page.evaluate(() => state.students.find(s => s.id === 'NPA/2026/001').academics.find(a => a.termId === getCurrentTerm().id && a.subject === 'Mathematics' && a.examSet === 'EOT').score);
+    assert(m === 86, 'saved: ' + m);
+    assert(/Mathematics\s*86/.test((await page.textContent('.modal #learnerBody')).replace(/\s+/g, ' ')), 'the learner page does not show the new mark');
+    await page.click('.modal [data-modal-close]');
+  });
+  if (await page.$('.modal [data-modal-close]')) await page.click('.modal [data-modal-close]');
+
+  await step('a child absent 3 days in a row is flagged on the class teacher\'s home, with the guardian\'s number', async () => {
+    await page.evaluate(id => {
+      [1, 2].forEach(n => state.registers.push({ id: 'REGT' + n, class: 'S.4', stream: '', date: addDaysISO(todayISO(), -n), records: [{ studentId: 'NPA/2026/001', status: 'P' }, { studentId: id, status: 'A' }], markedBy: 'Mr. Kato' }));
+      saveState(); renderAll();
+    }, secondId);
+    try {
+      await tab(page, 'overview');
+      const work = (await page.textContent('#myWorkBody')).replace(/\s+/g, ' ');
+      assert(/Absent 3 days or more in a row — call the guardian/.test(work) && /Mugisha Brian S\.4: absent 3 days/.test(work) && /Call 0772000111/.test(work), 'flag: ' + work);
+      assert(await page.getAttribute('#myWorkBody .streak-item a[href^="tel:"]', 'href') === 'tel:+256772000111', 'no call link');
+    } finally {
+      await page.evaluate(() => { state.registers = state.registers.filter(r => !/^REGT/.test(r.id)); saveState(); renderAll(); });
+    }
   });
 
   /* ───────────────────────── Migration from v4 ───────────────────────── */

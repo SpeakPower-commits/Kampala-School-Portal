@@ -76,11 +76,12 @@ const ROLE_PERMISSIONS = {
   },
   bursary: {
     label: 'Bursary Officer', color: '#0b5d3b', badge: 'Bursary',
-    tabs: ['payments', 'reports', 'noticeboard'],
+    // The office admits learners: the bursar too, since admission and the first fees go together.
+    tabs: ['payments', 'directory', 'reports', 'noticeboard'],
     canExport: true, canImport: false, canReset: false, canManageUsers: false,
-    canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
+    canManageSettings: false, canDeleteStudents: false, canEditStudents: true,
     canDeleteConduct: false, canAwardBursary: true, canRecordPayment: true,
-    canVoidPayment: true, canRegisterStudent: false, canAddProgram: false,
+    canVoidPayment: true, canRegisterStudent: true, canAddProgram: false,
     canLogPerformance: false, canMarkAttendance: false, canAddAcademic: false,
     canLogConduct: false, canManageTerms: false, canViewEMIS: false,
     canPostNotice: false, canManageCompetitions: false, canManageSquads: false,
@@ -102,7 +103,8 @@ const ROLE_PERMISSIONS = {
   },
   teacher: {
     label: 'Teacher', color: '#0e7490', badge: 'Teacher',
-    tabs: ['directory', 'academics', 'noticeboard'],
+    // Home is "My work today": their class register and the subjects they teach.
+    tabs: ['overview', 'directory', 'academics', 'noticeboard'],
     canExport: false, canImport: false, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
     canDeleteConduct: false, canAwardBursary: false, canRecordPayment: false,

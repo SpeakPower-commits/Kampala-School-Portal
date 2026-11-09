@@ -211,11 +211,22 @@ try {
     await page.fill('#editUsername', TEACHER);
     await page.fill('#editDisplayName', 'Ruth Nakato');
     await page.selectOption('#editRole', 'teacher');
-    await page.check('#editAssignedClasses input[value="S.4"]');
+    // Class teacher of S.4, and English Language in S.4: the classes she may open follow.
+    await page.selectOption('#editClassTeacher', 'S.4');
+    await page.click('#addTeachBtn');
+    await page.selectOption('#editTeaches .tr-class', 'S.4');
+    await page.selectOption('#editTeaches .tr-subject', 'English Language');
     await page.click('#userEditForm button[type="submit"]');
     await until(() => /Invited/.test(document.getElementById('usersList').textContent));
     const inv = await one('select role, assigned_classes from public.invites where school_id = $1 and email = $2', [school, TEACHER]);
     assert(inv && inv.role === 'teacher' && JSON.stringify(inv.assigned_classes) === '["S.4"]', 'invite ' + JSON.stringify(inv));
+    // Who teaches what is kept with the school, so the teacher's own phone reads it.
+    await until(() => /is invited/.test(document.getElementById('toastHost').textContent));
+    await saved();
+    const t = (await one("select settings->'teaching' as t from public.schools where id = $1", [school])).t || {};
+    const r = t[TEACHER] || {};
+    assert(r.name === 'Ruth Nakato' && r.classTeacherOf === 'S.4' && JSON.stringify((r.teaches || []).map(x => x.class + '|' + x.subject)) === '["S.4|English Language"]', 'teaching ' + JSON.stringify(t));
+    assert(/Class teacher of S\.4 · Teaches English Language \(S\.4\)/.test(await page.textContent('#usersList')), 'staff list: ' + await page.textContent('#usersList'));
   });
 
   await step("the director sets up SMS with the school's Africa's Talking account", async () => {
@@ -246,7 +257,9 @@ try {
     await page.click('#suSave');
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["overview","directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    const work = (await page.textContent('#myWorkBody')).replace(/\s+/g, ' ');
+    assert(/Attendance today · S\.4/.test(work) && /Not taken yet today/.test(work) && /English Language · S\.4/.test(work), 'My work today: ' + work);
     const names = await app(() => window.KSA.state().students.map(s => s.name));
     assert(JSON.stringify(names) === '["Nakato Sarah"]', 'teacher sees ' + JSON.stringify(names));
     assert(await app(() => window.KSA.state().payments.length + window.KSA.state().invoices.length) === 0, 'teacher received money records');
@@ -277,6 +290,20 @@ try {
     assert(sms.length === 1 && sms[0].to === '+256772123456' && sms[0].from === 'KHILL' && /Nakato Sarah \(S\.4\) was absent from school/.test(sms[0].message), JSON.stringify(sms));
   });
 
+  await step("the teacher opens her own subject from her home, the other subjects are locked, and her marks reach the database", async () => {
+    await tab('overview');
+    await page.click('#myWorkBody .work-exam[data-exam="EOT"]');
+    assert(await page.inputValue('#msClass') === 'S.4' && await page.inputValue('#msSubject') === 'English Language', 'the sheet did not open ready');
+    await page.fill('#markSheetRoster .ms-score[data-student="KHS/2026/001"]', '35');
+    await page.fill('#markSheetRoster .ms-outof[data-subject="English Language"]', '50');
+    await page.click('#msSaveBtn');
+    await saved();
+    const m = await one("select score, exam_set from public.marks where school_id = $1 and learner_id = 'KHS/2026/001' and subject = 'English Language'", [school]);
+    assert(m && Number(m.score) === 70 && m.exam_set === 'EOT', 'mark ' + JSON.stringify(m));
+    await page.selectOption('#msSubject', '');
+    assert(await page.$eval('#markSheetRoster .ms-score[data-student="KHS/2026/001"][data-subject="Mathematics"]', i => i.disabled), 'a colleague\'s subject is open to her');
+  });
+
   await step('the bursar sees money but no marks, and records a payment', async () => {
     await signOut();
     await signIn(BURSAR, 'Bursar2026');
@@ -284,7 +311,7 @@ try {
     assert(await page.textContent('#roleChip') === 'Bursary', 'role ' + await page.textContent('#roleChip'));
     assert(await app(() => window.KSA.state().payments.length) === 2, 'bursar cannot see the ledger');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["payments","directory","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
     await tab('payments', 'record');
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '100000');

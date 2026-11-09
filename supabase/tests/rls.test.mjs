@@ -196,7 +196,14 @@ await allowed('the bursar bills a learner', U.bursar,
   "insert into public.invoices (school_id, id, learner_id, term_id, gross, total) values ($1, 'I1', 'L1', 'T2026-1', 900000, 900000)", [A]);
 await sees('the bursar sees no marks', U.bursar, 'select count(*) as n from public.marks', [], 0);
 await allowed('the bursar awards a bursary', U.bursar, "update public.learners set bursary_pct = 50 where school_id = $1 and id = 'L1'", [A], 1);
-await denied("the bursar cannot change a learner's name", U.bursar, "update public.learners set name = 'X' where school_id = $1 and id = 'L1'", [A], /bursary percentage/i);
+// The office admits learners: the bursar can add one and correct details, but never remove one.
+await allowed('the bursar admits a learner', U.bursar,
+  "insert into public.learners (school_id, id, admission_no, name, class, level) values ($1, 'LB1', 'LB1', 'Admitted By Bursar', 'S.1', 'O Level')", [A], 1);
+await allowed("the bursar corrects a learner's details", U.bursar, "update public.learners set guardian_phone = '0772999888' where school_id = $1 and id = 'LB1'", [A], 1);
+await denied('the bursar cannot remove a learner', U.bursar, "update public.learners set deleted_at = now() where school_id = $1 and id = 'LB1'", [A], /remove a learner/i);
+await denied('a teacher cannot admit a learner', U.teacherS4,
+  "insert into public.learners (school_id, id, admission_no, name, class, level) values ($1, 'LT1', 'LT1', 'Not Allowed', 'S.4', 'O Level')", [A], RLS);
+await db.query("delete from public.learners where school_id = $1 and id = 'LB1'", [A]);   // keep the counts below unchanged
 await denied('the administrator cannot award a bursary', U.admin, "update public.learners set bursary_pct = 10 where school_id = $1 and id = 'L1'", [A], /bursary/i);
 await allowed("the administrator corrects a learner's name", U.admin, "update public.learners set name = 'Achen Grace M.' where school_id = $1 and id = 'L1'", [A], 1);
 

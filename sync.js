@@ -33,11 +33,12 @@ window.SYNC = (function () {
 
   // What each role may write, mirroring the database's row-level security:
   //   rw  add, change and remove rows    u  change existing rows only
+  //   iu  add and change rows, never remove
   //   i   add rows only (the payment ledger)
   const WRITE = {
     exec:    { terms: 'rw', learners: 'rw', fee_structures: 'rw', invoices: 'rw', payments: 'i', marks: 'rw', comments: 'rw', registers: 'rw', conduct: 'rw', notices: 'rw', school_docs: 'rw' },
     admin:   { terms: 'rw', learners: 'rw', fee_structures: 'rw', invoices: 'rw', payments: 'i', marks: 'rw', comments: 'rw', registers: 'rw', conduct: 'rw', notices: 'rw', school_docs: 'rw' },
-    bursary: { learners: 'u', invoices: 'rw', payments: 'i' },
+    bursary: { learners: 'iu', invoices: 'rw', payments: 'i' },   // admits and edits learners, never removes them
     coach:   { learners: 'u', notices: 'rw', school_docs: 'rw' },
     teacher: { marks: 'rw', comments: 'rw', registers: 'rw' },
   };
@@ -263,7 +264,8 @@ window.SYNC = (function () {
 
     if (right === 'rw') {
       if (added.length || changed.length) await writeRows(table, added.concat(changed), 'upsert');
-    } else if (right === 'u') {
+    } else if (right === 'u' || right === 'iu') {
+      if (right === 'iu' && added.length) await writeRows(table, added, 'insert');
       for (const it of changed) {
         const values = Object.assign({}, it.row); delete values.id;
         const { error } = await sb.from(table).update(values).eq('school_id', schoolId).eq('id', it.row.id);

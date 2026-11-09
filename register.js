@@ -7,7 +7,7 @@
    A class with streams is called stream by stream, as on paper.
 
    Screens (under Students):
-     Take register   — every child starts unmarked; the teacher taps Present,
+     Attendance today  — every child starts unmarked; the teacher taps Present,
                        Absent, Late or Excused for each one, and the register
                        is saved only when every child is marked.
      Who was absent  — every register taken, with the children's names.
@@ -57,7 +57,10 @@ function learnerAttendance(s, from, to) {
 /* ── Take register ─────────────────────────────────────────────────────── */
 function renderRegisterControls() {
   if (!el('regClass')) return;
-  fillSelect('regClass', '<option value="">Choose class…</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const classes = visibleClasses();
+  fillSelect('regClass', '<option value="">Choose class…</option>' + classes.map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  // A teacher with one class gets it straight away.
+  if (!el('regClass').value && classes.length === 1) el('regClass').value = classes[0];
   const cls = el('regClass').value;
   const streams = streamsFor(cls);
   const unstreamed = streams.length && visibleStudents().some(s => s.class === cls && !s.stream);
@@ -68,20 +71,33 @@ function renderRegisterControls() {
   // A class without streams has nothing to choose.
   const wrap = el('regStreamWrap'); if (wrap) wrap.style.display = streams.length ? '' : 'none';
   if (!el('regDate').value) el('regDate').value = todayISO();
+  el('regDate').max = todayISO();
+  renderRegDay();
   renderTodayPills();
 }
 
+/* "Today, Mon 9 Nov 2026 · Another day…": the date is today unless the teacher
+   asks to correct an earlier day. */
+function renderRegDay() {
+  const line = el('regDayLine'), wrap = el('regDateWrap'); if (!line || !wrap) return;
+  const d = el('regDate').value || todayISO();
+  const today = d === todayISO();
+  wrap.style.display = today && !wrap.dataset.open ? 'none' : '';
+  line.innerHTML = today
+    ? `Today, ${escapeHtml(fmtDay(d))} · <button type="button" class="link-btn" data-act="regAnotherDay">Another day…</button>`
+    : `<span class="t-warn">${escapeHtml(fmtDay(d))} (not today)</span> · <button type="button" class="link-btn" data-act="regToday">Back to today</button>`;
+}
 function renderRegisterRoster() {
   const box = el('registerRoster'); if (!box) return;
   const cls = el('regClass').value, stream = regStream(), date = el('regDate').value;
   const note = el('registerNote');
-  if (!cls) { box.innerHTML = '<div class="empty">Choose a class to call the register.</div>'; renderRegisterSummary(); return; }
+  if (!cls) { box.innerHTML = '<div class="empty">Choose the class: its children appear here.</div>'; renderRegisterSummary(); return; }
   const existing = findRegister(cls, stream, date);
   // Everyone on a register already taken stays on it (e.g. a whole-class register).
   let learners = registerLearners(cls, stream);
   if (existing) existing.records.forEach(r => { const s = visibleStudents().find(x => x.id === r.studentId); if (s && !learners.includes(s)) learners.push(s); });
   learners = learners.sort((a, b) => a.name.localeCompare(b.name));
-  if (!learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; renderRegisterSummary(); return; }
+  if (!learners.length) { box.innerHTML = `<div class="empty">No children in ${escapeHtml(classLabel(cls, stream))} yet. They are added when admitted (Students → Admit a new learner).</div>`; renderRegisterSummary(); return; }
   const map = {};
   if (existing) existing.records.forEach(r => { map[r.studentId] = r.status; });
   // Nobody is assumed present: a child is marked only when the teacher marks them.
@@ -93,8 +109,8 @@ function renderRegisterRoster() {
     </div>`;
   }).join('');
   if (note) note.textContent = existing
-    ? `Already taken by ${existing.markedBy || '—'}. Change anyone below and press Save register to update it.`
-    : '1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save register. Nobody is counted present until you mark them.';
+    ? `Already taken${existing.updatedAt || existing.createdAt ? ' at ' + fmtWhen(existing.updatedAt || existing.createdAt).split(', ')[1] : ''} by ${existing.markedBy || '—'}. Change anyone below and press Save attendance to update it.`
+    : 'The morning roll call. The children were added once, when they were admitted; choose the class and its children appear. 1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save. Nobody is counted present until you mark them.';
   renderRegisterSummary();
 }
 
@@ -186,7 +202,7 @@ function messageAbsence(studentId, date, channel) {
   else window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
 }
 
-/* Which classes still need today's register? (shown on Take register) */
+/* Which classes still need today's roll call? (shown on Attendance today) */
 function renderTodayPills() {
   const todayBox = el('registerToday'); if (!todayBox) return;
   const today = todayISO();
@@ -322,6 +338,29 @@ function printTermSheet() {
   printDoc('<style>@page { size: A4 landscape; margin: 10mm; }</style>' + docHeader(`Class attendance — ${escapeHtml(c.label)} — ${escapeHtml(c.period)}`) + termSheetTable(d, true));
 }
 
+/* ── Absent several days in a row ──────────────────────────────────────── */
+/* A child marked Absent at each of their class's last 3 (or more) registers,
+   the latest within the past week: the class teacher should call home. */
+function absentStreaks(classes, min = 3) {
+  const weekAgo = addDaysISO(todayISO(), -7);
+  const out = [];
+  classes.forEach(cls => {
+    const regs = (state.registers || []).filter(r => r.class === cls).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    visibleStudents().filter(s => s.class === cls).forEach(s => {
+      const seen = new Set(), dates = [];
+      for (const r of regs) {
+        const rec = (r.records || []).find(x => x.studentId === s.id);
+        if (!rec || seen.has(r.date)) continue;
+        seen.add(r.date);
+        if (rec.status !== 'A') break;
+        dates.push(r.date);
+      }
+      if (dates.length >= min && dates[0] >= weekAgo) out.push({ s, days: dates.length, dates: dates.slice(0, 5).reverse() });
+    });
+  });
+  return out.sort((a, b) => b.days - a.days || a.s.name.localeCompare(b.s.name));
+}
+
 /* ── Dashboard: today's registers, with the names of absent children ───── */
 function renderAttendanceToday() {
   const box = el('attTodayBody'); if (!box) return;
@@ -359,21 +398,35 @@ function renderAttendanceToday() {
     ${absentBlock}
     ${waiting.length
       ? `<div class="pill-list" style="margin-top:12px;align-items:center"><span class="card-desc">Not marked yet:</span> ${waiting.map(c => `<span class="badge badge-warn">${escapeHtml(c)}</span>`).join(' ')}</div>`
-      : '<p class="card-desc" style="margin-top:12px">Every class has been marked today.</p>'}`;
+      : '<p class="card-desc" style="margin-top:12px">Every class has been marked today.</p>'}
+    ${streaksHtml(absentStreaks(classes))}`;
 }
 
 Object.assign(ACTIONS, {
   smsAbsence: d => messageAbsence(d.id, d.date, 'sms'),
   waAbsence: d => messageAbsence(d.id, d.date, 'wa'),
-  // From Who was absent: open that register on Take register, ready to change.
+  // From Who was absent: open that day's register on Attendance today, ready to change.
+  regAnotherDay: () => { const w = el('regDateWrap'); w.dataset.open = '1'; w.style.display = ''; el('regDate').focus(); },
+  regToday: () => { const w = el('regDateWrap'); delete w.dataset.open; el('regDate').value = todayISO(); renderRegDay(); renderRegisterRoster(); el('registerAbsentees').innerHTML = ''; },
   openRegister: d => {
     switchTab('directory', 'daily');
     el('regClass').value = d.class;
     renderRegisterControls();
     el('regStream').value = d.stream || '-';
     el('regDate').value = d.date;
+    renderRegDay();
     renderRegisterRoster();
     showAbsentees(d.class, d.stream, d.date);
+  },
+  // From a class teacher's home: today's register for their class.
+  takeRegister: d => {
+    switchTab('directory', 'daily');
+    el('regClass').value = d.class;
+    const w = el('regDateWrap'); if (w) { delete w.dataset.open; w.style.display = 'none'; }
+    el('regDate').value = todayISO();
+    renderRegisterControls();
+    renderRegisterRoster();
+    el('registerAbsentees').innerHTML = '';
   },
   absentToday: () => {
     switchTab('directory', 'recent');
@@ -388,7 +441,7 @@ MODULES.push({
     const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
     on('regClass', 'change', () => { renderRegisterControls(); renderRegisterRoster(); el('registerAbsentees').innerHTML = ''; });
     on('regStream', 'change', () => { renderRegisterRoster(); el('registerAbsentees').innerHTML = ''; });
-    on('regDate', 'change', () => { renderRegisterRoster(); showAbsentees(el('regClass').value, regStream(), el('regDate').value); });
+    on('regDate', 'change', () => { if (el('regDate').value > todayISO()) el('regDate').value = todayISO(); renderRegDay(); renderRegisterRoster(); showAbsentees(el('regClass').value, regStream(), el('regDate').value); });
     on('regSaveBtn', 'click', saveRegister);
     on('registerRoster', 'click', e => {
       const b = e.target.closest('[data-set-status]'); if (!b) return;
