@@ -519,6 +519,19 @@ details.disclosure .disclosure-body { padding: 15px; }
 .cr-pos { display: inline-block; min-width: 38px; color: var(--muted); font-weight: 700; }
 .rc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
 .rc-item:last-child { border-bottom: none; }
+/* Students: one row per child */
+.dir-list { margin-top: 6px; }
+.dir-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.dir-row:last-child { border-bottom: none; }
+.dir-main { min-width: 0; flex: 1 1 260px; }
+.dir-main a { color: inherit; }
+.dir-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.dir-owes { font-size: 13.5px; white-space: nowrap; }
+.link-btn.t-bad { color: var(--danger); }
+/* Forms in numbered groups (Admit a student) */
+.fs-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 14px; margin: 0; }
+.fs-group legend { font-weight: 700; color: var(--brand); padding: 0 6px; font-size: 13.5px; }
+.fs-group .form-row + .form-row { margin-top: 12px; }
 /* The learner page (one child: details, attendance, marks, fees, sports) */
 .lp-tabs { margin: 0 0 14px; }
 .lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }
@@ -581,6 +594,7 @@ details.disclosure .disclosure-body { padding: 15px; }
   .seg.seg-words { width: 100%; }
   .seg.seg-words button { flex: 1; padding: 10px 4px; }
   .lp-row { grid-template-columns: 1fr; gap: 2px; }
+  .dir-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
 }
 
 /* =========================================================================

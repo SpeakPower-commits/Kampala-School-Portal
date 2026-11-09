@@ -78,6 +78,9 @@ function validateImport(rows) {
   const missing = ['name', 'class', 'guardian_phone'].filter(c => !header.includes(c));
   if (missing.length) throw new Error('The file is missing these columns: ' + missing.join(', ') + '. Download the template to see the layout.');
   const ids = new Set(state.students.map(s => s.id.toLowerCase()));
+  // The same child: same name, class and guardian's number.
+  const key = (name, cls, phone) => `${String(name).trim().toLowerCase()}|${cls}|${String(phone || '').replace(/\D/g, '').slice(-9)}`;
+  const known = new Map(state.students.map(s => [key(s.name, s.class, s.guardian), s]));
   return rows.slice(1).map((cells, i) => {
     const get = k => { const idx = header.indexOf(k); return idx >= 0 ? String(cells[idx] || '').trim() : ''; };
     const errors = [];
@@ -95,11 +98,15 @@ function validateImport(rows) {
     if (rec.boardingStatus === null) errors.push('boarding must be Day, Boarding or Weekly');
     if (rec.fee === null) errors.push('termly fee is not a number');
     if (rec.opening === null) errors.push('opening balance is not a number');
+    const k = key(rec.name, rec.class, rec.guardian);
+    const already = rec.name && known.get(k);
+    if (already) return { line: i + 2, rec, errors: [], already };
     if (rec.admissionNo) {
       if (!ADMISSION_RE.test(rec.admissionNo)) errors.push('admission no. has invalid characters');
       else if (ids.has(rec.admissionNo.toLowerCase())) errors.push('admission no. already used');
       else ids.add(rec.admissionNo.toLowerCase());
     }
+    if (!errors.length) known.set(k, { name: rec.name, id: '(earlier in this file)' });
     return { line: i + 2, rec, errors };
   });
 }
@@ -113,18 +120,21 @@ function importLearnersFile(file) {
       if (rows.length < 2) return toast('The file has no learner rows.', 'error');
       checked = validateImport(rows);
     } catch (err) { return toast(err.message || 'Could not read that file.', 'error'); }
-    const good = checked.filter(r => !r.errors.length);
+    const good = checked.filter(r => !r.errors.length && !r.already);
     const bad = checked.filter(r => r.errors.length);
+    const known = checked.filter(r => r.already);
+    const who = r => `${escapeHtml(r.rec.name || '(no name)')} <span class="card-desc">· ${escapeHtml(r.rec.class || '?')}${r.rec.stream ? ' ' + escapeHtml(r.rec.stream) : ''} · line ${r.line}</span>`;
+    const block = (title, cls, rows, extra) => rows.length ? `<div class="form-label ${cls}" style="margin-top:12px">${title} (${rows.length})</div>
+      <div class="scroll-box" style="max-height:220px">${rows.slice(0, 300).map(r => `<div class="roster-item"><div>${who(r)}${extra ? `<div class="card-desc ${cls}">${extra(r)}</div>` : ''}</div></div>`).join('')}</div>` : '';
     openModal({
-      title: 'Import learners', wide: true,
-      bodyHtml: `<div class="banner ${bad.length ? 'banner-warn' : 'banner-success'}" style="margin-bottom:12px">${icon(bad.length ? 'alert' : 'check')}<span><strong>${good.length}</strong> ready to import${bad.length ? ` · <strong>${bad.length}</strong> with problems (skipped — fix them in the file and import again)` : ''}.</span></div>
-        <div class="table-wrap" style="max-height:380px;overflow:auto"><table><thead><tr><th>Line</th><th>Name</th><th>Class</th><th>Guardian</th><th class="t-num">Fee</th><th class="t-num">Opening bal.</th><th>Status</th></tr></thead><tbody>
-        ${checked.slice(0, 300).map(r => `<tr><td class="t-muted">${r.line}</td><td>${escapeHtml(r.rec.name)}</td><td>${escapeHtml(r.rec.class)}${r.rec.stream ? ' ' + escapeHtml(r.rec.stream) : ''}</td><td>${escapeHtml(r.rec.guardian)}</td><td class="t-num">${r.rec.fee === null ? '—' : fmtMoney(r.rec.fee)}</td><td class="t-num">${r.rec.opening ? fmtMoney(r.rec.opening) : '—'}</td>
-          <td>${r.errors.length ? `<span class="badge badge-danger">${escapeHtml(r.errors.join('; '))}</span>` : '<span class="badge badge-success">OK</span>'}</td></tr>`).join('')}
-        </tbody></table></div>`,
+      title: 'Import from Excel', wide: true,
+      bodyHtml: `<div class="banner ${bad.length ? 'banner-warn' : 'banner-success'}" style="margin-bottom:4px">${icon(bad.length ? 'alert' : 'check')}<span><strong>${good.length}</strong> ready to import${known.length ? ` · <strong>${known.length}</strong> already in the school (skipped)` : ''}${bad.length ? ` · <strong>${bad.length}</strong> with problems (skipped: fix them in the file and import it again)` : ''}.</span></div>
+        ${block('Ready to import', 't-ok', good)}
+        ${block('Problems: fix these lines in the file', 't-bad', bad, r => escapeHtml(r.errors.join('; ')))}
+        ${block('Already in the school', 'card-desc', known, r => `as ${escapeHtml(r.already.name)} (${escapeHtml(r.already.id)})`)}`,
       footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="importGo" ${good.length ? '' : 'disabled'}>Import ${good.length} learner${good.length === 1 ? '' : 's'}</button>`,
       onOpen(root) {
-        root.querySelector('#importGo').addEventListener('click', () => { commitImport(good.map(r => r.rec)); closeModal(); });
+        root.querySelector('#importGo').addEventListener('click', () => { closeModal(); commitImport(good.map(r => r.rec)); });
       },
     });
   };
@@ -151,6 +161,13 @@ function commitImport(recs) {
   recomputePaid(); saveState(); renderAll();
   AUTH.audit('STUDENT_IMPORT', `${recs.length} learners`);
   toast(`Imported ${recs.length} learner${recs.length === 1 ? '' : 's'}.`, 'success');
+  const added = state.students.slice(-recs.length);
+  openModal({
+    title: `Imported ${recs.length} learner${recs.length === 1 ? '' : 's'}`,
+    bodyHtml: `<p class="card-desc" style="margin:0 0 8px">They are in Students → All students, billed for this term. Tap a name to check it.</p>
+      <div class="scroll-box" style="max-height:340px">${added.map(s => `<div class="roster-item"><div>${learnerLink(s.id, s.name)} <span class="card-desc">· ${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''} · ${escapeHtml(s.id)}</span></div></div>`).join('')}</div>`,
+    footHtml: '<button class="btn btn-primary" data-modal-close>Done</button>',
+  });
 }
 
 /* ── Exports ───────────────────────────────────────────────────────────── */

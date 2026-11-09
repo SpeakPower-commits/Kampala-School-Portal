@@ -5,7 +5,6 @@
 'use strict';
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
-const PAGE_SIZE = 25;
 
 const DEFAULT_PROGRAMS = [
   { id: 'PRG001', name: 'Football', sport: 'Football', coach: 'To be assigned', days: ['Tuesday', 'Thursday'], requirements: ['Football boots', 'Team jersey', 'Shin guards'] },
@@ -176,7 +175,7 @@ function secondGuardianOk(raw) { return !String(raw || '').trim() || phoneValid(
    ========================================================================= */
 const ADMISSION_RE = /^[A-Za-z0-9][A-Za-z0-9/_-]{0,23}$/;
 
-function registerStudent(f) {
+async function registerStudent(f) {
   if (!can('canRegisterStudent')) return toast('You do not have permission to register students.', 'error');
   let id = (f.admissionNo || '').trim();
   if (id) {
@@ -185,10 +184,19 @@ function registerStudent(f) {
   } else {
     id = 'S' + uid().slice(0, 6);
   }
-  if (!f.name || !f.name.trim()) return toast('Student name is required.', 'error');
+  const name = (f.name || '').trim(), cls = (f.class || '').trim();
+  if (!name) return toast('Type the child\'s full name.', 'error');
+  if (!cls) return toast('Choose the class.', 'error');
+  if (!phoneValid(f.guardian)) return toast('The guardian\'s phone is not a valid Ugandan number (for example 0772 123 456).', 'error');
   if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
-  state.students.push({
-    id, name: f.name.trim(), class: (f.class || '').trim(), level: classifyLevel(f.class),
+  const t = getCurrentTerm();
+  if (!(Number(f.fee) > 0) && t && !structureFor({ class: cls, level: classifyLevel(cls) }, t.id)) {
+    return toast(`Type the termly fees: no fee structure covers ${cls} yet (Fees → Terms & fee structures).`, 'error');
+  }
+  const same = state.students.find(s => s.class === cls && s.name.trim().toLowerCase() === name.toLowerCase());
+  if (same && !(await confirmDialog({ title: 'Same name in this class', message: `${same.name} (${same.id}) is already in ${same.class}. Admit another child with the same name?`, confirmLabel: 'Admit anyway' }))) return null;
+  const s = {
+    id, name, class: cls, level: classifyLevel(cls),
     combination: (f.combination || '').split(',').map(x => x.trim()).filter(Boolean).join(', '),
     guardian: (f.guardian || '').trim(), guardian2: (f.guardian2 || '').trim(), fee: Number(f.fee) || 0, paid: 0, stream: (f.stream || '').trim(),
     sport: (f.sport || '').trim(), skillLevel: (f.skillLevel || '').trim(),
@@ -196,17 +204,28 @@ function registerStudent(f) {
     unebIndexNo: (f.unebIndexNo || '').trim(), senFlag: (f.senFlag || '').trim(),
     performanceNotes: [], academics: [], bursaryPct: 0, feeComponents: [], injuryLog: [],
     athleteProfile: {}, comments: {}, createdAt: todayISO(),
-  });
-  billStudentForCurrentTerm(state.students[state.students.length - 1]);
+  };
+  state.students.push(s);
+  billStudentForCurrentTerm(s);
   saveState(); renderAll();
-  AUTH.audit('STUDENT_REGISTER', `${f.name.trim()} (${id})`);
-  toast('Registered ' + f.name.trim() + ' (' + id + ').', 'success');
+  AUTH.audit('STUDENT_REGISTER', `${name} (${id})`);
+  toast('Registered ' + name + ' (' + id + ').', 'success');
+  return s;
+}
+/* After admitting: say who, and offer their page or the next admission. */
+function showAdmitDone(s) {
+  const box = el('admitDone'); if (!box) return;
+  box.style.display = '';
+  box.innerHTML = `${icon('check', 16)} Admitted <strong>${escapeHtml(s.name)}</strong> (${escapeHtml(s.id)}) to ${escapeHtml(s.class + (s.stream ? ' ' + s.stream : ''))}.
+    <div class="toolbar" style="margin-top:8px"><button class="btn btn-primary btn-sm" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open their page</button><button class="btn btn-outline btn-sm" type="button" data-act="admitAnother">Admit another</button></div>`;
 }
 
 function updateStudent(id, f) {
   if (!can('canEditStudents')) return toast('You do not have permission to edit students.', 'error');
   const s = state.students.find(x => x.id === id);
   if (!s) return toast('Student not found.', 'error');
+  if (!(f.name || '').trim()) return toast('The name cannot be empty.', 'error');
+  if (!phoneValid(f.guardian)) return toast('The guardian\'s phone is not a valid Ugandan number (for example 0772 123 456).', 'error');
   if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
   s.name = (f.name || '').trim() || s.name;
   s.class = (f.class || '').trim() || s.class;
@@ -226,6 +245,7 @@ function updateStudent(id, f) {
   saveState(); renderAll();
   AUTH.audit('STUDENT_EDIT', `${s.name} (${s.id})`);
   toast('Updated ' + s.name + '.', 'success');
+  return true;
 }
 
 async function recordPayment(f) {
@@ -567,57 +587,60 @@ function updateMetrics() {
     </div>`).join('');
 }
 
+/* Students: one row per child that fits a phone. One money figure (what is
+   owed in all, as on the learner page), sorted by class then name. */
+const DIR_PAGE = 50;
+function studentSearchMatch(s, words, digits) {
+  const hay = `${s.name} ${s.id} ${s.class} ${s.stream || ''}`.toLowerCase();
+  if (words.length && words.every(w => hay.includes(w))) return true;
+  // A guardian's phone, typed any way (0772…, +256 772…, 772 123…).
+  return digits.length >= 6 && [s.guardian, s.guardian2].some(g => (g || '').replace(/\D/g, '').includes(digits.length > 9 ? digits.slice(-9) : digits));
+}
 function renderStudentTable() {
   const body = el('studentTableBody'); if (!body) return;
-  const q = (el('searchInput').value || '').toLowerCase();
-  const levelF = el('levelFilter').value || '';
-  const list = state.students.filter(s =>
-    (!q || s.name.toLowerCase().includes(q) || s.class.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) &&
-    (!levelF || s.level === levelF)
-  );
-  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  fillSelect('dirClass', '<option value="">All classes</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const raw = (el('searchInput').value || '').trim().toLowerCase();
+  const words = raw.split(/\s+/).filter(Boolean), digits = raw.replace(/\D/g, '');
+  const cls = el('dirClass').value, show = el('dirShow').value;
+  const order = c => { const i = CLASS_OPTIONS.indexOf(c); return i < 0 ? 999 : i; };
+  const inClass = state.students.filter(s => (!cls || s.class === cls) && (!raw || studentSearchMatch(s, words, digits)))
+    .map(s => ({ s, owes: studentAccount(s).balance }));
+  const owing = inClass.filter(x => x.owes > 0).length;
+  const list = inClass.filter(x => !show || (show === 'owe' ? x.owes > 0 : x.owes <= 0))
+    .sort((a, b) => order(a.s.class) - order(b.s.class) || (a.s.stream || '').localeCompare(b.s.stream || '') || a.s.name.localeCompare(b.s.name));
+  const pages = Math.max(1, Math.ceil(list.length / DIR_PAGE));
   if (studentPage > pages) studentPage = pages;
-  const slice = list.slice((studentPage - 1) * PAGE_SIZE, studentPage * PAGE_SIZE);
+  const slice = list.slice((studentPage - 1) * DIR_PAGE, studentPage * DIR_PAGE);
 
-  if (!list.length) {
-    body.innerHTML = '<tr><td colspan="11" class="empty">No students match your filters.</td></tr>';
-  } else {
-    body.innerHTML = slice.map(s => {
-      const acct = studentAccount(s), fee = effectiveFee(s), bal = acct.balance, paid = studentPaid(s);
-      const status = bal <= 0 ? '<span class="badge badge-success">Cleared</span>'
-        : acct.arrears > 0 ? `<span class="badge badge-danger">${fmtMoney(bal)}</span>`
-        : (paid > 0 ? `<span class="badge badge-warn">${fmtMoney(bal)}</span>` : `<span class="badge badge-danger">${fmtMoney(bal)}</span>`);
-      const sport = s.sport ? `${escapeHtml(s.sport)} ${skillBadge(s.skillLevel)}` : '<span class="t-muted">—</span>';
-      const gender = s.gender === 'Female' ? '<span style="color:#be185d">Female</span>' : s.gender === 'Male' ? '<span style="color:#1d4ed8">Male</span>' : '<span class="t-muted">—</span>';
-      const board = s.boardingStatus === 'Boarding' ? '<span class="badge badge-purple">Boarding</span>' : s.boardingStatus === 'Weekly' ? '<span class="badge badge-info">Weekly</span>' : '<span class="badge badge-neutral">Day</span>';
-      const bursaryTag = (s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '') + (acct.arrears > 0 ? `<div class="card-desc" style="color:var(--danger)">+${fmtMoney(acct.arrears)} arrears</div>` : '');
-      const senTag = s.senFlag ? `<div class="card-desc" style="color:#6d28d9">SEN: ${escapeHtml(s.senFlag)}</div>` : '';
-      const editBtn = can('canEditStudents') ? `<button class="btn btn-outline btn-xs" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit</button>` : '';
-      const delBtn = can('canDeleteStudents') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteStudent" data-id="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">Remove</button>` : '';
-      return `<tr>
-        <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
-        <td style="font-weight:600">${learnerLink(s.id, s.name)}${senTag}</td>
-        <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
-        <td>${gender}</td>
-        <td>${board}</td>
-        <td>${escapeHtml(s.guardian)}${s.guardian2 ? `<div class="card-desc">${escapeHtml(s.guardian2)}</div>` : ''}</td>
-        <td>${sport}</td>
-        <td class="t-num">${fmtMoney(fee)}${bursaryTag}</td>
-        <td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(paid)}</td>
-        <td>${status}</td>
-        <td><div class="row-actions">
-          <button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>
-          ${editBtn}${delBtn}
-        </div></td>
-      </tr>`;
-    }).join('');
+  const sum = el('dirSummary');
+  if (sum) {
+    sum.style.display = inClass.length ? '' : 'none';
+    sum.innerHTML = `<strong>${inClass.length}</strong> learner${inClass.length === 1 ? '' : 's'}${cls ? ' in ' + escapeHtml(cls) : ''}${raw ? ' matching your search' : ''} · `
+      + (owing ? `<button type="button" class="link-btn t-bad" data-act="dirShowOwe">${owing} owe fees</button>` : '<span class="t-ok">nobody owes fees</span>')
+      + ` · ${inClass.length - owing} paid up`;
   }
+  const tel = g => { const n = normalizePhone(g); return n ? `<a href="tel:${escapeHtml(n)}">${escapeHtml(g)}</a>` : escapeHtml(g || '—'); };
+  body.innerHTML = slice.length ? slice.map(({ s, owes }) => {
+    const editBtn = can('canEditStudents') ? `<button class="btn btn-outline btn-xs" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit</button>` : '';
+    const delBtn = can('canDeleteStudents') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteStudent" data-id="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">Remove</button>` : '';
+    return `<div class="dir-row">
+      <div class="dir-main">
+        <div style="font-weight:600">${learnerLink(s.id, s.name)}${s.senFlag ? ` <span class="badge badge-purple">${escapeHtml(s.senFlag)}</span>` : ''}</div>
+        <div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''} · ${escapeHtml(s.id)}${s.boardingStatus && s.boardingStatus !== 'Day' ? ' · ' + escapeHtml(s.boardingStatus === 'Weekly' ? 'Weekly boarder' : 'Boarder') : ''}</div>
+        <div class="card-desc">Guardian ${tel(s.guardian)}${s.guardian2 ? ' · ' + tel(s.guardian2) : ''}</div>
+      </div>
+      <div class="dir-side">
+        <div class="dir-owes ${owes > 0 ? 't-bad' : 't-ok'}">${owes > 0 ? 'Owes ' + fmtMoney(owes) : 'Paid up'}</div>
+        <div class="row-actions"><button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>${editBtn}${delBtn}</div>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.students.length ? 'No learners match. Clear the search or choose All classes.' : 'No learners yet. Use Admit a student, or Import from Excel.'}</div>`;
   const pager = el('studentPager');
   if (pager) {
-    pager.innerHTML = list.length ? `
-      <span>Showing ${(studentPage - 1) * PAGE_SIZE + 1}–${Math.min(studentPage * PAGE_SIZE, list.length)} of ${list.length}</span>
+    pager.innerHTML = list.length > DIR_PAGE ? `
+      <span>Showing ${(studentPage - 1) * DIR_PAGE + 1}–${Math.min(studentPage * DIR_PAGE, list.length)} of ${list.length}</span>
       <span class="pager-btns">
-        <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="prev" ${studentPage <= 1 ? 'disabled' : ''}>${icon('left', 14)} Prev</button>
+        <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="prev" ${studentPage <= 1 ? 'disabled' : ''}>${icon('left', 14)} Previous</button>
         <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="next" ${studentPage >= pages ? 'disabled' : ''}>Next ${icon('right', 14)}</button>
       </span>` : '';
   }
@@ -992,43 +1015,47 @@ function openNotes(studentId) {
   });
 }
 /* ── Student edit modal ────────────────────────────────────────────────── */
-function openStudentEdit(studentId) {
+function openStudentEdit(studentId, back) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const opt = (list, val) => list.map(o => `<option ${o === val ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
+  const sports = Array.from(new Set([...SPORT_OPTIONS, ...state.programs.map(p => p.sport), s.sport].filter(Boolean))).sort();
+  const sen = ['Visual Impairment', 'Hearing Impairment', 'Physical Disability', 'Learning Difficulty', 'Other'];
+  if (s.senFlag && !sen.includes(s.senFlag)) sen.push(s.senFlag);
   openModal({
-    title: 'Edit student — ' + escapeHtml(s.name),
+    title: 'Edit ' + escapeHtml(s.name),
     wide: true,
-    bodyHtml: `<form id="editStudentForm" class="form-grid">
-      <div class="form-row">
-        <div><label class="form-label">Full name</label><input class="input" name="name" value="${escapeHtml(s.name)}" required></div>
-        <div><label class="form-label">Class</label><select class="input" name="class"><option value="">—</option>${opt(CLASS_OPTIONS, s.class)}</select></div>
-      </div>
-      <div class="form-row">
+    bodyHtml: `<p class="card-desc" style="margin:-6px 0 12px">Admission no. ${escapeHtml(s.id)} (it cannot be changed). Change what you need, then press Save changes.</p>
+    <form id="editStudentForm" class="form-grid">
+      <fieldset class="fs-group"><legend>The child</legend><div class="form-row">
+        <div><label class="form-label">Full name *</label><input class="input" name="name" value="${escapeHtml(s.name)}" required></div>
+        <div><label class="form-label">Gender</label><select class="input" name="gender"><option value="">—</option>${opt(['Male', 'Female'], s.gender)}</select></div>
+        <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option>${opt(sen, s.senFlag)}</select></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Class</legend><div class="form-row">
+        <div><label class="form-label">Class</label><select class="input" name="class">${opt(CLASS_OPTIONS, s.class)}</select></div>
         <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" value="${escapeHtml(s.stream || '')}" placeholder="e.g. East"></div>
-        <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination)}"></div>
-        <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" value="${escapeHtml(s.guardian)}"></div>
-        <div><label class="form-label">Second guardian <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" value="${escapeHtml(s.guardian2 || '')}"></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">Termly tuition (${currency()})</label><input class="input" type="number" min="0" step="1000" name="fee" value="${s.fee}"></div>
-        <div><label class="form-label">Gender</label><select class="input" name="gender"><option value="">—</option><option ${s.gender === 'Male' ? 'selected' : ''}>Male</option><option ${s.gender === 'Female' ? 'selected' : ''}>Female</option></select></div>
-        <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option ${(s.boardingStatus || 'Day') === 'Day' ? 'selected' : ''} value="Day">Day scholar</option><option ${s.boardingStatus === 'Boarding' ? 'selected' : ''} value="Boarding">Boarding</option><option ${s.boardingStatus === 'Weekly' ? 'selected' : ''} value="Weekly">Weekly boarder</option></select></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">UNEB index no. <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" value="${escapeHtml(s.unebIndexNo)}"></div>
-        <div><label class="form-label">Special needs</label><input class="input" name="senFlag" value="${escapeHtml(s.senFlag)}" placeholder="None"></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">Primary sport</label><input class="input" name="sport" value="${escapeHtml(s.sport)}"></div>
+        <div><label class="form-label">Day or boarding</label><select class="input" name="boardingStatus"><option ${(s.boardingStatus || 'Day') === 'Day' ? 'selected' : ''} value="Day">Day scholar</option><option ${s.boardingStatus === 'Boarding' ? 'selected' : ''} value="Boarding">Boarding</option><option ${s.boardingStatus === 'Weekly' ? 'selected' : ''} value="Weekly">Weekly boarder</option></select></div>
+      </div><div class="form-row">
+        <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination || '')}"></div>
+        <div><label class="form-label">UNEB index <span class="opt">(S.4 and S.6)</span></label><input class="input" name="unebIndexNo" value="${escapeHtml(s.unebIndexNo || '')}"></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Guardians</legend><div class="form-row">
+        <div><label class="form-label">Guardian's phone *</label><input class="input" name="guardian" type="tel" value="${escapeHtml(s.guardian || '')}" required></div>
+        <div><label class="form-label">Second guardian's phone <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" value="${escapeHtml(s.guardian2 || '')}"></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Fees and sport</legend><div class="form-row">
+        <div><label class="form-label">Termly fees (${currency()}) <span class="opt">(used when no fee structure covers the class)</span></label><input class="input" type="number" min="0" step="1000" name="fee" value="${s.fee}"></div>
+        <div><label class="form-label">Main sport</label><select class="input" name="sport"><option value="">— None —</option>${opt(sports, s.sport)}</select></div>
         <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">—</option>${opt(['Beginner', 'Intermediate', 'Advanced', 'Elite'], s.skillLevel)}</select></div>
-      </div>
+      </div></fieldset>
     </form>`,
-    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="editStudentSave">${icon('save', 15)} Save changes</button>`,
+    footHtml: (back ? `<button class="btn btn-ghost" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="details">Back to ${escapeHtml(s.name)}</button>` : '<button class="btn btn-ghost" data-modal-close>Cancel</button>')
+      + `<button class="btn btn-primary" id="editStudentSave">${icon('save', 15)} Save changes</button>`,
     onOpen(root) {
       root.querySelector('#editStudentSave').addEventListener('click', () => {
         const fd = new FormData(root.querySelector('#editStudentForm'));
-        updateStudent(studentId, Object.fromEntries(fd.entries()));
-        closeModal();
+        if (!updateStudent(studentId, Object.fromEntries(fd.entries()))) return;   // refused: keep what was typed
+        if (back) openLearner(studentId, 'details'); else closeModal();
       });
     },
   });
@@ -1415,7 +1442,9 @@ Object.assign(ACTIONS, {
   smsBalance: d => smsBalance(d.id),
   waBalance: d => whatsappBalance(d.id),
   smsConduct: d => smsConduct(d.id),
-  editStudent: d => openStudentEdit(d.id),
+  editStudent: d => openStudentEdit(d.id, d.back === '1'),
+  dirShowOwe: () => { el('dirShow').value = 'owe'; studentPage = 1; renderStudentTable(); },
+  admitAnother: () => { el('admitDone').style.display = 'none'; const n = document.querySelector('#registerForm input[name="name"]'); if (n) n.focus(); },
   deleteStudent: d => deleteStudent(d.id),
   notes: d => openNotes(d.id),
   voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
@@ -1460,7 +1489,7 @@ function setupBindings() {
   // initApp runs on every sign-in; bind listeners only once or forms submit twice.
   if (bindingsReady) return;
   bindingsReady = true;
-  bind('registerForm', (f, form) => { registerStudent(f); form.reset(); });
+  bind('registerForm', async (f, form) => { const s = await registerStudent(f); if (s) { form.reset(); showAdmitDone(s); } });
   bind('paymentForm', (f, form) => { recordPayment(f); form.reset(); el('balancePreview').style.display = 'none'; });
   bind('programForm', (f, form) => { f.days = new FormData(form).getAll('days'); addProgram(f); form.reset(); });
   bind('performanceForm', (f, form) => { logPerformance(f); form.reset(); });
@@ -1470,7 +1499,8 @@ function setupBindings() {
 
   const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
   on('searchInput', 'input', () => { studentPage = 1; renderStudentTable(); });
-  on('levelFilter', 'change', () => { studentPage = 1; renderStudentTable(); });
+  ['dirClass', 'dirShow'].forEach(id => on(id, 'change', () => { studentPage = 1; renderStudentTable(); }));
+  on('registerForm', 'input', () => { const d = el('admitDone'); if (d) d.style.display = 'none'; });
   on('sportFilter', 'change', renderPerformanceTable);
   on('conductFilter', 'change', renderConductTable);
   on('compSportFilter', 'change', renderCompetitionsTable);

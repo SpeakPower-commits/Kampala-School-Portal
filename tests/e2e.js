@@ -153,6 +153,21 @@ async function classResults(page, cls) {
     assert(count === 1, 'expected 1 student, got ' + count);
     const g2 = await page.evaluate(() => window.KSA.state().students[0].guardian2);
     assert(g2 === '0701 234 567', 'second guardian = ' + g2);
+    const done = (await page.textContent('#admitDone')).replace(/\s+/g, ' ');
+    assert(/Admitted Nakato Sarah \(NPA\/2026\/001\) to S\.4/.test(done) && await page.isVisible('#admitDone [data-act="learner"]'), 'no "Admitted" panel: ' + done);
+  });
+
+  await step("a guardian's phone that is not a phone number is refused", async () => {
+    await page.fill('#registerForm input[name="name"]', 'No Phone');
+    await page.selectOption('#classSelect', 'P.5');
+    await page.fill('#registerForm input[name="guardian"]', '12345');
+    await page.fill('#registerForm input[name="fee"]', '100000');
+    await page.selectOption('#registerForm select[name="gender"]', 'Male');
+    await page.click('#registerForm button[type="submit"]');
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => window.KSA.state().students.length) === 1, 'learner with a bad guardian phone was saved');
+    assert(/guardian's phone is not a valid/.test(await page.textContent('#toastHost')), 'no message about the guardian phone');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('a second guardian number that is not a phone number is refused', async () => {
@@ -166,6 +181,9 @@ async function classResults(page, cls) {
     await page.waitForTimeout(200);
     assert(await page.evaluate(() => window.KSA.state().students.length) === 1, 'learner with a bad second number was saved');
     assert(/second guardian number is not a valid/.test(await page.textContent('#toastHost')), 'no message about the second number');
+    // A refused save keeps what was typed, so it can be corrected.
+    assert(await page.inputValue('#registerForm input[name="name"]') === 'Wrong Number', 'the form was wiped after a refusal');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('script-like admission number is rejected', async () => {
@@ -179,6 +197,7 @@ async function classResults(page, cls) {
     await page.waitForTimeout(200);
     const count = await page.evaluate(() => window.KSA.state().students.length);
     assert(count === 1, 'unsafe admission number accepted');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('record a payment (any whole amount accepted)', async () => {
@@ -553,12 +572,39 @@ async function classResults(page, cls) {
     assert(/Import 2 learners/.test(await page.textContent('#importGo')), 'expected 2 good rows');
     assert(/second guardian phone not a valid/.test(await page.textContent('.modal')), 'bad second number not reported');
     await page.click('#importGo');
-    await page.waitForTimeout(200);
+    await page.waitForSelector('.modal [data-act="learner"]');
+    const result = (await page.textContent('.modal')).replace(/\s+/g, ' ');
+    assert(/Imported 2 learners/.test(result) && /Opio Daniel/.test(result), 'result: ' + result);
+    await page.click('.modal [data-modal-close]');
     const opio = await page.evaluate(() => { const s = state.students.find(x => x.id === 'NPA/2026/050'); return s && { cls: s.class, stream: s.stream, arrears: studentAccount(s).arrears, g2: s.guardian2 }; });
     assert(opio && opio.cls === 'S.2' && opio.stream === 'East' && opio.arrears === 120000 && opio.g2 === '0701 555 222', 'imported learner ' + JSON.stringify(opio));
+    // The same file again adds nobody twice.
+    await page.setInputFiles('#importLearnersInput', { name: 'learners.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await page.waitForSelector('#importGo');
+    assert(await page.textContent('#importGo') === 'Import 0 learners' && /<strong>2<\/strong> already in the school/.test(await page.innerHTML('.modal')), 'a second import would add learners twice');
+    await page.click('.modal [data-modal-close]');
+  });
+
+  await step('Students: one "Owes" figure, search in any word order or by phone, and the owe-fees list', async () => {
+    await tab(page, 'directory', 'list');
+    const sarah = await page.evaluate(() => { const s = state.students.find(x => x.name === 'Nakato Sarah'); const b = studentAccount(s).balance; return { phone: s.guardian, label: b > 0 ? 'Owes ' + fmtMoney(b) : 'Paid up' }; });
+    const rows = async () => page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    await page.fill('#searchInput', '  sarah NAKATO ');
+    let found = await rows();
+    assert(found.length === 1 && found[0].includes('Nakato Sarah') && found[0].includes(sarah.label), 'name search: ' + found.join(' | '));
+    await page.fill('#searchInput', '+256 ' + sarah.phone.replace(/\D/g, '').slice(-9));
+    found = await rows();
+    assert(found.some(r => r.includes('Nakato Sarah')), 'phone search: ' + found.join(' | '));
+    await page.fill('#searchInput', '');
+    const owing = await page.evaluate(() => state.students.filter(s => studentAccount(s).balance > 0).map(s => s.name).sort());
+    await page.click('#dirSummary [data-act="dirShowOwe"]');
+    const shown = await rows();
+    assert(shown.length === owing.length && owing.every(n => shown.some(r => r.includes(n))), `owe-fees list ${shown.length} vs ${owing.length}`);
+    await page.selectOption('#dirShow', '');
   });
 
   await step('CSV export neutralises spreadsheet formulas and includes both guardians', async () => {
+    await tab(page, 'directory', 'import');
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#exportLearnersBtn')]);
     const text = require('fs').readFileSync(await dl.path(), 'utf8');
     assert(text.includes("\"'=HYPERLINK(1)\""), 'formula not neutralised');

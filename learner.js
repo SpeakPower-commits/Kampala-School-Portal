@@ -32,7 +32,7 @@ const LEARNER_HTML = {
       const n = normalizePhone(p);
       return n ? `<a href="tel:${escapeHtml(n)}">${escapeHtml(p)}</a>` : escapeHtml(p || '—');
     };
-    const edit = can('canEditStudents') ? `<button class="btn btn-outline btn-sm" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit details</button>` : '';
+    const edit = can('canEditStudents') ? `<button class="btn btn-outline btn-sm" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}" data-back="1">Edit details</button>` : '';
     return `<div class="lp-rows">
       ${lpRow('Class', escapeHtml(s.class + (s.stream ? ' ' + s.stream : '')))}
       ${lpRow('Admission no.', escapeHtml(s.id))}

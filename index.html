@@ -115,60 +115,73 @@
     <!-- STUDENTS: all students · admit a student · import from Excel -->
     <section id="panel-directory" class="panel">
       <div class="card card-pad" data-sub="list">
-        <div class="card-head">
-          <div class="card-title">Student directory</div>
-          <div class="toolbar">
-            <select class="input" id="levelFilter" style="width:auto"><option value="">All levels</option><option>Pre-Primary</option><option>Primary</option><option>O Level</option><option>A Level</option><option>Other</option></select>
-            <input class="input" id="searchInput" type="search" placeholder="Search name, class or ID…" style="width:220px">
-          </div>
+        <div class="card-title">All students</div>
+        <p class="card-desc">Choose a class, or type a name, admission number or guardian's phone. Tap a name for everything about that child.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="dirClass">Class</label><select class="input" id="dirClass"></select></div>
+          <div><label class="form-label" for="dirShow">Show</label><select class="input" id="dirShow"><option value="">Everyone</option><option value="owe">Owe fees</option><option value="paid">Paid up</option></select></div>
+          <div><label class="form-label" for="searchInput">Search</label><input class="input" id="searchInput" type="search" placeholder="Name, admission no. or phone"></div>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Gender</th><th>Boarding</th><th>Guardian</th><th>Sport</th><th class="t-num">Fees</th><th class="t-num">Paid</th><th>Status</th><th class="t-num">Actions</th></tr></thead>
-          <tbody id="studentTableBody"></tbody>
-        </table></div>
+        <div class="reg-summary" id="dirSummary" style="display:none" aria-live="polite"></div>
+        <div class="dir-list" id="studentTableBody"></div>
         <div class="pager" id="studentPager"></div>
       </div>
       <div class="card card-pad" id="regStudentCard" data-sub="admit">
         <div class="card-title">Admit a new student</div>
+        <p class="card-desc">Fill in 1 the child, 2 the class, 3 the guardian's phone and 4 the fees, then press Admit student. Fields marked * are needed; the rest can be added later.</p>
+        <div class="tile" id="admitDone" style="display:none;margin-top:12px" aria-live="polite"></div>
         <form id="registerForm" class="form-grid" style="margin-top:12px">
-          <div class="form-row">
-            <div><label class="form-label">Admission no. <span class="opt">(optional)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
-            <div><label class="form-label">Full name</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Class</label>
-              <select class="input" name="class" id="classSelect" required>
-                <option value="">Select…</option>
-                <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
-                <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
-                <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
-                <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
-              </select>
+          <fieldset class="fs-group"><legend>1 · The child</legend>
+            <div class="form-row">
+              <div><label class="form-label">Full name *</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
+              <div><label class="form-label">Gender *</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
+              <div><label class="form-label">Admission no. <span class="opt">(optional: one is made if empty)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
+              <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
             </div>
-            <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" list="streamList" placeholder="e.g. East"><datalist id="streamList"><option value="East"></option><option value="West"></option><option value="North"></option><option value="South"></option><option value="A"></option><option value="B"></option></datalist></div>
-            <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
-            <div><label class="form-label">Second guardian <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" placeholder="0701 234 567"></div>
-            <div><label class="form-label">Termly tuition (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" required placeholder="450000"></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Gender</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
-            <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
-            <div><label class="form-label">UNEB index <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
-            <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Primary sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
-            <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
-          </div>
-          <button class="btn btn-primary" type="submit">Admit student</button>
+          </fieldset>
+          <fieldset class="fs-group"><legend>2 · Class</legend>
+            <div class="form-row">
+              <div><label class="form-label">Class *</label>
+                <select class="input" name="class" id="classSelect" required>
+                  <option value="">Select…</option>
+                  <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
+                  <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
+                  <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
+                  <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
+                </select>
+              </div>
+              <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" list="streamList" placeholder="e.g. East"><datalist id="streamList"><option value="East"></option><option value="West"></option><option value="North"></option><option value="South"></option><option value="A"></option><option value="B"></option></datalist></div>
+              <div><label class="form-label">Day or boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
+            </div>
+            <div class="form-row">
+              <div><label class="form-label">Subjects / combination <span class="opt">(optional)</span></label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
+              <div><label class="form-label">UNEB index <span class="opt">(S.4 and S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>3 · Guardians</legend>
+            <div class="form-row">
+              <div><label class="form-label">Guardian's phone *</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
+              <div><label class="form-label">Second guardian's phone <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" placeholder="0701 234 567"></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>4 · Fees</legend>
+            <div class="form-row">
+              <div><label class="form-label">Termly fees (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" placeholder="450000">
+                <p class="card-desc" style="margin-top:4px">Only needed when no fee structure covers this class (Fees → Terms &amp; fee structures).</p></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>5 · Sport <span class="opt">(optional)</span></legend>
+            <div class="form-row">
+              <div><label class="form-label">Main sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
+              <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
+            </div>
+          </fieldset>
+          <div><button class="btn btn-primary" type="submit">Admit student</button></div>
         </form>
       </div>
       <div class="card card-pad" id="importCard" data-sub="import">
-        <div class="card-title">Import learners</div>
-        <p class="card-desc">Move your existing records in from Excel. Save the sheet as CSV, check the preview, then import.</p>
+        <div class="card-title">Import from Excel</div>
+        <p class="card-desc">1 Download the template and fill it in Excel (one learner per line) · 2 save it as CSV · 3 press Import a CSV file and check the list · 4 press Import. Learners already in the school are skipped, so importing the same file twice adds nobody twice.</p>
         <div class="stack" style="margin-top:12px">
           <button class="btn btn-outline btn-block" id="importTemplateBtn" type="button" style="justify-content:flex-start">Download the template</button>
           <label class="btn btn-primary btn-block" style="cursor:pointer;justify-content:flex-start">Import a CSV file<input id="importLearnersInput" type="file" accept=".csv,text/csv" hidden></label>
