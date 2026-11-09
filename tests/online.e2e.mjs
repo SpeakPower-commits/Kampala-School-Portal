@@ -387,6 +387,21 @@ try {
     assert(await count('sms_campaigns') === 3, 'runs in the database: ' + await count('sms_campaigns'));
   });
 
+  await step('a conduct entry reaches the database with its date, what happened and how serious it is', async () => {
+    await tab('conduct');
+    await page.selectOption('#conductClass', 'S.4');
+    await page.selectOption('#conductStudent', 'KHS/2026/001');
+    await page.selectOption('#conductType', 'Detention');
+    const day = await app(() => addDaysISO(todayISO(), -1));
+    await page.fill('#conductDate', day);
+    await page.fill('#conductWhat', 'Missed evening prep');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForSelector('#conductDone', { state: 'visible' });
+    await saved();
+    const c = await one("select occurred_on::text as d, type, severity, reported_by from public.conduct where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
+    assert(c && c.d === day && c.type === 'Detention' && c.severity === 'Major' && c.reported_by === 'Sarah Namubiru', 'conduct row: ' + JSON.stringify(c));
+  });
+
   await step("a programme's athletes, chosen by name, reach the database", async () => {
     await tab('sports', 'programmes');
     await page.fill('#programForm input[name="name"]', 'Netball A');

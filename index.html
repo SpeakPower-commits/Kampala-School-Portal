@@ -483,26 +483,38 @@
     <!-- DISCIPLINE -->
     <section id="panel-conduct" class="panel">
       <div class="card card-pad" id="conductFormCard">
-        <div class="card-title">Log conduct entry</div>
-        <p class="card-desc">Commendations, warnings and disciplinary actions.</p>
+        <div class="card-title">Log a conduct entry</div>
+        <p class="card-desc">1 Choose the class and the child · 2 choose what happened and write what the child did · 3 press Save entry, then send the message to the guardian if you want to.</p>
+        <div class="tile" id="conductDone" style="display:none;margin-top:12px" aria-live="polite"></div>
         <form id="conductForm" class="form-grid" style="margin-top:14px">
+          <div class="form-row pay-pick">
+            <div><label class="form-label" for="conductClass">Class</label><select class="input" id="conductClass"><option value="">All classes</option></select></div>
+            <div><label class="form-label" for="conductStudent">Learner *</label><select class="input" name="studentId" id="conductStudent" required><option value="">Choose…</option></select></div>
+          </div>
           <div class="form-row">
-            <div><label class="form-label">Student</label><select class="input" name="studentId" id="conductStudent" required><option value="">Choose…</option></select></div>
-            <div><label class="form-label">Type</label><select class="input" name="type" required><option>Commendation</option><option>Verbal Warning</option><option>Written Warning</option><option>Detention</option><option>Suspension</option><option>Counselling</option></select></div>
-            <div><label class="form-label">Severity</label><select class="input" name="severity" required><option>Positive</option><option>Minor</option><option>Major</option><option>Severe</option></select></div>
-            <div><label class="form-label">Reported by</label><input class="input" name="reportedBy" required placeholder="Mr. Kato"></div>
+            <div><label class="form-label" for="conductType">What happened *</label><select class="input" name="type" id="conductType" required>
+              <option value="">Choose…</option>
+              <optgroup label="Good"><option value="Commendation">Commendation</option></optgroup>
+              <optgroup label="A concern"><option value="Verbal Warning">Verbal warning</option><option value="Counselling">Counselling</option></optgroup>
+              <optgroup label="Serious"><option value="Written Warning">Written warning</option><option value="Detention">Detention</option><option value="Suspension">Suspension</option></optgroup>
+            </select></div>
+            <div><label class="form-label" for="conductDate">When</label><input class="input" name="date" id="conductDate" type="date"></div>
+            <div><label class="form-label" for="conductBy">Reported by *</label><input class="input" name="reportedBy" id="conductBy" required placeholder="Mr. Kato"></div>
           </div>
-          <div><label class="form-label">Description</label><textarea class="input" name="description" rows="2" required></textarea></div>
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <label class="check"><input type="checkbox" name="notifyGuardian"> SMS guardian after saving</label>
-            <button class="btn btn-primary btn-sm" type="submit" style="margin-left:auto">Save entry</button>
-          </div>
+          <div><label class="form-label" for="conductWhat">What the child did *</label><textarea class="input" name="description" id="conductWhat" rows="2" required placeholder="e.g. Helped a new pupil find their way around the school"></textarea></div>
+          <button class="btn btn-primary" type="submit" style="justify-self:start">Save entry</button>
         </form>
       </div>
-      <div class="card card-pad">
-        <div class="card-head"><div class="card-title">Conduct log</div>
-          <select class="input" id="conductFilter" style="width:auto"><option value="">All severities</option><option>Positive</option><option>Minor</option><option>Major</option><option>Severe</option></select></div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Student</th><th>Class</th><th>Type</th><th>Severity</th><th>Description</th><th>By</th><th></th></tr></thead><tbody id="conductTableBody"></tbody></table></div>
+      <div class="card card-pad" id="conductLogCard">
+        <div class="card-title">Conduct log</div>
+        <p class="card-desc">Tap a name to see all of that child's entries. SMS and WhatsApp send the guardian the message about that entry.</p>
+        <div class="toolbar pay-filters" style="margin-top:12px">
+          <select class="input" id="conductClassFilter" aria-label="Class"><option value="">All classes</option></select>
+          <select class="input" id="conductFilter" aria-label="Kind of entry"><option value="">Good and bad</option><option value="good">Good only</option><option value="concern">Concerns only</option><option value="serious">Serious only</option></select>
+          <select class="input" id="conductPeriod" aria-label="When"><option value="term">This term</option><option value="all">All terms</option></select>
+        </div>
+        <div class="reg-summary" id="conductSummary"></div>
+        <div class="dir-list" id="conductTableBody"></div>
       </div>
     </section>
 
@@ -529,20 +541,23 @@
     <section id="panel-noticeboard" class="panel">
       <div class="card card-pad">
         <div class="card-title">School notice board</div>
-        <p class="card-desc">Announcements visible to all signed-in staff.</p>
+        <p class="card-desc" id="noticesNote">Notices are seen by everyone who signs in to this app.</p>
         <div class="tile" id="noticeFormCard" style="margin:14px 0;display:none">
+          <div class="form-label" style="margin-bottom:8px">1 Write the title and the details · 2 choose the kind of notice<span data-edition="online"> and who can see it</span> · 3 press Post notice.</div>
           <form id="noticeForm" class="form-grid">
             <div class="form-row">
-              <div><label class="form-label">Title</label><input class="input" name="title" required placeholder="Term 2 begins 26 May 2026"></div>
-              <div><label class="form-label">Category</label><select class="input" name="category"><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
+              <div><label class="form-label" for="noticeTitle">Title *</label><input class="input" name="title" id="noticeTitle" required placeholder="Term 2 begins 26 May 2026"></div>
+              <div><label class="form-label" for="noticeCategory">Kind of notice</label><select class="input" name="category" id="noticeCategory"><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
               <div data-edition="online"><label class="form-label" for="noticeAudience">Who can see this</label><select class="input" name="audience" id="noticeAudience"><option value="staff">Staff only</option><option value="all">Staff and parents</option></select></div>
             </div>
-            <div><label class="form-label">Details</label><textarea class="input" name="body" rows="2"></textarea></div>
+            <div><label class="form-label" for="noticeBody">Details</label><textarea class="input" name="body" id="noticeBody" rows="2"></textarea></div>
             <label class="check" id="noticeSmsWrap" data-edition="online" style="display:none"><input type="checkbox" name="sms"> Also send it by SMS to every guardian</label>
             <button class="btn btn-primary btn-sm" type="submit" style="justify-self:start">Post notice</button>
           </form>
         </div>
+        <div class="toolbar" style="margin:6px 0 10px"><select class="input" id="noticeFilter" style="width:auto" aria-label="Kind of notice"><option value="">Every kind of notice</option><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
         <div class="stack" id="noticesGrid"></div>
+        <p class="card-desc" style="margin-top:10px">The newest 200 notices are kept; older ones are removed.</p>
       </div>
     </section>
 

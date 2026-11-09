@@ -556,6 +556,7 @@ details.disclosure .disclosure-body { padding: 15px; }
 .lp-label { color: var(--muted); font-weight: 600; }
 .lp-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 .lp-tiles .stat-value { font-size: 18px; line-height: 1.3; }
+.lp-tiles.lp-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lp-marks th, .lp-marks td { padding: 9px 8px; }
 
 /* School colour swatches */

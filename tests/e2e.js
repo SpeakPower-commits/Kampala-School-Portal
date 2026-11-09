@@ -482,6 +482,71 @@ async function classResults(page, cls) {
     await page.selectOption('#oweClass', '');
   });
 
+  await step('Discipline: what happened sets how serious it is, and the message says the date and what happened', async () => {
+    await tab(page, 'conduct');
+    await page.selectOption('#conductClass', 'S.4');
+    const opts = await page.$$eval('#conductStudent option', os => os.slice(1).map(o => o.textContent));
+    assert(opts.length === 2 && opts.every(t => / — S\.4/.test(t)), 'class filter: ' + opts.join(' | '));
+    assert(await page.inputValue('#conductBy') !== '', '"Reported by" is not filled in with the signed-in person');
+    await page.selectOption('#conductStudent', secondId);
+    await page.selectOption('#conductType', 'Detention');
+    await page.fill('#conductWhat', 'Late for prep three times');
+    // A date in the future is refused and the form keeps what was typed.
+    await page.fill('#conductDate', '2099-01-01');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.conduct.length) === 0 && await page.inputValue('#conductWhat') === 'Late for prep three times', 'future date accepted, or the form was cleared');
+    const day = await page.evaluate(() => todayISO());
+    await page.fill('#conductDate', day);
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForSelector('#conductDone', { state: 'visible' });
+    const c = await page.evaluate(() => state.conduct[0]);
+    assert(c.type === 'Detention' && c.severity === 'Major' && c.date === day, 'stored ' + JSON.stringify(c));
+    let when = await page.evaluate(d => fmtDay(d), day);
+    let msg = await page.textContent('#conductMsg');
+    assert(msg.includes(`on ${when} Mugisha Brian (S.4) was given a detention: "Late for prep three times"`) && !/commendation/i.test(msg), 'message: ' + msg);
+    // The old bug: a detention whose severity says "Positive" was texted as a commendation.
+    const old = await page.evaluate(() => conductMessage({ type: 'Detention', severity: 'Positive', date: '2026-02-03', description: 'x', reportedBy: 'Mr. Kato' }, { name: 'Test Child', class: 'S.1' }));
+    assert(/was given a detention/.test(old) && !/commendation/i.test(old), 'old entry message: ' + old);
+    // A commendation from before this term opened reads as one, with its own date.
+    const earlier = await page.evaluate(() => addDaysISO(todayISO(), -3));
+    when = await page.evaluate(d => fmtDay(d), earlier);
+    await page.selectOption('#conductStudent', 'NPA/2026/001');
+    await page.selectOption('#conductType', 'Commendation');
+    await page.fill('#conductDate', earlier);
+    await page.fill('#conductWhat', 'Led the class clean-up');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    msg = await page.textContent('#conductMsg');
+    assert(msg.includes(`on ${when} Nakato Sarah (S.4) received a commendation: "Led the class clean-up"`) && /Well done/.test(msg), 'commendation message: ' + msg);
+    // The log: this term's summary, all terms, and a filter for serious entries only.
+    let sum = (await page.textContent('#conductSummary')).replace(/\s+/g, ' ');
+    assert(/1 entry/.test(sum) && /0 good/.test(sum) && /1 serious/.test(sum), 'this term: ' + sum);
+    await page.selectOption('#conductPeriod', 'all');
+    sum = (await page.textContent('#conductSummary')).replace(/\s+/g, ' ');
+    assert(/2 entries/.test(sum) && /1 good/.test(sum) && /1 serious/.test(sum), 'all terms: ' + sum);
+    await page.selectOption('#conductFilter', 'serious');
+    const rows = await page.$$eval('#conductTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(rows.length === 1 && /Mugisha Brian/.test(rows[0]) && /Detention/.test(rows[0]), 'serious only: ' + rows.join(' | '));
+    await page.selectOption('#conductFilter', '');
+    // The child's name opens their page at Discipline, with this term's totals.
+    await page.click(`#conductTableBody [data-act="learner"][data-id="${secondId}"]`);
+    await page.waitForSelector('#learnerBody');
+    const lp = (await page.textContent('#learnerBody')).replace(/\s+/g, ' ');
+    assert(/Serious ?1/.test(lp) && /Late for prep three times/.test(lp), 'learner page: ' + lp);
+    await page.click('#modalHost [data-modal-close]');
+    // Delete names the child and is written to "who did what".
+    await page.click(`#conductTableBody .dir-row:has([data-id="${secondId}"]) [data-act="deleteConduct"]`);
+    await page.waitForSelector('#mdOk');
+    assert(/detention for Mugisha Brian/.test(await page.textContent('#modalHost')), 'delete does not name the child');
+    await page.click('#mdOk');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.conduct.length) === 1, 'entry not deleted');
+    const audit = await page.evaluate(() => AUTH.getAuditLog().map(a => a.action));
+    assert(audit.includes('CONDUCT_ADD') && audit.includes('CONDUCT_DELETE'), 'conduct not audited: ' + audit.slice(0, 8));
+    await page.selectOption('#conductPeriod', 'term');
+  });
+
   await step('grading scales can be edited and restored (Academics → Grading scales)', async () => {
     await tab(page, 'academics', 'grading');
     const text = await page.inputValue('#bands-primary');
@@ -719,6 +784,31 @@ async function classResults(page, cls) {
     await page.click('.modal [data-modal-close]');
   });
 
+  await step('Notices: post, filter by kind, edit and delete, each recorded', async () => {
+    await tab(page, 'noticeboard');
+    assert(!(await page.isVisible('#noticeAudience')), '"Who can see this" (parents) is offered in the offline edition');
+    await page.fill('#noticeTitle', 'Staff meeting on Friday');
+    await page.selectOption('#noticeCategory', 'Academic');
+    await page.fill('#noticeBody', 'In the library at 4pm.');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    const today = await page.evaluate(() => fmtDay(todayISO()));
+    let grid = await page.textContent('#noticesGrid');
+    assert(/Staff meeting on Friday/.test(grid) && grid.includes(today), 'notice or its date missing: ' + grid);
+    await page.selectOption('#noticeFilter', 'Sports');
+    assert(!/Staff meeting on Friday/.test(await page.textContent('#noticesGrid')), 'filter by kind does not filter');
+    await page.selectOption('#noticeFilter', '');
+    await page.click('#noticesGrid [data-act="editNotice"] >> nth=0');
+    await page.waitForSelector('#neTitle');
+    await page.fill('#neTitle', 'Staff meeting moved to Monday');
+    await page.click('#neSave');
+    await page.waitForTimeout(100);
+    grid = await page.textContent('#noticesGrid');
+    assert(/Staff meeting moved to Monday/.test(grid) && !/Staff meeting on Friday/.test(grid), 'edit not saved: ' + grid);
+    const audit = await page.evaluate(() => AUTH.getAuditLog().map(a => a.action));
+    assert(audit.includes('NOTICE_POST') && audit.includes('NOTICE_EDIT'), 'notices not audited: ' + audit.slice(0, 8));
+  });
+
   await step('sign out', async () => {
     await page.click('#logoutBtn');
     await page.waitForSelector('#mdOk');
@@ -767,6 +857,22 @@ async function classResults(page, cls) {
     const today = await page.evaluate(() => fmtDay(todayISO(), false));
     const row = await page.$eval('#attendanceTableBody', b => [...b.rows].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | '));
     assert(row.includes(a2.name) && row.includes(today), 'who attends: ' + row);
+  });
+
+  await step("the coach can change their own notices, but not the director's", async () => {
+    await tab(page, 'noticeboard');
+    await page.fill('#noticeTitle', 'Football practice moved to 5pm');
+    await page.selectOption('#noticeCategory', 'Sports');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    const item = async title => page.$eval('#noticesGrid', (g, t) => [...g.querySelectorAll('.notice-item')].find(n => n.textContent.includes(t)).querySelectorAll('[data-act="editNotice"], [data-act="deleteNotice"]').length, title);
+    assert(await item('Football practice moved to 5pm') === 2, "no Edit and Delete on the coach's own notice");
+    assert(await item('Staff meeting moved to Monday') === 0, "the coach is offered Edit or Delete on the director's notice");
+    const id = await page.evaluate(() => state.notices.find(n => n.title === 'Staff meeting moved to Monday').id);
+    await page.evaluate(i => deleteNotice(i), id);
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(i => state.notices.some(n => n.id === i), id), "the coach deleted the director's notice");
+    assert(/Only the person who posted this notice/.test(await page.textContent('#toastHost')), 'no explanation for the refusal');
   });
 
   await step('signing in right after someone signs out keeps you signed in', async () => {

@@ -366,24 +366,6 @@ async function resetAll() {
   toast('All data cleared.', 'success');
 }
 
-function addConduct(f) {
-  if (!can('canLogConduct')) return toast('You do not have permission to log conduct.', 'error');
-  const s = state.students.find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a student first.', 'error');
-  const entry = { id: newId('CON'), studentId: f.studentId, date: todayISO(), type: f.type, severity: f.severity, description: (f.description || '').trim(), reportedBy: (f.reportedBy || '').trim() };
-  state.conduct.push(entry);
-  saveState(); renderAll();
-  toast('Conduct entry saved for ' + s.name + '.', 'success');
-  if (f.notifyGuardian) smsConduct(entry.id);
-}
-async function deleteConduct(id) {
-  if (!can('canDeleteConduct')) return toast('You do not have permission.', 'error');
-  if (!await confirmDialog({ title: 'Delete entry', message: 'Delete this conduct entry?', confirmLabel: 'Delete', danger: true })) return;
-  state.conduct = state.conduct.filter(c => c.id !== id);
-  saveState(); renderAll();
-  toast('Conduct entry removed.', 'success');
-}
-
 function addProgram(f) {
   if (!can('canAddProgram')) return toast('You do not have permission.', 'error');
   if (!f.name || !f.sport) return toast('Program name and sport are required.', 'error');
@@ -473,15 +455,6 @@ function whatsappBalance(studentId) {
     : `Dear Parent/Guardian of *${s.name}* (${s.class}), thank you for clearing the school fees. — ${schoolName()}`;
   window.open('https://wa.me/' + phone.replace('+', '') + '?text=' + encodeURIComponent(body), '_blank');
 }
-function smsConduct(conductId) {
-  const c = state.conduct.find(x => x.id === conductId); if (!c) return;
-  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
-  const phone = normalizePhone(s.guardian);
-  if (!phone) return toast('No valid guardian phone number on file.', 'error');
-  const opener = c.severity === 'Positive' ? `Commendation for ${s.name}:` : `Conduct notice regarding ${s.name}:`;
-  const body = `${opener} "${c.description}" — ${c.reportedBy || 'school staff'}. ${schoolName()}`;
-  window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
-}
 /* Fee reminders for the class chosen under Who owes (or every class): real
    SMS through the school's account in the online edition; elsewhere (or when
    SMS is not set up) a tap-to-SMS list. */
@@ -555,6 +528,7 @@ function renderAllNow() {
   guard(renderAttendanceTable);
   guard(renderSessionList);
   guard(renderBursaryTable);
+  guard(renderConductForm);
   guard(renderConductTable);
   guard(renderStatisticalReports);
   guard(renderStudentSelects);
@@ -874,27 +848,150 @@ function renderBursaryTable() {
   }).join('');
 }
 
+/* ── Discipline ────────────────────────────────────────────────────────── */
+/* What happened sets how serious it is, so a detention can never be stored
+   or texted as a commendation. Older entries keep their type, and their
+   group comes from the type too. */
+const CONDUCT_TYPES = {
+  'Commendation':    { group: 'good',    severity: 'Positive', label: 'Commendation',    said: 'received a commendation' },
+  'Verbal Warning':  { group: 'concern', severity: 'Minor',    label: 'Verbal warning',  said: 'was given a verbal warning' },
+  'Counselling':     { group: 'concern', severity: 'Minor',    label: 'Counselling',     said: 'was referred for counselling' },
+  'Written Warning': { group: 'serious', severity: 'Major',    label: 'Written warning', said: 'was given a written warning' },
+  'Detention':       { group: 'serious', severity: 'Major',    label: 'Detention',       said: 'was given a detention' },
+  'Suspension':      { group: 'serious', severity: 'Severe',   label: 'Suspension',      said: 'was suspended' },
+};
+const CONDUCT_GROUPS = { good: ['Good', 'badge-success'], concern: ['A concern', 'badge-warn'], serious: ['Serious', 'badge-danger'] };
+function conductKind(c) {
+  const t = CONDUCT_TYPES[c.type];
+  if (t) return t;
+  const group = c.severity === 'Positive' ? 'good' : ['Major', 'Severe'].includes(c.severity) ? 'serious' : 'concern';
+  return { group, severity: c.severity || 'Minor', label: c.type || 'Conduct entry', said: `had a conduct entry (${String(c.type || 'other').toLowerCase()})` };
+}
+/* The message to the guardian: the date, what happened and what the child did. */
+function conductMessage(c, s, whatsapp = false) {
+  const k = conductKind(c);
+  const name = whatsapp ? `*${s.name}*` : s.name;
+  const close = k.group === 'good' ? 'Well done!' : 'Please contact the school if you would like to talk about it.';
+  return `Dear parent/guardian, on ${fmtDay(c.date)} ${name} (${s.class}) ${k.said}${c.description ? `: "${c.description}"` : ''}. ${close} — ${c.reportedBy || 'School staff'}, ${schoolName()}`;
+}
+function conductPhone(s, to) { return normalizePhone(to === '2' ? s.guardian2 : s.guardian); }
+function sendConduct(conductId, to = '1', whatsapp = false) {
+  const c = state.conduct.find(x => x.id === conductId); if (!c) return;
+  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
+  const phone = conductPhone(s, to);
+  if (!phone) return toast(`There is no valid ${to === '2' ? 'second guardian' : 'guardian'} number for ${s.name}.`, 'error');
+  const text = conductMessage(c, s, whatsapp);
+  window.open(whatsapp ? 'https://wa.me/' + phone.replace('+', '') + '?text=' + encodeURIComponent(text) : 'sms:' + phone + '?body=' + encodeURIComponent(text), '_blank');
+}
+
+/* Returns the saved entry, or null when it was refused (the form keeps what was typed). */
+function addConduct(f) {
+  const no = msg => { toast(msg, 'error'); return null; };
+  if (!can('canLogConduct')) return no('You do not have permission to log conduct.');
+  const s = state.students.find(x => x.id === f.studentId);
+  if (!s) return no('Choose the learner first.');
+  const kind = CONDUCT_TYPES[f.type];
+  if (!kind) return no('Choose what happened.');
+  const description = (f.description || '').trim();
+  if (!description) return no('Write what the child did.');
+  const date = f.date || todayISO();
+  if (date > todayISO()) return no('The date cannot be in the future.');
+  const entry = { id: newId('CON'), studentId: s.id, date, type: f.type, severity: kind.severity, description, reportedBy: (f.reportedBy || '').trim() || currentSession.displayName };
+  state.conduct.push(entry);
+  saveState(); renderAll();
+  AUTH.audit('CONDUCT_ADD', `${kind.label} · ${s.name} (${s.id}) · ${fmtDay(date)}`);
+  toast(`${kind.label} saved for ${s.name}.`, 'success');
+  return entry;
+}
+async function deleteConduct(id) {
+  if (!can('canDeleteConduct')) return toast('You do not have permission.', 'error');
+  const c = state.conduct.find(x => x.id === id); if (!c) return;
+  const s = state.students.find(x => x.id === c.studentId);
+  const k = conductKind(c);
+  const who = s ? s.name : 'this learner';
+  if (!await confirmDialog({ title: 'Delete a conduct entry', message: `Delete the ${k.label.toLowerCase()} for ${who} on ${fmtDay(c.date)}? It is removed from ${who}'s record.`, confirmLabel: 'Delete entry', danger: true })) return;
+  state.conduct = state.conduct.filter(x => x.id !== id);
+  saveState(); renderAll();
+  AUTH.audit('CONDUCT_DELETE', `${k.label} · ${who}${s ? ' (' + s.id + ')' : ''} · ${fmtDay(c.date)}`);
+  toast('Conduct entry deleted.', 'success');
+}
+/* After saving: the message for the guardian, ready to send. */
+function showConductDone(c) {
+  const box = el('conductDone'); if (!box || !c) return;
+  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
+  const k = conductKind(c);
+  const send = (to, label) => `<button class="btn btn-outline btn-sm" type="button" data-act="smsConduct" data-id="${escapeHtml(c.id)}" data-to="${to}">SMS ${label}</button><button class="btn btn-outline btn-sm" type="button" data-act="waConduct" data-id="${escapeHtml(c.id)}" data-to="${to}">WhatsApp ${label}</button>`;
+  box.className = 'tile pay-done';
+  box.style.display = '';
+  box.innerHTML = `<div class="pay-done-title">${icon('check', 18)} Saved: ${escapeHtml(k.label.toLowerCase())} for ${escapeHtml(s.name)}</div>
+    <div class="form-label" style="margin:10px 0 4px">Message for the guardian</div>
+    <div class="tile" style="background:#fff;font-size:13.5px;white-space:pre-wrap" id="conductMsg">${escapeHtml(conductMessage(c, s))}</div>
+    <div class="toolbar" style="margin-top:10px">${conductPhone(s, '1') ? send('1', 'guardian') : '<span class="card-desc">No valid guardian number on file.</span>'}${s.guardian2 && conductPhone(s, '2') ? send('2', 'second guardian') : ''}</div>
+    <div class="toolbar" style="margin-top:8px"><button class="btn btn-ghost btn-sm" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="discipline">Open ${escapeHtml(s.name)}</button><button class="btn btn-ghost btn-sm" type="button" data-act="conductAnother">Log another</button></div>`;
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
+}
+/* The form: class first, then the child; today's date and the signed-in person by default. */
+function renderConductForm() {
+  if (!el('conductStudent')) return;
+  const classes = classesWithLearners();
+  fillSelect('conductClass', '<option value="">All classes</option>' + classes.map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const cls = el('conductClass').value;
+  const list = state.students.filter(s => !cls || s.class === cls).sort((a, b) => a.name.localeCompare(b.name));
+  fillSelect('conductStudent', `<option value="">${list.length ? 'Choose a learner…' : 'No learners in this class'}</option>` + list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(classAndStream(s))}</option>`).join(''));
+  const d = el('conductDate'); if (d) { d.max = todayISO(); if (!d.value) d.value = todayISO(); }
+  const by = el('conductBy'); if (by && !by.value && currentSession) by.value = currentSession.displayName || '';
+  fillSelect('conductClassFilter', '<option value="">All classes</option>' + classes.map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+}
+/* Choose a learner on the form (e.g. "Log a conduct entry" on their learner page). */
+function chooseConductLearner(id) {
+  const s = state.students.find(x => x.id === id); if (!s) return;
+  const sel = el('conductClass');
+  if (sel) sel.value = [...sel.options].some(o => o.value === s.class) ? s.class : '';
+  renderConductForm();
+  el('conductStudent').value = id;
+}
+function conductInTerm(c, t) { return inTermWindow(c.date, t); }
 function renderConductTable() {
   const body = el('conductTableBody'); if (!body) return;
-  const filter = el('conductFilter').value;
-  const list = [...state.conduct].filter(c => !filter || c.severity === filter).sort((a, b) => b.date.localeCompare(a.date));
-  if (!list.length) { body.innerHTML = '<tr><td colspan="8" class="empty">No conduct entries.</td></tr>'; return; }
-  const sev = { Positive: 'badge-success', Minor: 'badge-info', Major: 'badge-warn', Severe: 'badge-danger' };
-  body.innerHTML = list.map(c => {
-    const s = state.students.find(x => x.id === c.studentId);
-    const del = can('canDeleteConduct') ? `<button class="btn-icon" title="Delete" data-act="deleteConduct" data-id="${escapeHtml(c.id)}">${icon('trash', 15)}</button>` : '';
-    const sms = s ? `<button class="btn-icon" title="SMS guardian" data-act="smsConduct" data-id="${escapeHtml(c.id)}">${icon('message', 15)}</button>` : '';
-    return `<tr>
-      <td class="t-muted">${c.date}</td>
-      <td style="font-weight:600">${s ? escapeHtml(s.name) : '<em class="t-muted">(removed)</em>'}</td>
-      <td>${s ? escapeHtml(s.class) : '—'}</td>
-      <td>${escapeHtml(c.type)}</td>
-      <td><span class="badge ${sev[c.severity] || 'badge-neutral'}">${escapeHtml(c.severity)}</span></td>
-      <td style="max-width:240px">${escapeHtml(c.description)}</td>
-      <td class="t-muted">${escapeHtml(c.reportedBy)}</td>
-      <td><div class="row-actions">${sms}${del}</div></td>
-    </tr>`;
-  }).join('');
+  const cls = (el('conductClassFilter') || {}).value || '';
+  const group = (el('conductFilter') || {}).value || '';
+  const period = (el('conductPeriod') || {}).value || 'term';
+  const t = getCurrentTerm();
+  const byId = new Map(state.students.map(s => [s.id, s]));
+  const inView = state.conduct.filter(c => {
+    const s = byId.get(c.studentId);
+    return (!cls || (s && s.class === cls)) && (period === 'all' || conductInTerm(c, t));
+  });
+  const list = inView.filter(c => !group || conductKind(c).group === group)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+  const sum = el('conductSummary');
+  if (sum) {
+    const n = { good: 0, concern: 0, serious: 0 };
+    inView.forEach(c => { n[conductKind(c).group]++; });
+    const counts = {};
+    inView.filter(c => conductKind(c).group !== 'good').forEach(c => { counts[c.studentId] = (counts[c.studentId] || 0) + 1; });
+    const most = Object.entries(counts).filter(([, k]) => k > 1).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([id, k]) => { const s = byId.get(id); return s ? `${learnerLink(s.id, s.name, 'discipline')} (${k})` : ''; }).filter(Boolean);
+    const where = `${period === 'all' ? 'All terms' : escapeHtml(termLabel(t))}${cls ? ' · ' + escapeHtml(cls) : ''}`;
+    sum.innerHTML = inView.length
+      ? `${where}: <strong>${inView.length}</strong> entr${inView.length === 1 ? 'y' : 'ies'} — <span class="t-ok">${n.good} good</span> · <span class="t-warn">${n.concern} concern${n.concern === 1 ? '' : 's'}</span> · <span class="t-bad">${n.serious} serious</span>${most.length ? `<br>More than one concern: ${most.join(', ')}` : ''}`
+      : `${where}: no entries.`;
+  }
+  body.innerHTML = list.length ? list.map(c => {
+    const s = byId.get(c.studentId);
+    const k = conductKind(c);
+    const [glabel, gbadge] = CONDUCT_GROUPS[k.group];
+    const send = s ? `<button class="btn btn-outline btn-xs" type="button" data-act="smsConduct" data-id="${escapeHtml(c.id)}">SMS</button><button class="btn btn-outline btn-xs" type="button" data-act="waConduct" data-id="${escapeHtml(c.id)}">WhatsApp</button>` : '';
+    const del = can('canDeleteConduct') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteConduct" data-id="${escapeHtml(c.id)}" aria-label="Delete the entry for ${escapeHtml(s ? s.name : 'this learner')}">Delete</button>` : '';
+    return `<div class="dir-row">
+      <div class="dir-main">
+        <div style="font-weight:600">${s ? learnerLink(s.id, s.name, 'discipline') + ` <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span>` : '<em class="t-muted">Learner removed</em>'}</div>
+        <div style="margin-top:3px"><span class="badge ${gbadge}" title="${escapeHtml(glabel)}">${escapeHtml(k.label)}</span> <span class="card-desc">${escapeHtml(fmtDay(c.date))}${c.reportedBy ? ' · reported by ' + escapeHtml(c.reportedBy) : ''}</span></div>
+        ${c.description ? `<div style="margin-top:4px;font-size:13.5px">${escapeHtml(c.description)}</div>` : ''}
+      </div>
+      <div class="dir-side"><div class="row-actions">${send}${del}</div></div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.conduct.length ? 'No entries match. Choose All classes, Good and bad, or All terms.' : 'No conduct entries yet.'}</div>`;
 }
 
 function renderStatisticalReports() {
@@ -1003,7 +1100,6 @@ function renderStudentSelects() {
     if (cur) sel.value = cur;
   };
   fill('perfStudent', s => s.sport ? ' · ' + s.sport : '');
-  fill('conductStudent', s => ' · ' + s.class);
 }
 /* ── Detail modals ─────────────────────────────────────────────────────── */
 function openNotes(studentId) {
@@ -1184,27 +1280,88 @@ function renderAthleteProfiles() {
 }
 
 /* ── Notices ───────────────────────────────────────────────────────────── */
+const NOTICES_KEPT = 200;
+/* Who may change a notice: the director, the administrator, or whoever posted it. */
+function canChangeNotice(n) {
+  if (!can('canPostNotice') || !currentSession) return false;
+  if (['exec', 'admin'].includes(currentSession.role)) return true;
+  return n.postedById ? n.postedById === currentSession.userId : n.postedBy === currentSession.displayName;
+}
 function postNotice(f) {
-  if (!can('canPostNotice')) return toast('You do not have permission.', 'error');
-  if (!f.title || !f.title.trim()) return toast('Notice title is required.', 'error');
+  if (!can('canPostNotice')) { toast('You do not have permission.', 'error'); return false; }
+  if (!f.title || !f.title.trim()) { toast('Give the notice a title.', 'error'); return false; }
   // Online, a notice can also be shown to parents in their portal.
   const audience = ONLINE_EDITION && f.audience === 'all' ? 'all' : 'staff';
-  const notice = { id: newId('NTC'), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO(), audience };
+  const notice = { id: newId('NTC'), title: f.title.trim(), body: (f.body || '').trim(), category: f.category || 'General', postedBy: currentSession.displayName, postedById: currentSession.userId, postedAt: nowISO(), audience };
   state.notices.unshift(notice);
-  if (state.notices.length > 50) state.notices = state.notices.slice(0, 50);
+  if (state.notices.length > NOTICES_KEPT) state.notices = state.notices.slice(0, NOTICES_KEPT);
   saveState(); renderAll();
+  AUTH.audit('NOTICE_POST', `${notice.title}${audience === 'all' ? ' · staff and parents' : ''}`);
   toast('Notice posted.', 'success');
   if (ONLINE_EDITION && f.sms && can('canBroadcastSms')) {
     const text = (notice.title + (notice.body ? ': ' + notice.body : '')).slice(0, 380);
     SMS.openRun('broadcast', { message: text }, 'Send this notice by SMS');
   }
+  return true;
 }
-async function deleteNotice(id) { if (!await confirmDialog({ title: 'Delete notice', message: 'Delete this notice?', confirmLabel: 'Delete', danger: true })) return; state.notices = state.notices.filter(n => n.id !== id); saveState(); renderAll(); }
+async function deleteNotice(id) {
+  const n = state.notices.find(x => x.id === id); if (!n) return;
+  if (!canChangeNotice(n)) return toast('Only the person who posted this notice, the director or the administrator can delete it.', 'error');
+  if (!await confirmDialog({ title: 'Delete a notice', message: `Delete the notice "${n.title}"${n.postedBy ? ` posted by ${n.postedBy}` : ''}? Nobody will see it again${ONLINE_EDITION && n.audience === 'all' ? ', parents included' : ''}.`, confirmLabel: 'Delete notice', danger: true })) return;
+  state.notices = state.notices.filter(x => x.id !== id);
+  saveState(); renderAll();
+  AUTH.audit('NOTICE_DELETE', n.title);
+  toast('Notice deleted.', 'success');
+}
+/* Edit the words, the kind and (online) who sees it. It is never sent by SMS again. */
+function editNotice(id) {
+  const n = state.notices.find(x => x.id === id); if (!n) return;
+  if (!canChangeNotice(n)) return toast('Only the person who posted this notice, the director or the administrator can change it.', 'error');
+  const cats = ['General', 'Academic', 'Finance', 'Sports', 'Discipline', 'Urgent'];
+  openModal({
+    title: 'Edit notice',
+    bodyHtml: `<form id="noticeEditForm" class="form-grid">
+      <div><label class="form-label" for="neTitle">Title *</label><input class="input" id="neTitle" name="title" required value="${escapeHtml(n.title)}"></div>
+      <div class="form-row">
+        <div><label class="form-label" for="neCategory">Kind of notice</label><select class="input" id="neCategory" name="category">${cats.map(c => `<option${c === n.category ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
+        ${ONLINE_EDITION ? `<div><label class="form-label" for="neAudience">Who can see this</label><select class="input" id="neAudience" name="audience"><option value="staff"${n.audience !== 'all' ? ' selected' : ''}>Staff only</option><option value="all"${n.audience === 'all' ? ' selected' : ''}>Staff and parents</option></select></div>` : ''}
+      </div>
+      <div><label class="form-label" for="neBody">Details</label><textarea class="input" id="neBody" name="body" rows="4">${escapeHtml(n.body || '')}</textarea></div>
+      <p class="card-desc" style="margin:0">Saving changes the notice on the board. It is not sent by SMS again.</p>
+    </form>`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="neSave">Save notice</button>',
+    onOpen(root) {
+      root.querySelector('#neSave').addEventListener('click', () => {
+        const f = Object.fromEntries(new FormData(root.querySelector('#noticeEditForm')).entries());
+        if (!(f.title || '').trim()) return toast('Give the notice a title.', 'error');
+        n.title = f.title.trim(); n.body = (f.body || '').trim(); n.category = f.category || 'General';
+        if (ONLINE_EDITION) n.audience = f.audience === 'all' ? 'all' : 'staff';
+        closeModal(); saveState(); renderAll();
+        AUTH.audit('NOTICE_EDIT', n.title);
+        toast('Notice saved.', 'success');
+      });
+    },
+  });
+}
 function renderNotices() {
   const grid = el('noticesGrid'); if (!grid) return;
   const formCard = el('noticeFormCard');
   if (formCard) formCard.style.display = can('canPostNotice') ? '' : 'none';
-  grid.innerHTML = state.notices.length ? state.notices.map(n => `<div class="notice-item cat-${escapeHtml(n.category)}"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? new Date(n.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>${ONLINE_EDITION && n.audience === 'all' ? '<span class="badge badge-info">Parents can see this</span>' : ''}</div><div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}<div class="card-desc" style="margin-top:6px">Posted by ${escapeHtml(n.postedBy)}</div></div>${can('canPostNotice') ? `<button class="btn-icon" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" title="Delete">${icon('trash', 15)}</button>` : ''}</div></div>`).join('') : '<div class="empty">No notices posted yet.</div>';
+  const note = el('noticesNote');
+  if (note) note.textContent = ONLINE_EDITION
+    ? 'Staff see every notice. Parents see only the notices marked "Staff and parents", in the parent portal.'
+    : 'Notices are seen by everyone who signs in to this app on this device.';
+  const cat = (el('noticeFilter') || {}).value || '';
+  const list = state.notices.filter(n => !cat || n.category === cat);
+  grid.innerHTML = list.length ? list.map(n => {
+    const mine = canChangeNotice(n);
+    return `<div class="notice-item cat-${escapeHtml(n.category)}">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? escapeHtml(fmtDay(n.postedAt.slice(0, 10))) : ''}</span>${ONLINE_EDITION && n.audience === 'all' ? '<span class="badge badge-info">Parents can see this</span>' : ''}</div>
+      <div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px"><span class="card-desc">Posted by ${escapeHtml(n.postedBy || '—')}</span>
+        ${mine ? `<div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="editNotice" data-id="${escapeHtml(n.id)}">Edit</button><button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" aria-label="Delete the notice ${escapeHtml(n.title)}">Delete</button></div>` : ''}</div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.notices.length ? 'No notices of this kind.' : 'No notices posted yet.'}</div>`;
 }
 
 /* ── User management & audit ───────────────────────────────────────────── */
@@ -1448,7 +1605,10 @@ Object.assign(ACTIONS, {
   feeReceipt: d => printFeeReceipt(d.id),
   smsBalance: d => smsBalance(d.id),
   waBalance: d => whatsappBalance(d.id),
-  smsConduct: d => smsConduct(d.id),
+  smsConduct: d => sendConduct(d.id, d.to || '1'),
+  waConduct: d => sendConduct(d.id, d.to || '1', true),
+  conductAnother: () => { const b = el('conductDone'); if (b) b.style.display = 'none'; const sel = el('conductStudent'); if (sel) sel.focus(); },
+  editNotice: d => editNotice(d.id),
   editStudent: d => openStudentEdit(d.id, d.back === '1'),
   dirShowOwe: () => { el('dirShow').value = 'owe'; studentPage = 1; renderStudentTable(); },
   admitAnother: () => { el('admitDone').style.display = 'none'; const n = document.querySelector('#registerForm input[name="name"]'); if (n) n.focus(); },
@@ -1524,8 +1684,16 @@ function setupBindings() {
   });
   bind('programForm', (f, form) => { f.days = new FormData(form).getAll('days'); addProgram(f); form.reset(); });
   bind('performanceForm', (f, form) => { logPerformance(f); form.reset(); });
-  bind('conductForm', (f, form) => { f.notifyGuardian = form.notifyGuardian.checked; addConduct(f); form.reset(); });
-  bind('noticeForm', (f, form) => { postNotice(f); form.reset(); });
+  bind('conductForm', (f, form) => {
+    const c = addConduct(f);
+    if (!c) return;   // refused: keep what was typed
+    const cls = el('conductClass').value;
+    form.reset();
+    el('conductClass').value = cls;
+    renderConductForm();
+    showConductDone(c);
+  });
+  bind('noticeForm', (f, form) => { if (postNotice(f)) form.reset(); });
   bind('settingsForm', (f) => { saveSettings(f); });
 
   const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
@@ -1533,7 +1701,10 @@ function setupBindings() {
   ['dirClass', 'dirShow'].forEach(id => on(id, 'change', () => { studentPage = 1; renderStudentTable(); }));
   on('registerForm', 'input', () => { const d = el('admitDone'); if (d) d.style.display = 'none'; });
   on('sportFilter', 'change', renderPerformanceTable);
-  on('conductFilter', 'change', renderConductTable);
+  ['conductFilter', 'conductClassFilter', 'conductPeriod'].forEach(id => on(id, 'change', renderConductTable));
+  on('conductClass', 'change', () => { el('conductStudent').value = ''; renderConductForm(); });
+  on('conductForm', 'input', () => { const d = el('conductDone'); if (d) d.style.display = 'none'; });
+  on('noticeFilter', 'change', renderNotices);
   on('compSportFilter', 'change', renderCompetitionsTable);
   on('compSeasonFilter', 'change', renderCompetitionsTable);
   on('athleteProfileFilter', 'change', renderAthleteProfiles);
@@ -2052,6 +2223,7 @@ document.addEventListener('DOMContentLoaded', () => {
   try { loadState(); applySettings(); applyBranding(); } catch (_) {}
 
   if (ONLINE_EDITION) { startOnline(); return; }
+  applyEditionTexts();   // hide what only the online edition has (e.g. "Who can see this" on notices)
   const session = AUTH.getSession();
   if (session) { currentSession = session; initApp(); }
   else el('authScreen').style.display = 'grid';

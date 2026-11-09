@@ -126,10 +126,23 @@ const LEARNER_HTML = {
   },
 
   discipline(s) {
-    const list = (state.conduct || []).filter(c => c.studentId === s.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-    return list.length
-      ? `<div class="lp-rows">${list.map(c => lpRow(escapeHtml(fmtDay(c.date)), `<strong>${escapeHtml(c.type || '')}</strong>${c.severity ? ` <span class="card-desc">(${escapeHtml(c.severity)})</span>` : ''}${c.description ? '<br>' + escapeHtml(c.description) : ''}`)).join('')}</div>`
-      : '<p class="card-desc">No conduct entries.</p>';
+    const t = getCurrentTerm();
+    const all = (state.conduct || []).filter(c => c.studentId === s.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const term = all.filter(c => inTermWindow(c.date, t));
+    const n = { good: 0, concern: 0, serious: 0 };
+    term.forEach(c => { n[conductKind(c).group]++; });
+    const log = can('canLogConduct') ? `<button class="btn btn-primary btn-sm" type="button" data-act="logConductFor" data-id="${escapeHtml(s.id)}">Log a conduct entry</button>` : '';
+    const row = c => { const k = conductKind(c); return lpRow(escapeHtml(fmtDay(c.date)), `<span class="badge ${CONDUCT_GROUPS[k.group][1]}">${escapeHtml(k.label)}</span>${c.description ? ' ' + escapeHtml(c.description) : ''}${c.reportedBy ? `<div class="card-desc">Reported by ${escapeHtml(c.reportedBy)}</div>` : ''}`); };
+    const earlier = all.filter(c => !term.includes(c));
+    return `<div class="grid lp-tiles lp-tiles-3">
+        ${lpTile('Good', n.good, n.good ? 'var(--success)' : '')}
+        ${lpTile('Concerns', n.concern, n.concern ? 'var(--warn)' : '')}
+        ${lpTile('Serious', n.serious, n.serious ? 'var(--danger)' : '')}
+      </div>
+      <div class="form-label" style="margin-top:14px">${escapeHtml(termLabel(t))}</div>
+      ${term.length ? `<div class="lp-rows">${term.map(row).join('')}</div>` : '<p class="card-desc">No conduct entries this term.</p>'}
+      ${earlier.length ? `<div class="form-label" style="margin-top:14px">Earlier terms</div><div class="lp-rows">${earlier.slice(0, 8).map(row).join('')}</div>${earlier.length > 8 ? `<p class="card-desc">and ${earlier.length - 8} more.</p>` : ''}` : ''}
+      ${log ? `<div class="toolbar" style="margin-top:12px">${log}</div>` : ''}`;
   },
 };
 
@@ -157,6 +170,13 @@ function openLearner(id, section) {
 
 Object.assign(ACTIONS, {
   learner: d => openLearner(d.id, d.section),
+  // From a learner's Discipline: open the conduct form with them chosen.
+  logConductFor: d => {
+    closeModal();
+    switchTab('conduct');
+    chooseConductLearner(d.id);
+    const t = el('conductType'); if (t) t.focus();
+  },
   // From a learner's Fees: open Record payment with them chosen.
   payFor: d => {
     closeModal();
