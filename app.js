@@ -1773,10 +1773,14 @@ const TODAYS_JOBS = [
   ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => can('canMarkRegister')],
   ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
   ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
-  ['payments/record', 'Record a payment', 'The receipt prints straight away', () => can('canRecordPayment')],
-  ['payments/dashboard', 'Who owes fees', 'Balances, defaulters and reminders', () => hasTab('payments')],
-  ['sports/training', 'Mark training', 'Who came and who missed', () => can('canMarkAttendance')],
+  ['payments/record', 'Record a payment', 'Then print the receipt', () => can('canRecordPayment')],
+  ['payments/dashboard', 'Who owes fees', 'Class by class, with reminders', () => hasTab('payments')],
+  ['sports/training', 'Mark training', 'Every athlete present or absent', () => can('canMarkAttendance')],
+  ['directory/list', 'Find a child', 'By name, class or guardian number', () => hasTab('directory')],
   ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
+  ['conduct', 'Log a discipline case', 'Or a commendation, with the message to the guardian', () => can('canLogConduct')],
+  ['noticeboard', 'Post a notice', 'For staff' + (ONLINE_EDITION ? ', or staff and parents' : ''), () => can('canPostNotice')],
+  ['act:backupNow', 'Back up now', 'Download a copy of everything on this device', () => !ONLINE_EDITION && can('canExport')],
 ];
 function renderTodaysJobs() {
   const card = el('jobsCard'), list = el('jobsList');
@@ -1785,7 +1789,7 @@ function renderTodaysJobs() {
     if (!ok()) return false;
     if (to.startsWith('act:')) return true;
     const [tab, sub] = to.split('/');
-    return hasTab(tab) && allowedSubs(tab).some(x => x[0] === sub);
+    return hasTab(tab) && (!sub || allowedSubs(tab).some(x => x[0] === sub));
   });
   card.style.display = jobs.length ? '' : 'none';
   list.innerHTML = jobs.map(([to, label, hint]) => {

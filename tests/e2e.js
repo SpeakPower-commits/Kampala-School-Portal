@@ -680,7 +680,8 @@ async function classResults(page, cls) {
     await tab(page, 'overview');
     assert(await page.isVisible('#jobsCard'), "Today's jobs not shown");
     const jobs = await page.$$eval('#jobsList .job', bs => bs.map(b => b.dataset.to || 'act:' + b.dataset.act));
-    for (const to of ['directory/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    for (const to of ['directory/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/list', 'directory/admit', 'conduct', 'noticeboard', 'act:backupNow']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    assert(/Then print the receipt/.test(await page.textContent('#jobsList [data-to="payments/record"]')), 'the payment job does not mention the receipt');
     await page.click('#jobsList [data-to="academics/reportcards"]');
     assert(await page.isVisible('#rcList') && !(await page.isVisible('#markSheetRoster')), 'did not land on Academics → Report cards');
     const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
