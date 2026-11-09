@@ -175,6 +175,12 @@ function secondGuardianOk(raw) { return !String(raw || '').trim() || phoneValid(
    ========================================================================= */
 const ADMISSION_RE = /^[A-Za-z0-9][A-Za-z0-9/_-]{0,23}$/;
 
+/* A short admission number for a learner admitted without one, never one in use. */
+function newLearnerId() {
+  let id;
+  do { id = 'S' + uid().slice(0, 6); } while (state.students.some(s => s.id.toLowerCase() === id.toLowerCase()));
+  return id;
+}
 async function registerStudent(f) {
   if (!can('canRegisterStudent')) return toast('You do not have permission to register students.', 'error');
   let id = (f.admissionNo || '').trim();
@@ -182,7 +188,7 @@ async function registerStudent(f) {
     if (!ADMISSION_RE.test(id)) return toast('Admission number may only contain letters, numbers, / _ and -.', 'error');
     if (state.students.some(s => s.id.toLowerCase() === id.toLowerCase())) return toast('Admission number "' + id + '" is already in use.', 'error');
   } else {
-    id = 'S' + uid().slice(0, 6);
+    id = newLearnerId();
   }
   const name = (f.name || '').trim(), cls = (f.class || '').trim();
   if (!name) return toast('Type the child\'s full name.', 'error');
@@ -364,7 +370,7 @@ function addConduct(f) {
   if (!can('canLogConduct')) return toast('You do not have permission to log conduct.', 'error');
   const s = state.students.find(x => x.id === f.studentId);
   if (!s) return toast('Choose a student first.', 'error');
-  const entry = { id: 'CON' + uid().slice(0, 5), studentId: f.studentId, date: todayISO(), type: f.type, severity: f.severity, description: (f.description || '').trim(), reportedBy: (f.reportedBy || '').trim() };
+  const entry = { id: newId('CON'), studentId: f.studentId, date: todayISO(), type: f.type, severity: f.severity, description: (f.description || '').trim(), reportedBy: (f.reportedBy || '').trim() };
   state.conduct.push(entry);
   saveState(); renderAll();
   toast('Conduct entry saved for ' + s.name + '.', 'success');
@@ -381,7 +387,7 @@ async function deleteConduct(id) {
 function addProgram(f) {
   if (!can('canAddProgram')) return toast('You do not have permission.', 'error');
   if (!f.name || !f.sport) return toast('Program name and sport are required.', 'error');
-  state.programs.push({ id: 'PRG' + uid().slice(0, 5), name: f.name.trim(), sport: f.sport.trim(), coach: (f.coach || 'To be assigned').trim(), days: f.days || [], requirements: (f.requirements || '').split('\n').map(x => x.trim()).filter(Boolean) });
+  state.programs.push({ id: newId('PRG'), name: f.name.trim(), sport: f.sport.trim(), coach: (f.coach || 'To be assigned').trim(), days: f.days || [], requirements: (f.requirements || '').split('\n').map(x => x.trim()).filter(Boolean) });
   saveState(); renderAll();
   toast('Program added: ' + f.name.trim() + '.', 'success');
 }
@@ -410,7 +416,7 @@ function saveAttendance(programId, date, records) {
   if (!can('canMarkAttendance')) return toast('You do not have permission.', 'error');
   if (!programId || !date) return toast('Choose a program and date.', 'error');
   state.attendance = state.attendance.filter(a => !(a.programId === programId && a.date === date));
-  state.attendance.push({ id: 'ATT' + uid().slice(0, 5), programId, date, records });
+  state.attendance.push({ id: newId('ATT'), programId, date, records });
   saveState(); renderAll();
   const missed = records.filter(r => !r.present).map(r => (state.students.find(s => s.id === r.studentId) || {}).name).filter(Boolean);
   toast(`Session saved for ${fmtDay(date)}: ${records.length - missed.length} came${missed.length ? ', missed: ' + missed.join(', ') : ', nobody missed'}.`, 'success');
@@ -1091,7 +1097,7 @@ function openCompetitionForm() {
 function submitCompetition(f) {
   if (!can('canManageCompetitions')) return toast('You do not have permission.', 'error');
   if (!f.eventName || !f.sport) return toast('Event name and sport are required.', 'error');
-  state.competitions.push({ id: 'CMP' + uid().slice(0, 5), ...f });
+  state.competitions.push({ id: newId('CMP'), ...f });
   saveState(); renderAll(); closeModal();
   toast('Competition result logged.', 'success');
 }
@@ -1131,7 +1137,7 @@ function openSquadForm() {
         const members = [...form.querySelectorAll('[name="members"]:checked')].map(c => c.value);
         if (!name || !sport) return toast('Name and sport are required.', 'error');
         if (!members.length) return toast('Select at least one member.', 'error');
-        state.squads.push({ id: 'SQD' + uid().slice(0, 5), name, sport, members, createdAt: todayISO() });
+        state.squads.push({ id: newId('SQD'), name, sport, members, createdAt: todayISO() });
         saveState(); renderAll(); closeModal(); toast('Squad created.', 'success');
       });
     },
@@ -1183,7 +1189,7 @@ function postNotice(f) {
   if (!f.title || !f.title.trim()) return toast('Notice title is required.', 'error');
   // Online, a notice can also be shown to parents in their portal.
   const audience = ONLINE_EDITION && f.audience === 'all' ? 'all' : 'staff';
-  const notice = { id: 'NTC' + uid().slice(0, 5), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO(), audience };
+  const notice = { id: newId('NTC'), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO(), audience };
   state.notices.unshift(notice);
   if (state.notices.length > 50) state.notices = state.notices.slice(0, 50);
   saveState(); renderAll();

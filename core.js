@@ -97,6 +97,15 @@ function uid() {
   if (crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
+/* An id for a new record: the prefix and 12 random hex digits. Marks and
+   registers run to tens of thousands a year, so the 5–6 digits used before
+   would, sooner or later, give two records the same id (and online the
+   second would overwrite the first). Existing ids are kept as they are. */
+function newId(prefix) {
+  const hex = crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '')
+    : Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return prefix + hex.slice(0, 12).toUpperCase();
+}
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function nowISO() { return new Date().toISOString(); }
 /* Dates are kept as YYYY-MM-DD (UTC, like todayISO). addDaysISO('2026-11-05', -6)

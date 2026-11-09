@@ -131,7 +131,7 @@ function saveRegister() {
   state.registers = state.registers || [];
   const existing = findRegister(cls, stream, date);
   if (existing) { existing.records = records; existing.markedBy = currentSession.displayName; existing.updatedAt = nowISO(); }
-  else state.registers.push({ id: 'REG' + uid().slice(0, 6), class: cls, stream: stream || '', date, records, markedBy: currentSession.displayName, createdAt: nowISO() });
+  else state.registers.push({ id: newId('REG'), class: cls, stream: stream || '', date, records, markedBy: currentSession.displayName, createdAt: nowISO() });
   saveState(); renderAll();
   const absent = records.filter(r => r.status === 'A').map(r => learnerName(r.studentId));
   toast(`Register saved for ${classLabel(cls, stream)}, ${fmtDay(date)}: ${records.length - absent.length} here${absent.length ? ', absent: ' + absent.join(', ') : ', nobody absent'}.`, 'success');

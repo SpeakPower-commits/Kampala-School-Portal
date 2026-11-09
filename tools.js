@@ -142,7 +142,7 @@ function importLearnersFile(file) {
 }
 function commitImport(recs) {
   recs.forEach(r => {
-    const id = r.admissionNo || 'S' + uid().slice(0, 6);
+    const id = r.admissionNo || newLearnerId();
     const s = {
       id, name: r.name, class: r.class, stream: r.stream, level: classifyLevel(r.class), combination: '',
       guardian: r.guardian, guardian2: r.guardian2 || '', fee: r.fee || 0, paid: 0, sport: r.sport, skillLevel: '', gender: r.gender || '',

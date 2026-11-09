@@ -215,7 +215,7 @@ function saveMark(s, termId, examSet, subject, score) {
   s.academics = s.academics || [];
   const existing = s.academics.find(a => a.termId === termId && (a.examSet || 'EOT') === examSet && a.subject.toLowerCase() === subject.toLowerCase());
   if (existing) { existing.score = score; existing.grade = g.grade; existing.points = g.points; existing.date = todayISO(); }
-  else s.academics.push({ id: 'AC' + uid().slice(0, 6), termId, examSet, term: (termById(termId) || {}).term || '', subject, score, grade: g.grade, points: g.points, date: todayISO() });
+  else s.academics.push({ id: newId('AC'), termId, examSet, term: (termById(termId) || {}).term || '', subject, score, grade: g.grade, points: g.points, date: todayISO() });
   return g;
 }
 /* ── Enter marks: one subject, one exam, the whole class ───────────────── */
