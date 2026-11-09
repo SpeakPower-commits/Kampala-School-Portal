@@ -217,7 +217,11 @@ function applyBranding() {
   if (preview) preview.innerHTML = logo ? `<img src="${logo}" alt="School logo" style="width:64px;height:64px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff">` : '<span class="card-desc">No logo — the crest is used.</span>';
   const removeBtn = el('logoRemoveBtn'); if (removeBtn) removeBtn.style.display = logo ? '' : 'none';
   const swatches = el('brandSwatches');
-  if (swatches) swatches.innerHTML = BRAND_PRESETS.map(b => `<label class="swatch" title="${b.name}"><input type="radio" name="brandPreset" value="${b.id}" ${b.id === p.id ? 'checked' : ''}><span style="background:${b.brand}"></span>${b.name}</label>`).join('');
+  // A colour picked but not saved yet stays picked (e.g. across a logo upload).
+  const form = el('settingsForm');
+  const picked = form && form.dataset.dirty && (document.querySelector('#brandSwatches input:checked') || {}).value;
+  const on = picked || p.id;
+  if (swatches) swatches.innerHTML = BRAND_PRESETS.map(b => `<label class="swatch" title="${b.name}"><input type="radio" name="brandPreset" value="${b.id}" ${b.id === on ? 'checked' : ''}><span style="background:${b.brand}"></span>${b.name}</label>`).join('');
 }
 function uploadLogo(file) {
   if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
@@ -247,7 +251,13 @@ function uploadLogo(file) {
   };
   reader.readAsDataURL(file);
 }
-function removeLogo() { delete state.settings.logo; saveState(); applyBranding(); toast('Logo removed.', 'success'); }
+async function removeLogo() {
+  if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
+  if (!await confirmDialog({ title: 'Remove the logo', message: 'Remove the school logo? The crest is used instead on the sign-in screen, receipts and report cards. This is saved straight away.', confirmLabel: 'Remove logo', danger: true })) return;
+  delete state.settings.logo; saveState(); applyBranding();
+  AUTH.audit('LOGO_REMOVE', '');
+  toast('Logo removed.', 'success');
+}
 
 /* ── Daily snapshots (IndexedDB) ───────────────────────────────────────── */
 /* One copy of the school's data per day, last 7 days, on this device only.
@@ -290,21 +300,21 @@ async function openSnapshots() {
   try { list = await snapTx('readonly', store => store.getAll()); } catch (_) { return toast('Snapshots are not available in this browser.', 'error'); }
   list = (list || []).sort((a, b) => b.date.localeCompare(a.date));
   openModal({
-    title: 'Restore a daily snapshot',
-    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">The portal keeps one copy of your data per day for the last ${SNAP_KEEP} days, on this device only. Restoring replaces everything with that day's copy.</p>
-      ${list.length ? list.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(s.date)}</div><div class="card-desc">${s.learners} learners · ${Math.round(s.data.length / 1024)} KB · saved ${escapeHtml(s.ts.slice(11, 16))}</div></div><button class="btn btn-outline btn-xs" data-snap="${escapeHtml(s.date)}">Restore</button></div>`).join('') : '<p class="empty">No snapshots yet. One is taken automatically each day the portal is used.</p>'}`,
+    title: 'Go back to a daily copy',
+    bodyHtml: `<p class="card-desc" style="margin-bottom:12px">The app keeps one copy of the school's records each day for the last ${SNAP_KEEP} days, on this device only. Going back replaces everything with that day's copy. It does not protect you if the computer is lost: use Back up now for that.</p>
+      ${list.length ? list.map(s => `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(fmtDay(s.date))}</div><div class="card-desc">${s.learners} learners · copied ${escapeHtml(fmtWhen(s.ts))}</div></div><button class="btn btn-outline btn-xs" data-snap="${escapeHtml(s.date)}">Go back to this copy</button></div>`).join('') : '<p class="empty">No daily copies yet. One is made automatically each day the app is used.</p>'}`,
     footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>`,
     onOpen(root) {
       root.addEventListener('click', async e => {
         const b = e.target.closest('[data-snap]'); if (!b) return;
         const snap = list.find(s => s.date === b.dataset.snap); if (!snap) return;
         closeModal();
-        const ok = await confirmDialog({ title: 'Restore snapshot', message: `Replace all current data with the copy from ${snap.date}? Anything entered since then will be lost.`, confirmLabel: 'Restore snapshot', danger: true });
+        const ok = await confirmDialog({ title: 'Go back to a daily copy', message: `Replace all the school's records on this device with the copy from ${fmtDay(snap.date)}? Anything entered since then will be lost.`, confirmLabel: 'Go back to this copy', danger: true });
         if (!ok) return;
         state = migrate(JSON.parse(snap.data)); recomputePaid(); recomputeGrades();
         saveState(); applySettings(); renderAll();
         AUTH.audit('SNAPSHOT_RESTORE', snap.date);
-        toast(`Restored the snapshot from ${snap.date}.`, 'success');
+        toast(`Records are back as they were on ${fmtDay(snap.date)}.`, 'success');
       });
     },
   });

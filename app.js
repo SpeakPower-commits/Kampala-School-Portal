@@ -484,25 +484,57 @@ function openFeeReminderLinks(cls = '') {
 
 /* ── Backup / restore ──────────────────────────────────────────────────── */
 function exportLedger() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  if (!can('canExport')) return toast('You do not have permission to back up.', 'error');
+  const savedAt = nowISO();
+  // Offline, the staff accounts and "who did what" live on this device too, so
+  // they go in the file (passwords only as salted hashes).
+  const records = !ONLINE_EDITION && AUTH.backupRecords ? AUTH.backupRecords() : null;
+  const file = Object.assign({}, state, { _backup: { app: 'School Portal', school: schoolName(), savedAt, learners: state.students.length, ...(records || {}) } });
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'school-backup-' + todayISO() + '.json';
+  a.download = `${schoolName().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'school'}-backup-${todayISO()}.json`;
   a.click(); URL.revokeObjectURL(a.href);
   try { localStorage.setItem('ksa_last_backup', todayISO()); } catch (_) {}
+  AUTH.audit('BACKUP_EXPORT', `${state.students.length} learners${records ? ` · ${records.users.length} staff accounts` : ''}`);
   updateBackupBanner();
-  toast('Backup exported.', 'success');
+  toast(`Backup downloaded: ${state.students.length} learners${records ? `, ${records.users.length} staff accounts` : ''}. Keep the file somewhere safe.`, 'success');
 }
 function importLedger(file) {
   const reader = new FileReader();
   reader.onload = async e => {
     let data;
-    try { data = JSON.parse(e.target.result); } catch (_) { return toast('That file is not valid JSON.', 'error'); }
-    if (!data || !Array.isArray(data.students)) return toast('That file is not a valid backup.', 'error');
-    const ok = await confirmDialog({ title: 'Restore backup', message: 'This replaces all current data on this device with the contents of the backup file. Continue?', confirmLabel: 'Restore', danger: true });
-    if (!ok) return;
-    state = migrate(data); recomputePaid(); recomputeGrades(); saveState(); applySettings(); renderAll();
-    toast('Backup restored.', 'success');
+    try { data = JSON.parse(e.target.result); } catch (_) { return toast('That file is not a backup from this app (it could not be read).', 'error'); }
+    if (!data || !Array.isArray(data.students)) return toast('That file is not a backup from this app.', 'error');
+    const info = data._backup || {};
+    delete data._backup;
+    const staff = Array.isArray(info.users) ? info.users.length : 0;
+    const restored = await new Promise(resolve => {
+      openModal({
+        title: 'Restore from a backup',
+        bodyHtml: `<div class="lp-rows">
+            <div class="lp-row"><div class="lp-label">School</div><div>${escapeHtml(info.school || (data.settings && data.settings.schoolName) || 'not named')}</div></div>
+            <div class="lp-row"><div class="lp-label">Saved</div><div>${info.savedAt ? escapeHtml(fmtWhen(info.savedAt)) : 'not recorded (an older backup)'}</div></div>
+            <div class="lp-row"><div class="lp-label">In the file</div><div>${data.students.length} learners · ${(data.payments || []).length} payments · ${(data.registers || []).length} registers${staff ? ` · ${staff} staff accounts` : ''}</div></div>
+          </div>
+          ${staff ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="restoreStaff"> Also bring back the ${staff} staff accounts and "who did what". Everyone then signs in with the password they had when this backup was made.</label>` : ''}
+          <p style="margin:12px 0 0;color:var(--danger);font-weight:600">Everything on this device is replaced by what is in the file. Anything entered since the backup is lost.</p>`,
+        footHtml: '<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn btn-danger-solid" id="mdOk">Restore</button>',
+        onOpen(root) {
+          const done = v => { modalResolver = null; el('modalHost').innerHTML = ''; resolve(v); };
+          root.querySelector('#mdCancel').addEventListener('click', () => done(null));
+          root.querySelector('#mdOk').addEventListener('click', () => { const box = root.querySelector('#restoreStaff'); done({ staff: !!(box && box.checked) }); });
+        },
+      });
+      modalResolver = () => resolve(null);
+    });
+    if (!restored) return;
+    state = migrate(data); recomputePaid(); recomputeGrades(); saveState(); applySettings();
+    if (restored.staff && AUTH.restoreRecords) AUTH.restoreRecords({ users: info.users, audit: info.audit });
+    const form = el('settingsForm'); if (form) delete form.dataset.dirty;
+    renderAll();
+    AUTH.audit('BACKUP_RESTORE', `${info.savedAt ? fmtWhen(info.savedAt) : 'undated backup'} · ${state.students.length} learners${restored.staff ? ` · ${staff} staff accounts` : ''}`);
+    toast(`Backup restored: ${state.students.length} learners${restored.staff ? ` and ${staff} staff accounts` : ''}.`, 'success');
   };
   reader.readAsText(file);
 }
@@ -1444,17 +1476,42 @@ function renderNotices() {
   }).join('') : `<div class="empty">${state.notices.length ? 'No notices of this kind.' : 'No notices posted yet.'}</div>`;
 }
 
-/* ── User management & audit ───────────────────────────────────────────── */
+/* ── Staff accounts and "who did what" ─────────────────────────────────── */
+const ROLE_NAMES = { exec: 'Executive Director', admin: 'Administrator', bursary: 'Bursary Officer', coach: 'Head of Sports', teacher: 'Teacher' };
+const ROLE_COLOURS = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
 function renderUsersList() {
   const box = el('usersList'); if (!box) return;
   const users = AUTH.getUsers();
-  const colors = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
-  const labels = { exec: 'Executive', admin: 'Administrator', bursary: 'Bursary', coach: 'Sports', teacher: 'Teacher' };
+  const note = el('staffNote');
+  if (note) note.textContent = ONLINE_EDITION
+    ? 'Everyone who can sign in to this school. Add someone with their email address; they then open the portal, choose "First time here?" and use that email to set their own password.'
+    : 'Everyone who can sign in to this app on this device only. Give each new person a first password; they must change it the first time they sign in.';
+  const avatar = u => `<div class="avatar" style="background:${ROLE_COLOURS[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div>`;
+  const role = u => `<span style="color:${ROLE_COLOURS[u.role] || '#64748b'};font-weight:600">${escapeHtml(ROLE_NAMES[u.role] || u.role)}</span>`;
+  const classes = u => u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : '';
+  const me = u => u.id === currentSession.userId;
   if (ONLINE_EDITION) {
-    box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || escapeHtml(u.role)}</span></div>${u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : ''}</div><div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited — not joined yet</span>' : (u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-neutral">Access off</span>')}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No staff yet. Add someone below.</p>';
+    box.innerHTML = users.length ? users.map(u => `<div class="user-card">${avatar(u)}<div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}${me(u) ? ' <span class="card-desc">(you)</span>' : ''}</div><div class="card-desc">${escapeHtml(u.username)} · ${role(u)}</div>${classes(u)}</div>
+      <div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited, not joined yet</span>' : (u.active ? '<span class="badge badge-success">Can sign in</span>' : '<span class="badge badge-neutral">Access off</span>')}
+        <button class="btn btn-outline btn-xs" type="button" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" type="button" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${me(u) ? '' : `<button class="btn btn-danger btn-xs" type="button" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>`}</div></div>`).join('')
+      : '<p class="card-desc">No staff yet. Press Add a staff member.</p>';
     return;
   }
-  box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">@${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || u.role}</span></div><div class="card-desc">Last sign-in: ${u.lastLogin ? u.lastLogin.slice(0, 16).replace('T', ' ') : 'Never'}${u.role === 'teacher' ? ' · Classes: ' + escapeHtml((u.assignedClasses || []).join(', ') || 'none yet') : ''}</div></div><div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Password reset</span>' : '<span class="badge badge-success">Active</span>'}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No user accounts found.</p>';
+  box.innerHTML = users.length ? users.map(u => `<div class="user-card">${avatar(u)}<div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}${me(u) ? ' <span class="card-desc">(you)</span>' : ''}</div><div class="card-desc">${escapeHtml(u.username)} · ${role(u)}</div>
+      <div class="card-desc">Last signed in: ${u.lastLogin ? escapeHtml(fmtWhen(u.lastLogin)) : 'never'}</div>${classes(u)}</div>
+      <div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Must choose a new password</span>' : '<span class="badge badge-success">Can sign in</span>'}
+        <button class="btn btn-outline btn-xs" type="button" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" type="button" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${me(u) ? '' : `<button class="btn btn-danger btn-xs" type="button" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>`}</div></div>`).join('')
+    : '<p class="card-desc">No user accounts found.</p>';
+}
+/* The form's title and password box say whether it is adding or editing. */
+function setStaffFormMode(u) {
+  const title = el('staffFormTitle'); if (title) title.textContent = u ? `Editing ${u.displayName}` : 'Add a staff member';
+  const pl = el('editPasswordLabel'); if (pl) pl.innerHTML = u ? 'New password <span class="opt">(leave empty to keep the present one)</span>' : 'First password *';
+}
+function openStaffForm() {
+  clearUserEditForm();
+  const box = el('staffFormBox'); if (box) box.open = true;
+  el('editDisplayName').focus();
 }
 function loadUserForEdit(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
@@ -1462,15 +1519,17 @@ function loadUserForEdit(userId) {
   if (ONLINE_EDITION) el('editUsername').readOnly = true;   // an account's email cannot be changed here
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = (u.assignedClasses || []).includes(cb.value); });
   toggleAssignedClasses();
-  el('userEditForm').closest('details').open = true;
-  el('editUsername').focus();
+  setStaffFormMode(u);
+  el('staffFormBox').open = true;
+  el('editDisplayName').focus();
 }
 function clearUserEditForm() {
   ['editUserId', 'editUsername', 'editDisplayName', 'editPassword'].forEach(id => el(id).value = '');
   el('editUsername').readOnly = false;
-  el('editRole').value = 'admin';
+  el('editRole').value = '';
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = false; });
   toggleAssignedClasses();
+  setStaffFormMode(null);
 }
 /* Teachers are limited to the classes ticked here. */
 function renderAssignedClassOptions() {
@@ -1490,22 +1549,27 @@ async function handleUserEditSubmit(e) {
   const displayName = el('editDisplayName').value.trim();
   const role = el('editRole').value;
   const password = el('editPassword').value;
-  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Email address and name are required.' : 'Username and display name are required.', 'error');
+  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Type their name and email address.' : 'Type their name and a username.', 'error');
+  if (!ROLE_NAMES[role]) return toast('Choose the role: what this person does decides what they can see.', 'error');
   const data = { username, displayName, role };
   data.assignedClasses = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
   if (role === 'teacher' && !data.assignedClasses.length) return toast('Tick at least one class for this teacher.', 'error');
+  // Offline, a new account without a password could never sign in.
+  if (!ONLINE_EDITION && !id && !password) return toast('Give the new account a first password. They will choose their own when they first sign in.', 'error');
   if (id) data.id = id;
   if (password) {
     const check = AUTH.validatePasswordStrength(password);
     if (!check.ok) return toast(check.error, 'error');
     const h = await AUTH.hashPassword(password);
-    data.salt = h.salt; data.passwordHash = h.hash; data.iterations = h.iterations; data.mustChangePassword = false;
+    // The director knows this password, so the person must choose their own at sign-in.
+    data.salt = h.salt; data.passwordHash = h.hash; data.iterations = h.iterations; data.mustChangePassword = true;
   }
   const res = await AUTH.upsertUser(data);
   if (!res.ok) return toast(res.error, 'error');
   if (ONLINE_EDITION && res.invited) toast(`${displayName} is invited. Ask them to open the portal, choose "First time here?" and use ${username}.`, 'success');
-  else toast(id ? 'User updated.' : 'User created.', 'success');
-  clearUserEditForm(); renderUsersList(); renderAuditLog();
+  else toast(id ? `${displayName}'s account is saved.` : `${displayName} can now sign in as ${username}${ONLINE_EDITION ? '' : ' with the first password you gave'}.`, 'success');
+  clearUserEditForm(); el('staffFormBox').open = false;
+  renderUsersList(); renderAuditLog();
 }
 async function resetUserPwd(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
@@ -1516,31 +1580,74 @@ async function resetUserPwd(userId) {
     renderAuditLog();
     return toast(`Reset link sent to ${u.username}.`, 'success');
   }
-  const pwd = await promptDialog({ title: 'Reset password', label: `Temporary password for ${u.displayName} (min 8 chars, letters + numbers)`, type: 'text' });
+  const pwd = await promptDialog({ title: 'Reset password', message: `${u.displayName} will sign in with this password once, then choose their own.`, label: 'Temporary password (at least 8 characters, letters and numbers)', type: 'text', okLabel: 'Reset password' });
   if (!pwd) return;
   const res = await AUTH.adminResetPassword(userId, pwd);
   if (!res.ok) return toast(res.error, 'error');
-  toast('Password reset. The user must change it at next sign-in.', 'success');
+  toast(`Password reset. ${u.displayName} must choose a new one at the next sign-in.`, 'success');
   renderUsersList(); renderAuditLog();
 }
 async function confirmDeleteUser(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
   const msg = ONLINE_EDITION
     ? (u.pending ? `Cancel the invitation for ${u.displayName}?` : `Remove ${u.displayName} from the school? They will no longer be able to sign in to it.`)
-    : `Delete the account for ${u.displayName}? This cannot be undone.`;
+    : `Delete the account for ${u.displayName} (${u.username})? They will no longer be able to sign in. This cannot be undone.`;
   if (!await confirmDialog({ title: ONLINE_EDITION ? 'Remove staff member' : 'Delete account', message: msg, confirmLabel: ONLINE_EDITION ? (u.pending ? 'Cancel invitation' : 'Remove') : 'Delete account', danger: true })) return;
   const res = await AUTH.deleteUser(userId);
   if (!res.ok) return toast(res.error, 'error');
-  toast(ONLINE_EDITION ? 'Done.' : 'Account deleted.', 'success'); renderUsersList(); renderAuditLog();
+  toast(ONLINE_EDITION ? 'Done.' : `${u.displayName}'s account is deleted.`, 'success'); renderUsersList(); renderAuditLog();
 }
+
+/* "Who did what": each event in plain words, in Kampala time. */
+const AUDIT_WORDS = {
+  PAYMENT_RECORD: ['money', 'Recorded a payment'], PAYMENT_VOID: ['money', 'Reversed a payment'],
+  BURSARY_AWARD: ['money', 'Changed a bursary'], TERM_OPEN: ['money', 'Opened a term and billed learners'], TERM_REBILL: ['money', 'Applied the fee structures'],
+  STUDENT_REGISTER: ['learners', 'Admitted a learner'], STUDENT_EDIT: ['learners', "Changed a learner's details"], STUDENT_DELETE: ['learners', 'Removed a learner'],
+  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
+  NOTICE_POST: ['learners', 'Posted a notice'], NOTICE_EDIT: ['learners', 'Changed a notice'], NOTICE_DELETE: ['learners', 'Deleted a notice'],
+  RESULTS_PUBLISH: ['learners', 'Published results to parents'], EMIS_EXPORT: ['learners', 'Downloaded the EMIS figures'],
+  USER_UPSERT: ['staff', 'Added or changed a staff account'], USER_INVITE: ['staff', 'Invited a staff member'], USER_UPDATE: ['staff', 'Changed a staff account'],
+  USER_DELETE: ['staff', 'Deleted a staff account'], USER_REMOVE: ['staff', 'Removed a staff member'], ADMIN_PWD_RESET: ['staff', "Reset someone's password"],
+  PASSWORD_RESET_LINK: ['staff', 'Sent a password-reset link'], SETTINGS_UPDATE: ['staff', 'Changed the school settings'], LOGO_UPDATE: ['staff', 'Changed the school logo'],
+  LOGO_REMOVE: ['staff', 'Removed the school logo'], SMS_SETTINGS: ['staff', 'Changed the SMS account'], BACKUP_EXPORT: ['staff', 'Downloaded a backup'],
+  BACKUP_RESTORE: ['staff', 'Restored a backup'], SNAPSHOT_RESTORE: ['staff', 'Went back to a daily copy'], DATA_RESET: ['staff', 'Erased all data'],
+  IMPORT_FINISH: ['staff', 'Brought in the offline backup'],
+  LOGIN: ['signin', 'Signed in'], LOGOUT: ['signin', 'Signed out'], LOGIN_FAILED: ['signin', 'Failed to sign in'], PASSWORD_CHANGE: ['signin', 'Changed their own password'],
+};
+function auditWords(action) { return AUDIT_WORDS[action] || ['staff', String(action || '').replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase())]; }
+/* The detail, with "Name (admission no.)" of a learner as a link to their page. */
+function auditDetailHtml(detail) {
+  return String(detail || '').split(' · ').map(part => {
+    const m = /^(.*\S) \(([^)]+)\)(.*)$/.exec(part);
+    const s = m && state.students.find(x => x.id === m[2]);
+    return s ? `${learnerLink(s.id, m[1])} (${escapeHtml(m[2])})${escapeHtml(m[3])}` : escapeHtml(part.replace(/^role=/, 'as ').replace(/^target=/, ''));
+  }).join(' · ');
+}
+let auditLimit = 100;
 function renderAuditLog() {
   const box = el('auditLogBody'); if (!box) return;
-  const log = AUTH.getAuditLog().slice(0, 60);
-  box.innerHTML = log.length ? log.map(e => `<div class="audit-row"><span class="audit-ts">${e.ts.slice(0, 16).replace('T', ' ')}</span><span class="audit-user">${escapeHtml(e.username)}</span><span class="audit-tag">${escapeHtml(e.action)}</span><span class="card-desc">${escapeHtml(e.detail)}</span></div>`).join('') : '<p class="card-desc">No events logged yet.</p>';
+  const kind = (el('auditFilter') || {}).value || '';
+  const all = AUTH.getAuditLog().filter(e => !kind || auditWords(e.action)[0] === kind);
+  box.innerHTML = all.length ? all.slice(0, auditLimit).map(e => `<div class="audit-row"><span class="audit-ts">${escapeHtml(fmtWhen(e.ts))}</span><span class="audit-user">${escapeHtml(e.username)}</span>
+    <span class="audit-what" title="${escapeHtml(e.action)}">${escapeHtml(auditWords(e.action)[1])}</span>${e.detail ? `<span class="card-desc">${auditDetailHtml(e.detail)}</span>` : ''}</div>`).join('')
+    : `<p class="card-desc">${kind ? 'Nothing of this kind yet.' : 'Nothing recorded yet.'}</p>`;
+  const pager = el('auditPager');
+  if (pager) pager.innerHTML = all.length > auditLimit ? `<span>Showing ${auditLimit} of ${all.length}</span><span class="pager-btns"><button class="btn btn-outline btn-xs" type="button" data-act="auditMore">Show ${Math.min(100, all.length - auditLimit)} more</button></span>` : '';
 }
+
+/* Online, opening Staff & who did what fetches the latest from the school database. */
+MODULES.push({
+  name: 'admin',
+  onSub(tab, sub) {
+    if (!ONLINE_EDITION || tab !== 'admin' || sub !== 'staff' || !can('canManageUsers') || !AUTH.refreshStaff) return;
+    AUTH.refreshStaff().then(() => { renderUsersList(); renderAuditLog(); }, () => {});
+  },
+});
 
 /* ── Settings (white-label) ────────────────────────────────────────────── */
 function renderSettingsForm() {
+  const form = el('settingsForm');
+  if (form && form.dataset.dirty) return;   // keep what is being typed (e.g. while a logo uploads)
   const st = state.settings;
   const set = (id, v) => { const e = el(id); if (e) e.value = v || ''; };
   set('setSchoolName', st.schoolName); set('setMotto', st.motto); set('setAddress', st.address);
@@ -1548,8 +1655,13 @@ function renderSettingsForm() {
   if (el('setGrading')) el('setGrading').value = st.gradingMode;
   if (el('setCurrency')) el('setCurrency').value = st.currency;
 }
-function saveSettings(f) {
+async function saveSettings(f) {
   if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
+  const newMode = f.gradingMode || 'legacy';
+  if (newMode !== gradingMode()) {
+    const n = state.students.filter(s => s.level === 'O Level').reduce((a, s) => a + (s.academics || []).length, 0);
+    if (n && !await confirmDialog({ title: 'Change the O-Level grading', message: `Every O-Level mark already entered (${n}) will be graded again the new way, and report cards will show the new grades. The scores themselves do not change.`, confirmLabel: 'Change the grading' })) return;
+  }
   state.settings = Object.assign({}, state.settings, {
     schoolName: (f.schoolName || '').trim() || 'School Portal',
     motto: (f.motto || '').trim(), address: (f.address || '').trim(),
@@ -1558,6 +1670,7 @@ function saveSettings(f) {
     brandPreset: f.brandPreset || state.settings.brandPreset || 'green',
   });
   recomputeGrades();
+  const form = el('settingsForm'); if (form) delete form.dataset.dirty;
   saveState(); applySettings(); renderAll();
   AUTH.audit('SETTINGS_UPDATE', state.settings.schoolName);
   toast('School settings saved.', 'success');
@@ -1588,7 +1701,7 @@ const SUB_TABS = {
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
   reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
-  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['sms', 'SMS', 'canViewSmsLog', 'online'], ['data', 'Data & backup']],
+  admin: [['staff', 'Staff & who did what', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['sms', 'SMS', 'canViewSmsLog', 'online'], ['data', 'Backup & restore']],
 };
 let currentTab = null;
 const lastSub = {};
@@ -1731,6 +1844,8 @@ Object.assign(ACTIONS, {
   athleteProfile: d => openAthleteProfile(d.id),
   deleteNotice: d => deleteNotice(d.id),
   editUser: d => loadUserForEdit(d.id),
+  auditMore: () => { auditLimit += 100; renderAuditLog(); },
+  backupNow: () => exportLedger(),
   resetUserPwd: d => resetUserPwd(d.id),
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
@@ -1822,7 +1937,11 @@ function setupBindings() {
   on('resetBtn', 'click', resetAll);
 
   const uef = el('userEditForm'); if (uef) uef.addEventListener('submit', handleUserEditSubmit);
-  on('clearUserBtn', 'click', clearUserEditForm);
+  on('clearUserBtn', 'click', () => { clearUserEditForm(); el('staffFormBox').open = false; });
+  on('addStaffBtn', 'click', openStaffForm);
+  on('auditFilter', 'change', () => { auditLimit = 100; renderAuditLog(); });
+  on('settingsForm', 'input', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });
+  on('settingsForm', 'change', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });
 
   // Class → combination hint
   const cls = el('classSelect'), combo = el('combinationInput');
@@ -1877,13 +1996,17 @@ function startSessionTimer() { if (sessionTimer) clearInterval(sessionTimer); se
 
 function updateBackupBanner() {
   const banner = el('backupBanner'); if (!banner) return;
-  if (ONLINE_EDITION) { banner.style.display = 'none'; return; }
   let last = null;
   try { last = localStorage.getItem('ksa_last_backup'); } catch (_) {}
-  if (!can('canExport')) { banner.style.display = 'none'; return; }
+  const line = el('lastBackupLine');
+  if (line) {
+    line.style.display = ONLINE_EDITION ? 'none' : '';
+    line.textContent = last ? `Last backup on this device: ${fmtDay(last)} (${daysAgo(last)}).` : 'No backup has been made on this device yet.';
+  }
+  if (ONLINE_EDITION || !can('canExport')) { banner.style.display = 'none'; return; }
   const stale = !last || (Date.now() - new Date(last).getTime()) > 7 * 86400000;
   banner.style.display = stale && state.students.length ? 'flex' : 'none';
-  if (stale) banner.querySelector('span').textContent = last ? `Last backup: ${last}. Export a fresh backup to stay safe.` : 'No backup yet — export one to protect your data.';
+  if (stale) banner.querySelector('span').textContent = last ? `The last backup was ${daysAgo(last)} (${fmtDay(last)}). Make a fresh one so nothing is lost if this computer breaks.` : 'No backup yet. Make one so nothing is lost if this computer breaks.';
 }
 
 /* =========================================================================
@@ -1893,8 +2016,11 @@ async function handleLogin(e) {
   e.preventDefault();
   const btn = el('loginBtn'), err = el('authError');
   btn.disabled = true; btn.textContent = 'Signing in…'; err.style.display = 'none';
-  const res = await AUTH.login(el('loginUsername').value, el('loginPassword').value);
-  btn.disabled = false; btn.textContent = 'Sign in';
+  let res;
+  // Whatever happens, the button comes back: it must never stay on "Signing in…".
+  try { res = await AUTH.login(el('loginUsername').value, el('loginPassword').value); }
+  catch (e) { res = { ok: false, error: 'Signing in failed: ' + ((e && e.message) || 'unknown error') + '. Try again.' }; }
+  finally { btn.disabled = false; btn.textContent = 'Sign in'; }
   if (!res.ok) {
     err.style.display = 'block'; err.textContent = res.error;
     if (res.noSchool && typeof offerNewSchool === 'function') offerNewSchool();

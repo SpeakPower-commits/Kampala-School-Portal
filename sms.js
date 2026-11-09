@@ -175,7 +175,7 @@ const SMS = (function () {
       .order('created_at', { ascending: false }).limit(30);
     if (error) { body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(ONLINE.friendly(error))}</td></tr>`; return; }
     const runs = data || [];
-    body.innerHTML = runs.length ? runs.map(c => `<tr><td class="t-muted">${escapeHtml(String(c.created_at).slice(0, 16).replace('T', ' '))}</td>
+    body.innerHTML = runs.length ? runs.map(c => `<tr><td class="t-muted">${escapeHtml(fmtWhen(c.created_at))}</td>
       <td>${escapeHtml(KIND[c.kind] || c.kind)}${c.options && c.options.class ? ' · ' + escapeHtml(c.options.class) : ''}</td><td>${escapeHtml(c.created_by_name || '—')}</td>
       <td class="t-center">${Number(c.recipients)}</td><td class="t-center" style="color:var(--success)">${Number(c.sent)}</td>
       <td class="t-center" style="color:${c.failed ? 'var(--danger)' : 'var(--muted)'}">${Number(c.failed)}</td><td>${escapeHtml(STATUS[c.status] || c.status)}</td></tr>`).join('')

@@ -106,7 +106,23 @@ function newId(prefix) {
     : Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
   return prefix + hex.slice(0, 12).toUpperCase();
 }
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+/* Uganda is UTC+3 all year (no summer time). Dates and times are shown, and
+   "today" is worked out, in Kampala time, so a register or payment just
+   after midnight is not filed under the day before. */
+const KAMPALA_MS = 3 * 60 * 60 * 1000;
+function todayISO() { return new Date(Date.now() + KAMPALA_MS).toISOString().slice(0, 10); }
+/* A moment (ISO timestamp, stored in UTC) in Kampala time: "Mon 9 Nov 2026, 14:05". */
+function fmtWhen(iso) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return iso || '';
+  const k = new Date(t + KAMPALA_MS).toISOString();
+  return `${fmtDay(k.slice(0, 10))}, ${k.slice(11, 16)}`;
+}
+/* "today", "yesterday" or "3 days ago" for a YYYY-MM-DD date. */
+function daysAgo(iso) {
+  const n = Math.round((Date.parse(todayISO()) - Date.parse(String(iso).slice(0, 10))) / 86400000);
+  return !Number.isFinite(n) ? '' : n <= 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`;
+}
 function nowISO() { return new Date().toISOString(); }
 /* Dates are kept as YYYY-MM-DD (UTC, like todayISO). addDaysISO('2026-11-05', -6)
    is '2026-10-30'; fmtDay('2026-11-05') is 'Thu 5 Nov 2026' (no year if year=false). */

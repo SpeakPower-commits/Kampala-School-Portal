@@ -434,7 +434,8 @@ tbody tr:hover td { background: var(--panel-soft); }
 .user-card + .user-card { margin-top: 9px; }
 .avatar { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
 
-.audit-row { display: flex; align-items: baseline; gap: 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-what { font-weight: 600; }
 .audit-row:last-child { border-bottom: none; }
 .audit-ts { color: var(--faint); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .audit-user { font-weight: 600; color: var(--brand-dark); min-width: 70px; }

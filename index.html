@@ -82,7 +82,7 @@
   <nav class="navbar no-print"><div class="navbar-inner" id="navBar"></div></nav>
 
   <main class="main">
-    <div class="banner banner-warn no-print" id="backupBanner" style="display:none;margin-bottom:16px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg><span></span></div>
+    <div class="banner banner-warn no-print" id="backupBanner" style="display:none;margin-bottom:16px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg><span></span><button class="btn btn-outline btn-xs" type="button" data-act="backupNow" style="margin-left:auto">Back up now</button></div>
 
     <nav class="subnav no-print hidden" id="subNav" role="tablist" aria-label="Sections"></nav>
 
@@ -561,43 +561,46 @@
       </div>
     </section>
 
-    <!-- ADMINISTRATION: staff accounts · school profile & logo · data & backup -->
+    <!-- ADMINISTRATION: staff accounts and who did what · school profile & logo · SMS · backup and restore -->
     <section id="panel-admin" class="panel">
       <div class="grid grid-2">
 
         <div class="card card-pad" id="userMgmtCard" style="display:none" data-sub="staff">
-          <div class="card-title">Staff accounts</div>
-          <p class="card-desc">Portal staff accounts.</p>
+          <div class="card-head" style="margin-bottom:0"><div><div class="card-title">Staff accounts</div><p class="card-desc" id="staffNote">Everyone who can sign in to this app on this device.</p></div>
+            <button class="btn btn-primary btn-sm" id="addStaffBtn" type="button">Add a staff member</button></div>
           <div id="usersList" style="margin:12px 0"></div>
-          <details class="disclosure">
-            <summary>Add or edit a user account</summary>
+          <details class="disclosure" id="staffFormBox">
+            <summary id="staffFormTitle">Add a staff member</summary>
             <div class="disclosure-body">
+              <p class="card-desc" id="staffFormHelp" style="margin:0 0 10px">1 Type their name and <span data-edition="offline">a username</span><span data-edition="online" style="display:none">email address</span> · 2 choose the role (for a teacher, tick their classes)<span data-edition="offline"> · 3 give them a first password, which they must change when they first sign in</span> · then press Save account.</p>
               <form id="userEditForm" class="form-grid">
                 <input type="hidden" id="editUserId">
                 <div class="form-row">
-                  <div><label class="form-label">Username</label><input class="input" id="editUsername" required placeholder="teacher1"></div>
-                  <div><label class="form-label">Display name</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
+                  <div><label class="form-label" for="editUsername">Username *</label><input class="input" id="editUsername" required placeholder="teacher1" autocomplete="off"></div>
+                  <div><label class="form-label" for="editDisplayName">Name *</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
                 </div>
                 <div class="form-row">
-                  <div><label class="form-label">Role</label><select class="input" id="editRole"><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
-                  <div><label class="form-label">Password <span class="opt">(blank = keep)</span></label><input class="input" id="editPassword" type="password"></div>
+                  <div><label class="form-label" for="editRole">Role *</label><select class="input" id="editRole"><option value="">Choose role…</option><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
+                  <div><label class="form-label" for="editPassword" id="editPasswordLabel">First password *</label><input class="input" id="editPassword" type="password" autocomplete="new-password"></div>
                 </div>
                 <div id="assignedClassesWrap" style="display:none"><div class="form-label">Classes this teacher handles</div><div class="pill-list" id="editAssignedClasses"></div></div>
-                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Clear</button></div>
+                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Cancel</button></div>
               </form>
             </div>
           </details>
         </div>
 
         <div class="card card-pad" id="auditLogCard" style="display:none" data-sub="staff">
-          <div class="card-title">Audit log</div>
-          <p class="card-desc">Recent system and financial events.</p>
-          <div id="auditLogBody" style="max-height:300px;overflow-y:auto;margin-top:8px"></div>
+          <div class="card-title">Who did what</div>
+          <p class="card-desc">Money, learner and staff changes and sign-ins, newest first, in Kampala time. Tap a name to open the child's page.</p>
+          <div class="toolbar" style="margin-top:10px"><select class="input" id="auditFilter" style="width:auto" aria-label="Show"><option value="">Everything</option><option value="money">Money</option><option value="learners">Learners and records</option><option value="staff">Staff and settings</option><option value="signin">Sign-ins</option></select></div>
+          <div id="auditLogBody" style="margin-top:8px"></div>
+          <div class="pager" id="auditPager"></div>
         </div>
 
         <div class="card card-pad" id="settingsCard" style="display:none;grid-column:1/-1" data-sub="profile">
           <div class="card-title">School profile &amp; settings</div>
-          <p class="card-desc">These details appear on receipts, report cards and SMS messages.</p>
+          <p class="card-desc">These details appear on receipts, report cards and SMS messages. 1 Change what you need · 2 press Save settings. The logo is the exception: it is saved as soon as you upload or remove it.</p>
           <form id="settingsForm" class="form-grid" style="margin-top:12px">
             <div class="form-row">
               <div><label class="form-label">School name</label><input class="input" name="schoolName" id="setSchoolName" required></div>
@@ -621,24 +624,27 @@
               <div class="toolbar"><span id="logoPreview"></span>
                 <label class="btn btn-outline btn-sm" style="cursor:pointer">Upload logo<input id="logoInput" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
                 <button class="btn btn-ghost btn-sm" id="logoRemoveBtn" type="button">Remove</button></div>
-              <div class="form-hint">PNG or JPG. It is resized automatically and appears on the sign-in screen, receipts and report cards.</div></div>
+              <div class="form-hint">Saved straight away. PNG or JPG; it is resized automatically and appears on the sign-in screen, receipts and report cards.</div></div>
             <button class="btn btn-primary" type="submit">Save settings</button>
           </form>
         </div>
 
         <div class="card card-pad" data-sub="data">
-          <div class="card-title">Data management</div>
+          <div class="card-title">Backup and restore</div>
+          <p class="card-desc" data-edition="offline">Everything is kept on this device only. 1 Press Back up now at least once a week · 2 keep the file somewhere safe (a flash disk, or email it to yourself) · 3 to move to a new computer, open the app there and press Restore from a backup. The file holds the children's records, the money and the staff accounts, so keep it private.</p>
+          <p class="card-desc" data-edition="online" style="display:none">The school's records are kept in the school database and backed up there. Back up now downloads a copy for your own files.</p>
+          <p class="reg-summary" id="lastBackupLine" style="display:none"></p>
           <div class="stack" style="margin-top:12px">
-            <button class="btn btn-outline btn-block" id="adminExportBtn" type="button" style="justify-content:flex-start">Export backup (JSON)</button>
-            <label class="btn btn-outline btn-block" id="adminImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Restore from backup<input id="adminImportInput" type="file" accept="application/json" hidden></label>
-            <button class="btn btn-outline btn-block" id="snapshotsBtn" type="button" style="justify-content:flex-start;display:none">Restore a daily snapshot</button>
+            <button class="btn btn-primary btn-block" id="adminExportBtn" type="button" style="justify-content:flex-start">Back up now (download a file)</button>
+            <label class="btn btn-outline btn-block" id="adminImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Restore from a backup<input id="adminImportInput" type="file" accept="application/json" hidden></label>
+            <button class="btn btn-outline btn-block" id="snapshotsBtn" type="button" style="justify-content:flex-start;display:none">Go back to a daily copy (this device)</button>
             <label class="btn btn-outline btn-block" id="onlineImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Bring in data from the offline edition<input id="onlineImportInput" type="file" accept="application/json" hidden></label>
           </div>
         </div>
 
         <div class="card card-pad" id="resetCard" style="display:none" data-sub="data">
           <div class="card-title">Danger zone</div>
-          <p class="card-desc">Permanently erase every record on this device. Export a backup first.</p>
+          <p class="card-desc">Permanently erase every record on this device. Press Back up now first.</p>
           <button class="btn btn-danger-solid btn-block" id="resetBtn" type="button" style="margin-top:12px">Erase all data</button>
         </div>
 

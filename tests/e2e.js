@@ -239,21 +239,31 @@ async function classResults(page, cls) {
     assert(/Aggregate/.test(text) && /Mathematics/.test(text), 'no aggregate shown: ' + text);
   });
 
-  await step('switching to competency grading re-grades entries', async () => {
+  await step('switching to competency grading asks first, then re-grades entries', async () => {
     await tab(page, 'admin', 'profile');
     await page.selectOption('#setGrading', 'cbc');
     await page.click('#settingsForm button[type="submit"]');
+    await page.waitForSelector('#mdOk');
+    assert(/graded again/.test(await page.textContent('#modalHost')), 'no warning before re-grading');
+    await page.click('#mdOk');
     await page.waitForTimeout(150);
     assert(/competency/.test(await classResults(page, 'S.4')), 'competency grades not shown');
   });
 
-  await step('financial actions are audited', async () => {
+  await step('"Who did what" lists money and learner changes in plain words and Kampala time', async () => {
     await tab(page, 'admin', 'staff');
-    assert(await page.isVisible('#auditLogBody'), 'audit log not on Administration → Staff accounts');
-    const audit = await page.textContent('#auditLogBody');
-    for (const action of ['PAYMENT_RECORD', 'PAYMENT_VOID', 'STUDENT_REGISTER', 'STUDENT_EDIT']) {
-      assert(audit.includes(action), action + ' not audited');
-    }
+    assert(await page.isVisible('#auditLogBody'), '"Who did what" not on Administration → Staff & who did what');
+    const audit = (await page.textContent('#auditLogBody')).replace(/\s+/g, ' ');
+    for (const words of ['Recorded a payment', 'Reversed a payment', 'Admitted a learner', "Changed a learner's details"]) assert(audit.includes(words), words + ' not shown: ' + audit.slice(0, 300));
+    assert(await page.$('#auditLogBody [data-act="learner"][data-id="NPA/2026/001"]'), 'the learner in an entry is not a link');
+    // Times are Kampala time (UTC+3), not the UTC stored.
+    const shown = await page.evaluate(() => { const e = AUTH.getAuditLog()[0]; return { ts: e.ts, text: document.querySelector('#auditLogBody .audit-ts').textContent }; });
+    const k = new Date(Date.parse(shown.ts) + 3 * 3600e3).toISOString().slice(11, 16);
+    assert(shown.text.endsWith(k), `time shown ${shown.text} for ${shown.ts}`);
+    await page.selectOption('#auditFilter', 'money');
+    const money = await page.$$eval('#auditLogBody .audit-what', ws => ws.map(w => w.textContent));
+    assert(money.length && money.every(w => /payment|bursary|term|fee structures/i.test(w)), 'money filter: ' + money.join(' | '));
+    await page.selectOption('#auditFilter', '');
   });
 
   await step('report card prints with school name and result', async () => {
@@ -737,17 +747,47 @@ async function classResults(page, cls) {
     } finally { await page.click('.modal [data-modal-close]'); }
   });
 
-  await step('a teacher account can be limited to chosen classes', async () => {
+  await step('staff accounts: a role and a first password are needed, and a teacher is limited to chosen classes', async () => {
     await tab(page, 'admin', 'staff');
-    await page.click('#userMgmtCard summary');
+    await page.click('#addStaffBtn');
+    assert(await page.textContent('#staffFormTitle') === 'Add a staff member' && await page.inputValue('#editRole') === '', 'the form does not start empty, with no role');
     await page.fill('#editUsername', 'tkato');
     await page.fill('#editDisplayName', 'Mr. Kato');
+    const count = async () => page.evaluate(() => AUTH.getUsers().length);
+    const before = await count();
+    // No role chosen: refused.
+    await page.fill('#editPassword', 'Teach2026x');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForTimeout(300);
+    assert(await count() === before && /Choose the role/.test(await page.textContent('#toastHost')), 'saved without a role');
+    // No password for a new account: refused (it could never sign in).
     await page.selectOption('#editRole', 'teacher');
     await page.check('#editAssignedClasses input[value="S.4"]');
+    await page.fill('#editPassword', '');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForTimeout(300);
+    assert(await count() === before && /first password/.test(await page.textContent('#toastHost')), 'saved without a password');
     await page.fill('#editPassword', 'Teach2026x');
     await page.click('#userEditForm button[type="submit"]');
     await page.waitForTimeout(400);
-    assert(/Mr\. Kato/.test(await page.textContent('#usersList')), 'teacher not listed');
+    const list = await page.textContent('#usersList');
+    assert(/Mr\. Kato/.test(list) && /Teacher/.test(list) && /Must choose a new password/.test(list), 'teacher not listed as needing a new password: ' + list);
+    // Editing says whose account it is.
+    await page.click('#usersList [data-act="editUser"] >> nth=-1');
+    assert(/^Editing /.test(await page.textContent('#staffFormTitle')), 'edit title: ' + await page.textContent('#staffFormTitle'));
+    await page.click('#clearUserBtn');
+  });
+
+  await step('an old account with no password gets a message at sign-in, not a stuck button', async () => {
+    const r = await page.evaluate(async () => {
+      const users = JSON.parse(localStorage.getItem('ksa_users'));
+      users.push({ id: 'UOLD', username: 'nopass', displayName: 'No Pass', role: 'admin', mustChangePassword: true });
+      localStorage.setItem('ksa_users', JSON.stringify(users));
+      const res = await AUTH.login('nopass', 'Whatever123');
+      localStorage.setItem('ksa_users', JSON.stringify(users.filter(u => u.id !== 'UOLD')));
+      return res;
+    });
+    assert(r && r.ok === false && /no password yet/.test(r.error), 'login result: ' + JSON.stringify(r));
   });
 
   /* ───────────────────────── Phase 1: tools ───────────────────────── */
@@ -816,6 +856,24 @@ async function classResults(page, cls) {
     await page.waitForTimeout(150);
     const brand = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--brand').trim());
     assert(brand === '#7a1f2b', 'brand colour = ' + brand);
+  });
+
+  await step('Back up now: the file holds the staff accounts and "who did what", and restore says what is in it', async () => {
+    await tab(page, 'admin', 'data');
+    assert(/No backup has been made|Last backup/.test(await page.textContent('#lastBackupLine')), 'no last-backup line');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#adminExportBtn')]);
+    assert(/-backup-\d{4}-\d{2}-\d{2}\.json$/.test(dl.suggestedFilename()), 'file name ' + dl.suggestedFilename());
+    const file = JSON.parse(require('fs').readFileSync(await dl.path(), 'utf8'));
+    assert(file._backup && file._backup.users.some(u => u.username === 'tkato' && u.passwordHash) && file._backup.audit.length > 5, 'backup lacks staff or who did what');
+    assert(/Last backup on this device: .* \(today\)/.test(await page.textContent('#lastBackupLine')), 'last backup line: ' + await page.textContent('#lastBackupLine'));
+    // Restore shows what is in the file before anything is replaced; Cancel leaves everything as it was.
+    const n = await page.evaluate(() => state.students.length);
+    await page.setInputFiles('#adminImportInput', await dl.path());
+    await page.waitForSelector('#restoreStaff');
+    const box = (await page.textContent('#modalHost')).replace(/\s+/g, ' ');
+    assert(box.includes(`${n} learners`) && /staff accounts/.test(box) && /Saved/.test(box), 'restore summary: ' + box);
+    await page.click('#mdCancel');
+    assert(await page.evaluate(() => state.students.length) === n, 'Cancel changed the data');
   });
 
   await step('a daily snapshot is kept and listed for restore', async () => {
@@ -991,6 +1049,7 @@ async function classResults(page, cls) {
     await page.waitForSelector('#mdOk');
     await page.click('#mdOk');
     await signIn(page, 'tkato', 'Teach2026x');
+    await changePassword(page, 'Teach2026x', 'Teach2026New');   // a first password must be replaced
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
     assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
