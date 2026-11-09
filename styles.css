@@ -516,6 +516,18 @@ details.disclosure .disclosure-body { padding: 15px; }
 .ts .ts-tot { font-weight: 700; border-left: 1px solid var(--line); }
 .ts tr.ts-low .ts-name { box-shadow: inset 4px 0 0 var(--danger); }
 .ts tfoot td { background: var(--panel-soft); font-weight: 700; border-bottom: none; }
+/* Enter marks: the class mark sheet (a child per row, a subject per column) */
+.ms-table .ms-col { min-width: 92px; vertical-align: bottom; }
+.ms-table .ms-subj { font-weight: 700; color: var(--ink); white-space: normal; }
+.ms-table .ms-out { display: block; font-weight: 500; margin-top: 3px; white-space: nowrap; }
+.ms-table .ms-outof { width: 54px; padding: 2px 4px; font-size: 12px; border: 1px solid var(--line-strong); border-radius: 5px; }
+.ms-table .ms-cell { padding: 4px 5px; vertical-align: top; }
+.ms-table .ms-score { width: 72px; padding: 6px 7px; text-align: center; font-size: 15px; }
+.ms-table .ms-under { font-size: 11px; color: var(--muted); min-height: 14px; margin-top: 2px; }
+.ms-table .ms-under .ms-grade { min-width: 0; font-size: 11px; }
+.ms-table tfoot td { font-size: 12.5px; }
+.ms-exams button { flex: 1; }
+.reg-day { padding: 9px 0; font-weight: 600; font-size: 14px; }
 /* Enter marks: a score box and the grade it gives */
 .ms-entry { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .ms-entry .ms-score { width: 86px; }

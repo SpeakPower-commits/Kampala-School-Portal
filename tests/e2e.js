@@ -451,6 +451,50 @@ async function classResults(page, cls) {
     assert(/1st\s*Nakato Sarah/.test(res) && /2nd\s*Mugisha Brian/.test(res) && /Biology/.test(res), 'positions not shown in class results: ' + res);
   });
 
+  await step('Enter marks is the mark sheet: a child per row, a subject per column; "out of 50" is kept as %, out-of-range is refused, changes ask first', async () => {
+    await tab(page, 'academics', 'marks');
+    await page.selectOption('#msClass', 'S.4');
+    await page.selectOption('#msSubject', '');   // the whole mark sheet
+    await page.click('#msExamSeg [data-exam="MOT"]');
+    assert(await page.inputValue('#msExam') === 'MOT', 'exam button did not choose Mid-term');
+    const cols = await page.$$eval('#markSheetRoster thead .ms-subj', t => t.map(x => x.textContent));
+    assert(cols.includes('Mathematics') && cols.includes('English Language') && cols.length >= 8, 'subject columns: ' + cols.join(', '));
+    assert(await page.$$eval('#markSheetRoster tbody .ms-row', r => r.length) === 2, 'not one row per child');
+    const box = (id, subj) => `#markSheetRoster .ms-score[data-student="${id}"][data-subject="${subj}"]`;
+    // The Mathematics paper was marked out of 50: 38 is 76%.
+    await page.fill('#markSheetRoster .ms-outof[data-subject="Mathematics"]', '50');
+    await page.fill(box('NPA/2026/001', 'Mathematics'), '38');
+    await page.fill(box(secondId, 'English Language'), '64');
+    assert(/76%/.test(await page.textContent('#markSheetRoster .ms-row[data-student="NPA/2026/001"]')), '38 out of 50 is not shown as 76%');
+    // A score above the paper's total is refused, naming the child and the subject; nothing is saved.
+    await page.fill(box(secondId, 'Mathematics'), '60');
+    await page.click('#msSaveBtn');
+    await page.waitForTimeout(150);
+    assert(/Mugisha Brian \(Mathematics: 60 is not between 0 and 50\)/.test(await page.textContent('#toastHost')), 'refusal: ' + await page.textContent('#toastHost'));
+    const mot = () => page.evaluate(() => state.students.filter(s => s.class === 'S.4').flatMap(s => (s.academics || []).filter(a => a.examSet === 'MOT').map(a => `${s.name}|${a.subject}|${a.score}`)).sort().join(' ; '));
+    assert(await mot() === '', 'marks saved despite an out-of-range score');
+    await page.fill(box(secondId, 'Mathematics'), '45');
+    await page.click('#msSaveBtn');
+    await page.waitForTimeout(150);
+    assert(await mot() === 'Mugisha Brian|English Language|64 ; Mugisha Brian|Mathematics|90 ; Nakato Sarah|Mathematics|76', 'saved: ' + await mot());
+    // Changing a saved mark asks first, naming the child, the subject and both marks.
+    await page.fill(box('NPA/2026/001', 'Mathematics'), '40');
+    await page.click('#msSaveBtn');
+    await page.waitForSelector('#mdOk');
+    assert(/Nakato Sarah's Mathematics from 76% to 80%/.test(await page.textContent('#modalHost')), 'change prompt: ' + await page.textContent('#modalHost'));
+    await page.click('#mdOk');
+    await page.waitForTimeout(150);
+    assert(/Mathematics\|80/.test(await mot()), 'change not saved: ' + await mot());
+    // Class averages, and "Find a child".
+    assert(/Class average/.test(await page.textContent('#markSheetRoster tfoot')), 'no class average row');
+    await page.fill('#msFind', 'mugisha');
+    assert(await page.$$eval('#markSheetRoster tbody .ms-row', rs => rs.filter(r => r.style.display !== 'none').length) === 1, 'Find a child did not narrow the sheet');
+    await page.fill('#msFind', '');
+    // Leave the later checks as they were: remove these mid-term marks again.
+    await page.evaluate(() => { state.students.forEach(s => { s.academics = (s.academics || []).filter(a => a.examSet !== 'MOT'); }); saveState(); renderAll(); });
+    await page.click('#msExamSeg [data-exam="EOT"]');
+  });
+
   await step('Primary uses PLE grading: four subjects, aggregate and division', async () => {
     await tab(page, 'directory', 'admit');
     await page.fill('#registerForm input[name="name"]', 'Achieng Mary');
@@ -635,7 +679,7 @@ async function classResults(page, cls) {
   await step('Students → Take register: nobody is present until the teacher marks them, and the register saves only when everyone is marked', async () => {
     await tab(page, 'directory', 'daily');
     const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
-    assert(subs.join('|') === 'All students|Take register|Who was absent|Term sheet|Admit a student|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
+    assert(subs.join('|') === 'All students|Attendance today|Who was absent|Term sheet|Admit a new learner|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
     assert(!(await page.$('#regAllPresentBtn')), 'the "Mark everyone present" button is still there');
     await page.selectOption('#regClass', 'S.4');
     // Every child starts unmarked.
@@ -1029,7 +1073,11 @@ async function classResults(page, cls) {
     await signIn(page, 'bursary', 'Bursary@2026');
     await changePassword(page, 'Bursary@2026', 'Bursar2026Xyz');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["payments","directory","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    // The office admits learners: the bursar has Admit and Import, and no register.
+    await tab(page, 'directory');
+    const bsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(bsubs.join('|') === 'All students|Admit a new learner|Import from Excel', 'bursar Students sub-tabs: ' + bsubs.join('|'));
     await tab(page, 'payments', 'bursaries');
     const pid = await page.evaluate(() => state.students.find(s => s.name === 'Achieng Mary').id);   // a P.7 pupil, not an athlete
     const before = (await acct(pid)).currentBilled;
@@ -1058,7 +1106,7 @@ async function classResults(page, cls) {
     assert(labels.join('|') === 'Students|Academics|Notices', 'teacher labels ' + labels.join('|'));
     await tab(page, 'directory');
     const tsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
-    assert(tsubs.join('|') === 'My classes|Take register|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
+    assert(tsubs.join('|') === 'My classes|Attendance today|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
     await page.click('#subNav [data-sub="list"]');
     const mine = await page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
     assert(mine.length === 2 && mine.every(r => /S\.4/.test(r)), 'teacher list is not their class: ' + mine.join(' | '));

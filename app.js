@@ -1603,7 +1603,7 @@ const AUDIT_WORDS = {
   PAYMENT_RECORD: ['money', 'Recorded a payment'], PAYMENT_VOID: ['money', 'Reversed a payment'],
   BURSARY_AWARD: ['money', 'Changed a bursary'], TERM_OPEN: ['money', 'Opened a term and billed learners'], TERM_REBILL: ['money', 'Applied the fee structures'],
   STUDENT_REGISTER: ['learners', 'Admitted a learner'], STUDENT_EDIT: ['learners', "Changed a learner's details"], STUDENT_DELETE: ['learners', 'Removed a learner'],
-  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
+  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], MARKS_SAVE: ['learners', 'Saved marks'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
   NOTICE_POST: ['learners', 'Posted a notice'], NOTICE_EDIT: ['learners', 'Changed a notice'], NOTICE_DELETE: ['learners', 'Deleted a notice'],
   RESULTS_PUBLISH: ['learners', 'Published results to parents'], EMIS_EXPORT: ['learners', 'Downloaded the EMIS figures'],
   USER_UPSERT: ['staff', 'Added or changed a staff account'], USER_INVITE: ['staff', 'Invited a staff member'], USER_UPDATE: ['staff', 'Changed a staff account'],
@@ -1696,7 +1696,7 @@ const TAB_LABELS = {
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
   // Attendance lives under Students: the register, who was absent and the term sheet.
-  directory: [['list', 'All students'], ['daily', 'Take register', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
+  directory: [['list', 'All students'], ['daily', 'Attendance today', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a new learner', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
   academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
@@ -1769,7 +1769,7 @@ function showSub(tab, sub) {
 /* The everyday tasks this person can do, one tap each:
    [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
 const TODAYS_JOBS = [
-  ['directory/daily', "Take today's register", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
+  ['directory/daily', "Today's attendance", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
   ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => can('canMarkRegister')],
   ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
   ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
@@ -1777,7 +1777,7 @@ const TODAYS_JOBS = [
   ['payments/dashboard', 'Who owes fees', 'Class by class, with reminders', () => hasTab('payments')],
   ['sports/training', 'Mark training', 'Every athlete present or absent', () => can('canMarkAttendance')],
   ['directory/list', 'Find a child', 'By name, class or guardian number', () => hasTab('directory')],
-  ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
+  ['directory/admit', 'Admit a new learner', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
   ['conduct', 'Log a discipline case', 'Or a commendation, with the message to the guardian', () => can('canLogConduct')],
   ['noticeboard', 'Post a notice', 'For staff' + (ONLINE_EDITION ? ', or staff and parents' : ''), () => can('canPostNotice')],
   ['act:backupNow', 'Back up now', 'Download a copy of everything on this device', () => !ONLINE_EDITION && can('canExport')],

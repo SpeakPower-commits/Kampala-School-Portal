@@ -218,12 +218,15 @@ function saveMark(s, termId, examSet, subject, score) {
   else s.academics.push({ id: newId('AC'), termId, examSet, term: (termById(termId) || {}).term || '', subject, score, grade: g.grade, points: g.points, date: todayISO() });
   return g;
 }
-/* ── Enter marks: one subject, one exam, the whole class ───────────────── */
-/* The only way to enter marks: choose the class and the subject and every
-   child is listed with a score box; the grade shows as the score is typed. */
+/* ── Enter marks: the class mark sheet ─────────────────────────────────── */
+/* One row per child, one column per subject, for one exam: each box is one
+   child's paper in one subject. "Show" narrows it to one subject (easier on
+   a phone). Scores are typed as written on the script, out of the paper's
+   total ("out of" under each subject), and kept as percentages. */
 const OTHER_SUBJECT = '__other__';
 let msExtraSubjects = [];          // subjects added with "Another subject…" until marks are saved
 let msDirty = false, msLast = null; // unsaved typing, and the choices it belongs to
+const msOutOf = {};                 // class|term|exam|subject → that paper's total (each paper has its own)
 
 function subjectsFor(cls) {
   const level = classifyLevel(cls);
@@ -236,43 +239,125 @@ function subjectsFor(cls) {
 const subjectRank = cls => { const list = subjectsFor(cls).map(x => x.toLowerCase()); return x => { const i = list.indexOf(x.toLowerCase()); return i < 0 ? 999 : i; }; };
 const msSubject = () => { const v = el('msSubject') ? el('msSubject').value : ''; return v === OTHER_SUBJECT ? '' : v; };
 const streamOptions = cls => streamsFor(cls).length ? '<option value="">All streams</option>' + streamsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('') : '';
+const round2 = n => Math.round(n * 100) / 100;
+const pctText = n => (Math.round(n * 10) / 10) + '%';
+const msPaperKey = subj => [el('msClass').value, el('msTerm').value, el('msExam').value, String(subj).toLowerCase()].join('|');
+const msOut = subj => msOutOf[msPaperKey(subj)] || 100;
 
+function syncExamButtons() {
+  const cur = (el('msExam') || {}).value || 'EOT';
+  document.querySelectorAll('#msExamSeg [data-exam]').forEach(b => {
+    const on = b.dataset.exam === cur;
+    b.className = on ? 'on-P' : ''; b.setAttribute('aria-checked', on);
+  });
+}
 function renderMarkSheet() {
   const box = el('markSheetRoster'); if (!box) return;
+  syncExamButtons();
   const cls = el('msClass').value, stream = el('msStream').value, termId = el('msTerm').value, set = el('msExam').value;
-  const subject = msSubject();
+  const only = msSubject();
   msLast = { cls, stream, termId, set, subject: el('msSubject').value };
   msDirty = false;
-  if (!cls) { box.innerHTML = '<div class="empty">Choose a class to start.</div>'; msCount(); return; }
-  if (!subject) { box.innerHTML = '<div class="empty">Now choose the subject.</div>'; msCount(); return; }
+  if (!cls) { box.innerHTML = '<div class="empty">Choose the class: its children and subjects appear here.</div>'; msCount(); return; }
   const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream)).sort((a, b) => a.name.localeCompare(b.name));
-  if (!learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; msCount(); return; }
-  box.innerHTML = learners.map(s => {
-    const mark = (s.academics || []).find(a => a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subject.toLowerCase());
-    return `<div class="roster-item ms-row"><div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.id)}${s.stream ? ' · ' + escapeHtml(s.stream) : ''}</div></div>
-      <div class="ms-entry"><input class="input ms-score" type="number" inputmode="numeric" min="0" max="100" data-student="${escapeHtml(s.id)}" value="${mark ? mark.score : ''}" aria-label="${escapeHtml(subject)} score for ${escapeHtml(s.name)}"><span class="ms-grade">${mark ? escapeHtml(gradeFor(s.level, mark.score).grade) : ''}</span></div></div>`;
-  }).join('');
+  if (!learners.length) { box.innerHTML = `<div class="empty">No children in ${escapeHtml(cls)} yet. They are added when admitted (Students → Admit a new learner).</div>`; msCount(); return; }
+  const subjects = only ? [only] : subjectsFor(cls);
+  const many = subjects.length > 1;
+  const markOf = (s, subj) => (s.academics || []).find(a => a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subj.toLowerCase());
+  const head = subjects.map(subj => `<th class="ms-col"><div class="ms-subj">${escapeHtml(subj)}</div>
+      <label class="ms-out">out of <input class="ms-outof" type="number" inputmode="numeric" min="1" max="1000" value="${msOut(subj)}" data-subject="${escapeHtml(subj)}" aria-label="${escapeHtml(subj)}: the paper is marked out of"></label></th>`).join('');
+  const rows = learners.map(s => `<tr class="ms-row" data-student="${escapeHtml(s.id)}" data-find="${escapeHtml(s.name.toLowerCase() + ' ' + s.id.toLowerCase())}">
+      <td class="ts-name">${learnerLink(s.id, s.name, 'marks')}${s.stream && !stream ? ` <span class="card-desc">${escapeHtml(s.stream)}</span>` : ''}</td>
+      ${subjects.map(subj => {
+        const m = markOf(s, subj);
+        const shown = m ? round2(m.score * msOut(subj) / 100) : '';
+        return `<td class="ms-cell"><input class="input ms-score" type="number" inputmode="decimal" min="0" step="any" data-student="${escapeHtml(s.id)}" data-subject="${escapeHtml(subj)}"${m ? ` data-pct="${m.score}"` : ''} value="${shown}" aria-label="${escapeHtml(subj)} mark for ${escapeHtml(s.name)}">
+          <div class="ms-under"><span class="ms-pct">${m ? pctText(m.score) : ''}</span> <span class="ms-grade">${m ? escapeHtml(gradeFor(s.level, m.score).grade) : ''}</span></div></td>`;
+      }).join('')}
+      ${many ? '<td class="ts-tot ms-avg"></td>' : ''}</tr>`).join('');
+  box.innerHTML = `<div class="ts-wrap"><table class="ts ms-table"><thead><tr><th class="ts-name">Child</th>${head}${many ? '<th>Child\'s average</th>' : ''}</tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td class="ts-name">Class average</td>${subjects.map(subj => `<td class="ms-cavg" data-subject="${escapeHtml(subj)}"></td>`).join('')}${many ? '<td class="ms-cavg-all"></td>' : ''}</tr></tfoot></table></div>`;
+  msFilter();
+  msTotals();
   msCount();
 }
-/* "18 of 25 marked" with what is being entered. */
+/* The percentage a box stands for (null when empty or not a valid score). */
+function msBoxPct(inp) {
+  if (inp.value === '') return null;
+  const raw = Number(inp.value), out = msOut(inp.dataset.subject);
+  if (!Number.isFinite(raw) || raw < 0 || raw > out) return NaN;
+  return round2(raw / out * 100);
+}
+/* Each child's average, and the class average per subject, as the boxes stand. */
+function msTotals() {
+  const avg = list => list.length ? pctText(list.reduce((a, b) => a + b, 0) / list.length) : '—';
+  const bySubject = {}, all = [];
+  document.querySelectorAll('#markSheetRoster .ms-row').forEach(tr => {
+    const mine = [];
+    tr.querySelectorAll('.ms-score').forEach(inp => {
+      const p = msBoxPct(inp);
+      if (p === null || Number.isNaN(p)) return;
+      mine.push(p); all.push(p);
+      (bySubject[inp.dataset.subject] = bySubject[inp.dataset.subject] || []).push(p);
+    });
+    const cell = tr.querySelector('.ms-avg'); if (cell) cell.textContent = avg(mine);
+  });
+  document.querySelectorAll('#markSheetRoster .ms-cavg').forEach(td => { td.textContent = avg(bySubject[td.dataset.subject] || []); });
+  const tot = document.querySelector('#markSheetRoster .ms-cavg-all'); if (tot) tot.textContent = avg(all);
+}
+/* "S.4 · Mid-term · Term 3 2026: 34 of 60 marked" and who is still to be marked. */
 function msCount() {
   const box = el('msCounter'); if (!box) return;
   const inputs = [...document.querySelectorAll('#markSheetRoster .ms-score')];
   if (!inputs.length) { box.style.display = 'none'; return; }
   const filled = inputs.filter(i => i.value !== '').length;
   const exam = (EXAM_SETS.find(x => x.id === el('msExam').value) || {}).label || '';
+  const only = msSubject();
+  const left = only ? inputs.filter(i => i.value === '').map(i => learnerName(i.dataset.student)) : [];
   box.style.display = '';
-  box.innerHTML = `<strong>${filled} of ${inputs.length}</strong> marked · ${escapeHtml(msSubject())} · ${escapeHtml(exam)} · ${escapeHtml(termLabel(termById(el('msTerm').value)))}${msDirty ? ' · <span class="t-warn">not saved yet</span>' : ''}`;
+  box.innerHTML = `${escapeHtml(el('msClass').value)}${only ? ' · ' + escapeHtml(only) : ''} · ${escapeHtml(exam)} · ${escapeHtml(termLabel(termById(el('msTerm').value)))}: <strong>${filled} of ${inputs.length}</strong> marked`
+    + (left.length && left.length <= 12 ? ` · <span class="t-warn">still to mark: ${left.map(escapeHtml).join(', ')}</span>` : '')
+    + (msDirty ? ' · <span class="t-warn">not saved yet</span>' : '');
 }
 function msScoreTyped(inp) {
   const s = state.students.find(x => x.id === inp.dataset.student);
-  const badge = inp.parentElement.querySelector('.ms-grade');
-  const v = inp.value;
-  const bad = v !== '' && (isNaN(Number(v)) || Number(v) < 0 || Number(v) > 100);
-  inp.style.borderColor = bad ? 'var(--danger)' : '';
-  if (badge) badge.textContent = v === '' ? '' : bad ? '0–100' : gradeFor(s.level, Number(v)).grade;
+  const p = msBoxPct(inp);
+  inp.dataset.touched = '1';
+  inp.style.borderColor = Number.isNaN(p) ? 'var(--danger)' : '';
+  const under = inp.parentElement;
+  under.querySelector('.ms-pct').textContent = p === null ? '' : Number.isNaN(p) ? `0–${msOut(inp.dataset.subject)}` : pctText(p);
+  under.querySelector('.ms-grade').textContent = p === null || Number.isNaN(p) ? '' : gradeFor(s.level, p).grade;
   msDirty = true;
+  msTotals();
   msCount();
+}
+/* The paper's total changed: saved marks are shown out of the new total; what
+   was typed is read against it (type it as written on the script). */
+function msOutOfChanged(inp) {
+  const subj = inp.dataset.subject;
+  const out = Math.max(1, Math.round(Number(inp.value) || 100));
+  msOutOf[msPaperKey(subj)] = out;
+  document.querySelectorAll('#markSheetRoster .ms-score').forEach(box => {
+    if (box.dataset.subject !== subj) return;
+    if (!box.dataset.touched && box.dataset.pct !== undefined) box.value = round2(Number(box.dataset.pct) * out / 100);
+    const p = msBoxPct(box);
+    if (box.value !== '' || box.dataset.touched) {
+      const s = state.students.find(x => x.id === box.dataset.student);
+      box.style.borderColor = Number.isNaN(p) ? 'var(--danger)' : '';
+      box.parentElement.querySelector('.ms-pct').textContent = p === null ? '' : Number.isNaN(p) ? `0–${out}` : pctText(p);
+      box.parentElement.querySelector('.ms-grade').textContent = p === null || Number.isNaN(p) ? '' : gradeFor(s.level, p).grade;
+    }
+  });
+  msTotals();
+}
+/* "Find a child": show only the rows whose name matches. */
+function msFilter() {
+  const q = ((el('msFind') || {}).value || '').trim().toLowerCase();
+  const rows = [...document.querySelectorAll('#markSheetRoster .ms-row')];
+  rows.forEach(tr => { tr.style.display = !q || tr.dataset.find.includes(q) ? '' : 'none'; });
+  const shown = rows.filter(tr => tr.style.display !== 'none');
+  if (q && shown.length === 1) { const first = shown[0].querySelector('.ms-score'); if (first) first.focus(); }
 }
 /* A choice changed: warn before losing typed marks, then list the class again. */
 async function msChoiceChanged(e) {
@@ -286,35 +371,58 @@ async function msChoiceChanged(e) {
     } else if (msLast) { el('msSubject').value = msLast.subject; return; }
   }
   if (msDirty && msLast) {
-    const ok = await confirmDialog({ title: 'Marks not saved yet', message: 'You typed marks that are not saved. Change the list and lose them?', confirmLabel: 'Change and lose them', danger: true });
+    const ok = await confirmDialog({ title: 'Marks not saved yet', message: 'You typed marks that are not saved. Change the sheet and lose them?', confirmLabel: 'Change and lose them', danger: true });
     if (!ok) {
       el('msClass').value = msLast.cls; renderAcademicControls();
       el('msStream').value = msLast.stream; el('msTerm').value = msLast.termId; el('msExam').value = msLast.set; el('msSubject').value = msLast.subject;
+      syncExamButtons();
       return;
     }
   }
-  if (id === 'msClass') renderAcademicControls();
+  if (id === 'msClass') { if (el('msFind')) el('msFind').value = ''; renderAcademicControls(); }
   renderMarkSheet();
 }
-function saveMarkSheet() {
+async function msSetExam(set) {
+  if (set === el('msExam').value) return;
+  const before = el('msExam').value;
+  el('msExam').value = set;
+  if (msDirty && msLast && !await confirmDialog({ title: 'Marks not saved yet', message: 'You typed marks that are not saved. Change the exam and lose them?', confirmLabel: 'Change and lose them', danger: true })) {
+    el('msExam').value = before; syncExamButtons(); return;
+  }
+  renderMarkSheet();
+}
+async function saveMarkSheet() {
   if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
-  const termId = el('msTerm').value, set = el('msExam').value, subject = msSubject();
-  if (!el('msClass').value) return toast('Choose a class first.', 'error');
-  if (!subject) return toast('Choose the subject first.', 'error');
-  let saved = 0, bad = 0;
-  document.querySelectorAll('#markSheetRoster .ms-score').forEach(inp => {
-    if (inp.value === '') return;
-    const score = Number(inp.value);
-    if (isNaN(score) || score < 0 || score > 100) { bad++; inp.style.borderColor = 'var(--danger)'; return; }
-    const s = visibleStudents().find(x => x.id === inp.dataset.student);
-    if (s) { saveMark(s, termId, set, subject, score); saved++; }
+  const cls = el('msClass').value, termId = el('msTerm').value, set = el('msExam').value;
+  if (!cls) return toast('Choose the class first.', 'error');
+  const boxes = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+  const wrong = [], toSave = [], changes = [], removals = [];
+  boxes.forEach(inp => {
+    const s = visibleStudents().find(x => x.id === inp.dataset.student); if (!s) return;
+    const subj = inp.dataset.subject;
+    const had = inp.dataset.pct !== undefined ? Number(inp.dataset.pct) : null;
+    const p = msBoxPct(inp);
+    if (Number.isNaN(p)) { wrong.push(`${s.name} (${subj}: ${inp.value} is not between 0 and ${msOut(subj)})`); inp.style.borderColor = 'var(--danger)'; return; }
+    if (p === null) { if (had !== null) removals.push({ s, subj, had }); return; }
+    if (had !== null && Math.abs(had - p) < 0.01) return;   // unchanged
+    toSave.push({ s, subj, p });
+    if (had !== null) changes.push(`${s.name}'s ${subj} from ${pctText(had)} to ${pctText(p)}`);
   });
-  if (bad) return toast(`${bad} score${bad > 1 ? 's are' : ' is'} not between 0 and 100. Nothing was saved.`, 'error');
-  if (!saved) return toast('Type at least one score first.', 'error');
+  if (wrong.length) return toast(`Not saved. ${wrong.length === 1 ? 'This mark is' : 'These marks are'} out of range: ${wrong.slice(0, 4).join('; ')}${wrong.length > 4 ? ` and ${wrong.length - 4} more` : ''}.`, 'error');
+  if (!toSave.length && !removals.length) return toast('Nothing new to save: type a mark in a box first.', 'info');
+  if (changes.length || removals.length) {
+    const lines = [...changes.map(c => 'change ' + c), ...removals.map(r => `remove ${r.s.name}'s ${r.subj} mark (${pctText(r.had)})`)];
+    const ok = await confirmDialog({ title: 'Change marks already saved?', message: `You are about to ${lines.slice(0, 5).join('; ')}${lines.length > 5 ? `; and ${lines.length - 5} more` : ''}. Everything else stays as it is.`, confirmLabel: 'Yes, change them' });
+    if (!ok) return;
+  }
+  toSave.forEach(({ s, subj, p }) => saveMark(s, termId, set, subj, p));
+  removals.forEach(({ s, subj }) => { s.academics = (s.academics || []).filter(a => !(a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subj.toLowerCase())); });
   msDirty = false;
   saveState(); renderAll();
+  const exam = (EXAM_SETS.find(x => x.id === set) || {}).label || set;
+  AUTH.audit('MARKS_SAVE', `${cls} · ${exam} · ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${changes.length ? ` (${changes.length} changed)` : ''}${removals.length ? ` · ${removals.length} removed` : ''}`);
   renderMarkSheet();
-  toast(`Saved ${saved} ${subject} mark${saved === 1 ? '' : 's'}.`, 'success');
+  toast(`Saved ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${removals.length ? `, removed ${removals.length}` : ''} for ${cls}, ${exam}.`, 'success');
 }
 
 /* ── Class results: the class "broad sheet" ─────────────────────────────── */
@@ -585,9 +693,8 @@ function renderAcademicControls() {
   // The subjects of the class being marked, and "Another subject…".
   if (el('msSubject')) {
     const cls = el('msClass').value;
-    fillSelect('msSubject', cls
-      ? '<option value="">Choose subject…</option>' + subjectsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('') + `<option value="${OTHER_SUBJECT}">Another subject…</option>`
-      : '<option value="">Choose the class first</option>');
+    fillSelect('msSubject', '<option value="">All subjects (the whole mark sheet)</option>'
+      + (cls ? subjectsFor(cls).map(x => `<option value="${escapeHtml(x)}">Only ${escapeHtml(x)}</option>`).join('') + `<option value="${OTHER_SUBJECT}">Add another subject…</option>` : ''));
   }
   const opts = reportOptions();
   if (el('rcNextBegins') && !el('rcNextBegins').value) el('rcNextBegins').value = opts.nextTermBegins;
@@ -651,13 +758,19 @@ MODULES.push({
   setup() {
     const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
     // Enter marks: the list follows the choices; Enter moves to the next child.
-    ['msClass', 'msStream', 'msTerm', 'msExam', 'msSubject'].forEach(id => on(id, 'change', msChoiceChanged));
-    on('markSheetRoster', 'input', e => { if (e.target.classList.contains('ms-score')) msScoreTyped(e.target); });
+    ['msClass', 'msStream', 'msTerm', 'msSubject'].forEach(id => on(id, 'change', msChoiceChanged));
+    on('msExamSeg', 'click', e => { const b = e.target.closest('[data-exam]'); if (b) msSetExam(b.dataset.exam); });
+    on('msFind', 'input', msFilter);
+    on('markSheetRoster', 'input', e => {
+      if (e.target.classList.contains('ms-score')) msScoreTyped(e.target);
+      else if (e.target.classList.contains('ms-outof')) msOutOfChanged(e.target);
+    });
+    // Enter moves down the column: the next child, same subject, as when marking a pile of scripts.
     on('markSheetRoster', 'keydown', e => {
       if (e.key !== 'Enter' || !e.target.classList.contains('ms-score')) return;
       e.preventDefault();
-      const all = [...document.querySelectorAll('#markSheetRoster .ms-score')];
-      const next = all[all.indexOf(e.target) + 1];
+      const col = [...document.querySelectorAll('#markSheetRoster .ms-score')].filter(x => x.dataset.subject === e.target.dataset.subject && x.closest('tr').style.display !== 'none');
+      const next = col[col.indexOf(e.target) + 1];
       (next || el('msSaveBtn')).focus();
     });
     on('msSaveBtn', 'click', saveMarkSheet);

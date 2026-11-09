@@ -284,7 +284,7 @@ try {
     assert(await page.textContent('#roleChip') === 'Bursary', 'role ' + await page.textContent('#roleChip'));
     assert(await app(() => window.KSA.state().payments.length) === 2, 'bursar cannot see the ledger');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["payments","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["payments","directory","reports","noticeboard"]', 'bursar modules ' + JSON.stringify(tabs));
     await tab('payments', 'record');
     await page.selectOption('#paymentStudent', 'KHS/2026/001');
     await page.fill('#paymentForm input[name="amount"]', '100000');

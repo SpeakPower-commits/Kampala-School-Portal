@@ -127,16 +127,16 @@
         <div class="pager" id="studentPager"></div>
       </div>
       <div class="card card-pad" data-sub="daily">
-        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save register. Nobody is counted present until you mark them.</p></div>
+        <div class="card-head"><div><div class="card-title">Attendance today</div><p class="card-desc" id="registerNote">The morning roll call. The children were added once, when they were admitted; choose the class and its children appear. 1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save. Nobody is counted present until you mark them.</p></div>
           <div class="pill-list" id="registerToday"></div></div>
         <div class="form-row" style="align-items:end">
           <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
           <div id="regStreamWrap"><label class="form-label" for="regStream">Stream</label><select class="input" id="regStream"></select></div>
-          <div><label class="form-label" for="regDate">Date</label><input class="input" id="regDate" type="date"></div>
+          <div><div class="form-label">Day</div><div id="regDayLine" class="reg-day"></div><div id="regDateWrap" style="display:none"><label class="form-label" for="regDate">Another day</label><input class="input" id="regDate" type="date"></div></div>
         </div>
         <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
         <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
-        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save attendance</button></div>
         <div id="registerAbsentees" style="margin-top:14px"></div>
       </div>
       <div class="card card-pad" data-sub="recent">
@@ -161,7 +161,8 @@
         <div id="termSheet" style="margin-top:12px"></div>
       </div>
       <div class="card card-pad" id="regStudentCard" data-sub="admit">
-        <div class="card-title">Admit a new student</div>
+        <div class="card-title">Admit a new learner</div>
+        <p class="card-desc" style="margin:2px 0 0"><strong>Done once, by the school office</strong> (the Director, the Administrator or the Bursar) when a child joins. After that the child appears in their class everywhere: attendance, marks, fees and report cards. Teachers do not admit learners.</p>
         <p class="card-desc">Fill in 1 the child, 2 the class, 3 the guardian's phone and 4 the fees, then press Admit student. Fields marked * are needed; the rest can be added later.</p>
         <div class="tile" id="admitDone" style="display:none;margin-top:12px" aria-live="polite"></div>
         <form id="registerForm" class="form-grid" style="margin-top:12px">
@@ -228,16 +229,21 @@
     <section id="panel-academics" class="panel">
       <div class="card card-pad" id="marksheetCard" data-sub="marks">
         <div class="card-title">Enter marks</div>
-        <p class="card-desc">1 Choose the class · 2 choose the subject and the exam · 3 type each child's score (the grade shows as you type) · 4 press Save marks. Leave the box empty for a child with no mark.</p>
+        <p class="card-desc">The mark sheet: each row is one child, each column one subject, so each box is one child's paper in that subject. 1 Choose the class and the exam · 2 type each child's mark in their row, under the subject (as written on the script, out of the paper's total) · 3 press Save marks. Empty boxes are papers not marked yet.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="msClass">Class</label><select class="input" id="msClass"></select></div>
           <div id="msStreamWrap"><label class="form-label" for="msStream">Stream</label><select class="input" id="msStream"></select></div>
-          <div><label class="form-label" for="msSubject">Subject</label><select class="input" id="msSubject"></select></div>
-          <div><label class="form-label" for="msExam">Exam</label><select class="input" id="msExam"><option value="BOT">Beginning of term</option><option value="MOT">Mid-term</option><option value="EOT" selected>End of term</option></select></div>
           <div><label class="form-label" for="msTerm">Term</label><select class="input" id="msTerm"></select></div>
         </div>
+        <div style="margin-top:12px"><div class="form-label">Exam</div>
+          <div class="seg seg-words ms-exams" id="msExamSeg" role="radiogroup" aria-label="Exam"><button type="button" role="radio" data-exam="BOT">Beginning of term</button><button type="button" role="radio" data-exam="MOT">Mid-term</button><button type="button" role="radio" data-exam="EOT">End of term</button></div>
+          <input type="hidden" id="msExam" value="EOT"></div>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="msSubject">Show</label><select class="input" id="msSubject"></select></div>
+          <div><label class="form-label" for="msFind">Find a child</label><input class="input" id="msFind" type="search" placeholder="Type part of a name"></div>
+        </div>
         <div class="reg-summary" id="msCounter" style="display:none" aria-live="polite"></div>
-        <div class="scroll-box" id="markSheetRoster" style="margin-top:12px;max-height:560px"><div class="empty">Choose a class to start.</div></div>
+        <div id="markSheetRoster" style="margin-top:12px"><div class="empty">Choose the class: its children and subjects appear here.</div></div>
         <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="msSaveBtn" type="button">Save marks</button></div>
       </div>
       <div class="card card-pad" data-sub="results">
