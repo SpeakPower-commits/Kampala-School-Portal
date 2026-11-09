@@ -231,6 +231,15 @@ textarea.input { resize: vertical; min-height: 62px; }
 .nav-tab svg { width: 16px; height: 16px; }
 .nav-tab:hover { color: var(--ink); }
 .nav-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+/* The phone menu (shown at 640px and below instead of the tab strip) */
+.menu-btn { display: none; }
+.topbar-title .t-module { display: none; font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,0.8); }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.menu-item { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
+.menu-item svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--brand); }
+.menu-item[aria-current="page"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+.menu-item[aria-current="page"] svg { color: #fff; }
+.menu-acts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 .main { max-width: 1320px; margin: 0 auto; padding: 22px; width: 100%; flex: 1; }
 .panel { display: none; }
@@ -425,7 +434,8 @@ tbody tr:hover td { background: var(--panel-soft); }
 .user-card + .user-card { margin-top: 9px; }
 .avatar { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
 
-.audit-row { display: flex; align-items: baseline; gap: 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 11px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.audit-what { font-weight: 600; }
 .audit-row:last-child { border-bottom: none; }
 .audit-ts { color: var(--faint); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .audit-user { font-weight: 600; color: var(--brand-dark); min-width: 70px; }
@@ -480,6 +490,11 @@ details.disclosure .disclosure-body { padding: 15px; }
 .link-btn { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--brand); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
 .link-btn:hover { color: var(--ink); }
 /* Who was absent */
+/* Registers: a child not yet marked, and one the teacher missed on Save */
+.reg-row .reg-unmarked { display: none; color: var(--warn); font-weight: 700; }
+.reg-row.is-unmarked .reg-unmarked { display: inline; }
+.reg-row.is-unmarked { box-shadow: inset 4px 0 0 var(--warn-bg); }
+.reg-row.needs-mark { box-shadow: inset 4px 0 0 var(--danger); background: var(--danger-bg); }
 .abs-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .abs-item:last-child { border-bottom: none; }
 .abs-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
@@ -510,6 +525,39 @@ details.disclosure .disclosure-body { padding: 15px; }
 .cr-pos { display: inline-block; min-width: 38px; color: var(--muted); font-weight: 700; }
 .rc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
 .rc-item:last-child { border-bottom: none; }
+/* Students: one row per child */
+.dir-list { margin-top: 6px; }
+.dir-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.dir-row:last-child { border-bottom: none; }
+.dir-main { min-width: 0; flex: 1 1 260px; }
+.dir-main a { color: inherit; }
+.dir-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.dir-owes { font-size: 13.5px; white-space: nowrap; }
+.link-btn.t-bad { color: var(--danger); }
+/* Fees: Record a payment beside the Payments list (stacked on a phone) */
+.pay-grid { grid-template-columns: minmax(280px, 360px) 1fr; align-items: start; }
+.pay-acct { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 13px; font-size: 13.5px; background: var(--panel-soft); }
+.pay-acct-head { padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.pay-acct-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.pay-acct-row:last-child { border-bottom: none; }
+.pay-acct-row strong { white-space: nowrap; }
+.pay-done { border-color: #a7e0bb; background: var(--success-bg); }
+.pay-done.is-pending { border-color: #f3d38a; background: var(--warn-bg); }
+.pay-done-title { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+.pay-filters .input { width: auto; flex: 1 1 150px; }
+.pay-pick { grid-template-columns: minmax(110px, 0.7fr) 1.6fr; }
+.dir-row.fees-total { border-top: 2px solid var(--line-strong); }
+/* Reports: class grid and EMIS figures (each count opens the names) */
+.rp-grid thead th { white-space: normal; min-width: 56px; vertical-align: bottom; }
+.rp-grid td { font-size: 13.5px; }
+.rp-grid .link-btn { font-weight: 700; }
+.dir-row.is-void .dir-main { opacity: 0.75; }
+.pay-struck { text-decoration: line-through; color: var(--faint); font-weight: 600; }
+.pay-void-why { margin-top: 3px; font-size: 12.5px; color: var(--danger); }
+/* Forms in numbered groups (Admit a student) */
+.fs-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 14px; margin: 0; }
+.fs-group legend { font-weight: 700; color: var(--brand); padding: 0 6px; font-size: 13.5px; }
+.fs-group .form-row + .form-row { margin-top: 12px; }
 /* The learner page (one child: details, attendance, marks, fees, sports) */
 .lp-tabs { margin: 0 0 14px; }
 .lp-rows { border: 1px solid var(--line); border-radius: var(--radius); }
@@ -518,6 +566,7 @@ details.disclosure .disclosure-body { padding: 15px; }
 .lp-label { color: var(--muted); font-weight: 600; }
 .lp-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 .lp-tiles .stat-value { font-size: 18px; line-height: 1.3; }
+.lp-tiles.lp-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lp-marks th, .lp-marks td { padding: 9px 8px; }
 
 /* School colour swatches */
@@ -541,6 +590,12 @@ details.disclosure .disclosure-body { padding: 15px; }
   .topbar-title { flex: 1; }
   .topbar-spacer, .role-chip { display: none; }
   .topbar-btn { padding: 8px 9px; }
+  /* One Menu button instead of a strip that hides most modules and unlabelled icons */
+  .menu-btn { display: inline-flex; }
+  .topbar-inner > .topbar-btn:not(.menu-btn) { display: none !important; }
+  .navbar { display: none; }
+  .topbar-title .t-module { display: block; }
+  .subnav { flex-wrap: wrap; overflow-x: visible; }
   .tb-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .stat { padding: 12px 13px; }
   .stat-row { gap: 10px; margin-bottom: 14px; }
@@ -566,6 +621,9 @@ details.disclosure .disclosure-body { padding: 15px; }
   .seg.seg-words { width: 100%; }
   .seg.seg-words button { flex: 1; padding: 10px 4px; }
   .lp-row { grid-template-columns: 1fr; gap: 2px; }
+  .dir-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+  .pay-grid, .pay-pick { grid-template-columns: 1fr; }
+  .pay-filters .input { flex: 1 1 100%; }
 }
 
 /* =========================================================================

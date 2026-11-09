@@ -65,6 +65,7 @@
       <div class="topbar-title">
         <span class="t-name" data-school-name>School Portal</span>
         <span class="t-sub" data-school-motto>Management Portal</span>
+        <span class="t-module" id="currentModule"></span>
       </div>
       <div class="topbar-spacer"></div>
       <span class="sync-pill" id="syncStatus" role="status" aria-live="polite" style="display:none"></span>
@@ -74,13 +75,14 @@
       <label class="topbar-btn" id="importLabel" style="display:none;cursor:pointer"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span class="tb-label">Restore</span><input id="importInput" type="file" accept="application/json" hidden></label>
       <button class="topbar-btn" id="changePwdBtn" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tb-label">Password</span></button>
       <button class="topbar-btn danger" id="logoutBtn" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tb-label">Sign out</span></button>
+      <button class="topbar-btn menu-btn" id="menuBtn" type="button" aria-haspopup="dialog"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg><span>Menu</span></button>
     </div>
   </header>
 
   <nav class="navbar no-print"><div class="navbar-inner" id="navBar"></div></nav>
 
   <main class="main">
-    <div class="banner banner-warn no-print" id="backupBanner" style="display:none;margin-bottom:16px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg><span></span></div>
+    <div class="banner banner-warn no-print" id="backupBanner" style="display:none;margin-bottom:16px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg><span></span><button class="btn btn-outline btn-xs" type="button" data-act="backupNow" style="margin-left:auto">Back up now</button></div>
 
     <nav class="subnav no-print hidden" id="subNav" role="tablist" aria-label="Sections"></nav>
 
@@ -96,7 +98,7 @@
       <div class="grid grid-2">
         <div class="card card-pad" id="attTodayCard">
           <div class="card-head" style="margin-bottom:12px"><div><div class="card-title">Attendance today</div><p class="card-desc">From the daily class registers.</p></div>
-            <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="register/daily">Open the register</button></div>
+            <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="directory/daily">Open the register</button></div>
           <div id="attTodayBody"></div>
         </div>
         <div class="card card-pad">
@@ -110,75 +112,22 @@
       </div>
     </section>
 
-    <!-- STUDENTS: all students · admit a student · import from Excel -->
+    <!-- STUDENTS: all students · take register · who was absent · term sheet · admit a student · import from Excel -->
     <section id="panel-directory" class="panel">
       <div class="card card-pad" data-sub="list">
-        <div class="card-head">
-          <div class="card-title">Student directory</div>
-          <div class="toolbar">
-            <select class="input" id="levelFilter" style="width:auto"><option value="">All levels</option><option>Pre-Primary</option><option>Primary</option><option>O Level</option><option>A Level</option><option>Other</option></select>
-            <input class="input" id="searchInput" type="search" placeholder="Search name, class or ID…" style="width:220px">
-          </div>
+        <div class="card-title">All students</div>
+        <p class="card-desc">Choose a class, or type a name, admission number or guardian's phone. Tap a name for everything about that child.</p>
+        <div class="form-row" style="margin-top:12px;align-items:end">
+          <div><label class="form-label" for="dirClass">Class</label><select class="input" id="dirClass"></select></div>
+          <div><label class="form-label" for="dirShow">Show</label><select class="input" id="dirShow"><option value="">Everyone</option><option value="owe">Owe fees</option><option value="paid">Paid up</option></select></div>
+          <div><label class="form-label" for="searchInput">Search</label><input class="input" id="searchInput" type="search" placeholder="Name, admission no. or phone"></div>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Gender</th><th>Boarding</th><th>Guardian</th><th>Sport</th><th class="t-num">Fees</th><th class="t-num">Paid</th><th>Status</th><th class="t-num">Actions</th></tr></thead>
-          <tbody id="studentTableBody"></tbody>
-        </table></div>
+        <div class="reg-summary" id="dirSummary" style="display:none" aria-live="polite"></div>
+        <div class="dir-list" id="studentTableBody"></div>
         <div class="pager" id="studentPager"></div>
       </div>
-      <div class="card card-pad" id="regStudentCard" data-sub="admit">
-        <div class="card-title">Admit a new student</div>
-        <form id="registerForm" class="form-grid" style="margin-top:12px">
-          <div class="form-row">
-            <div><label class="form-label">Admission no. <span class="opt">(optional)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
-            <div><label class="form-label">Full name</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Class</label>
-              <select class="input" name="class" id="classSelect" required>
-                <option value="">Select…</option>
-                <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
-                <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
-                <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
-                <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
-              </select>
-            </div>
-            <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" list="streamList" placeholder="e.g. East"><datalist id="streamList"><option value="East"></option><option value="West"></option><option value="North"></option><option value="South"></option><option value="A"></option><option value="B"></option></datalist></div>
-            <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
-            <div><label class="form-label">Second guardian <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" placeholder="0701 234 567"></div>
-            <div><label class="form-label">Termly tuition (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" required placeholder="450000"></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Gender</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
-            <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
-            <div><label class="form-label">UNEB index <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
-            <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
-          </div>
-          <div class="form-row">
-            <div><label class="form-label">Primary sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
-            <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
-          </div>
-          <button class="btn btn-primary" type="submit">Admit student</button>
-        </form>
-      </div>
-      <div class="card card-pad" id="importCard" data-sub="import">
-        <div class="card-title">Import learners</div>
-        <p class="card-desc">Move your existing records in from Excel. Save the sheet as CSV, check the preview, then import.</p>
-        <div class="stack" style="margin-top:12px">
-          <button class="btn btn-outline btn-block" id="importTemplateBtn" type="button" style="justify-content:flex-start">Download the template</button>
-          <label class="btn btn-primary btn-block" style="cursor:pointer;justify-content:flex-start">Import a CSV file<input id="importLearnersInput" type="file" accept=".csv,text/csv" hidden></label>
-          <button class="btn btn-outline btn-block" id="exportLearnersBtn" type="button" style="justify-content:flex-start">Export all learners (CSV)</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- ATTENDANCE: take register · who was absent · term sheet -->
-    <section id="panel-register" class="panel">
       <div class="card card-pad" data-sub="daily">
-        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.</p></div>
+        <div class="card-head"><div><div class="card-title">Take the register</div><p class="card-desc" id="registerNote">1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save register. Nobody is counted present until you mark them.</p></div>
           <div class="pill-list" id="registerToday"></div></div>
         <div class="form-row" style="align-items:end">
           <div><label class="form-label" for="regClass">Class</label><select class="input" id="regClass"></select></div>
@@ -187,7 +136,7 @@
         </div>
         <div class="reg-summary" id="regSummary" style="display:none" aria-live="polite"></div>
         <div class="scroll-box" id="registerRoster" style="max-height:560px"></div>
-        <div class="toolbar" style="margin-top:12px"><button class="btn btn-outline" id="regAllPresentBtn" type="button">Mark everyone present</button><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
+        <div class="toolbar" style="margin-top:12px"><span class="spacer"></span><button class="btn btn-primary" id="regSaveBtn" type="button">Save register</button></div>
         <div id="registerAbsentees" style="margin-top:14px"></div>
       </div>
       <div class="card card-pad" data-sub="recent">
@@ -210,6 +159,68 @@
           <div><label class="form-label" for="tsMonth">Period</label><select class="input" id="tsMonth"></select></div>
         </div>
         <div id="termSheet" style="margin-top:12px"></div>
+      </div>
+      <div class="card card-pad" id="regStudentCard" data-sub="admit">
+        <div class="card-title">Admit a new student</div>
+        <p class="card-desc">Fill in 1 the child, 2 the class, 3 the guardian's phone and 4 the fees, then press Admit student. Fields marked * are needed; the rest can be added later.</p>
+        <div class="tile" id="admitDone" style="display:none;margin-top:12px" aria-live="polite"></div>
+        <form id="registerForm" class="form-grid" style="margin-top:12px">
+          <fieldset class="fs-group"><legend>1 · The child</legend>
+            <div class="form-row">
+              <div><label class="form-label">Full name *</label><input class="input" name="name" required placeholder="Nakato Sarah"></div>
+              <div><label class="form-label">Gender *</label><select class="input" name="gender" required><option value="">—</option><option>Male</option><option>Female</option></select></div>
+              <div><label class="form-label">Admission no. <span class="opt">(optional: one is made if empty)</span></label><input class="input" name="admissionNo" placeholder="KSA/2026/0001"></div>
+              <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option><option>Visual Impairment</option><option>Hearing Impairment</option><option>Physical Disability</option><option>Learning Difficulty</option><option>Other</option></select></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>2 · Class</legend>
+            <div class="form-row">
+              <div><label class="form-label">Class *</label>
+                <select class="input" name="class" id="classSelect" required>
+                  <option value="">Select…</option>
+                  <optgroup label="Pre-Primary"><option>Baby Class</option><option>Middle Class</option><option>Top Class</option></optgroup>
+                  <optgroup label="Primary"><option>P.1</option><option>P.2</option><option>P.3</option><option>P.4</option><option>P.5</option><option>P.6</option><option>P.7</option></optgroup>
+                  <optgroup label="O Level"><option>S.1</option><option>S.2</option><option>S.3</option><option>S.4</option></optgroup>
+                  <optgroup label="A Level"><option>S.5</option><option>S.6</option></optgroup>
+                </select>
+              </div>
+              <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" list="streamList" placeholder="e.g. East"><datalist id="streamList"><option value="East"></option><option value="West"></option><option value="North"></option><option value="South"></option><option value="A"></option><option value="B"></option></datalist></div>
+              <div><label class="form-label">Day or boarding</label><select class="input" name="boardingStatus"><option value="Day">Day scholar</option><option value="Boarding">Boarding</option><option value="Weekly">Weekly boarder</option></select></div>
+            </div>
+            <div class="form-row">
+              <div><label class="form-label">Subjects / combination <span class="opt">(optional)</span></label><input class="input" name="combination" id="combinationInput" list="combinationList" placeholder="PCM or Math, English…"><datalist id="combinationList"><option value="PCM"></option><option value="PCB"></option><option value="PEM"></option><option value="MEG"></option><option value="HEG"></option><option value="HEL"></option><option value="BCM"></option></datalist></div>
+              <div><label class="form-label">UNEB index <span class="opt">(S.4 and S.6)</span></label><input class="input" name="unebIndexNo" placeholder="U0001/001"></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>3 · Guardians</legend>
+            <div class="form-row">
+              <div><label class="form-label">Guardian's phone *</label><input class="input" name="guardian" type="tel" required placeholder="0772 123 456"></div>
+              <div><label class="form-label">Second guardian's phone <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" placeholder="0701 234 567"></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>4 · Fees</legend>
+            <div class="form-row">
+              <div><label class="form-label">Termly fees (<span data-currency>UGX</span>)</label><input class="input" name="fee" type="number" min="0" step="1000" placeholder="450000">
+                <p class="card-desc" style="margin-top:4px">Only needed when no fee structure covers this class (Fees → Terms &amp; fee structures).</p></div>
+            </div>
+          </fieldset>
+          <fieldset class="fs-group"><legend>5 · Sport <span class="opt">(optional)</span></legend>
+            <div class="form-row">
+              <div><label class="form-label">Main sport</label><select class="input" name="sport"><option value="">— None —</option></select></div>
+              <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">— N/A —</option><option>Beginner</option><option>Intermediate</option><option>Advanced</option><option>Elite</option></select></div>
+            </div>
+          </fieldset>
+          <div><button class="btn btn-primary" type="submit">Admit student</button></div>
+        </form>
+      </div>
+      <div class="card card-pad" id="importCard" data-sub="import">
+        <div class="card-title">Import from Excel</div>
+        <p class="card-desc">1 Download the template and fill it in Excel (one learner per line) · 2 save it as CSV · 3 press Import a CSV file and check the list · 4 press Import. Learners already in the school are skipped, so importing the same file twice adds nobody twice.</p>
+        <div class="stack" style="margin-top:12px">
+          <button class="btn btn-outline btn-block" id="importTemplateBtn" type="button" style="justify-content:flex-start">Download the template</button>
+          <label class="btn btn-primary btn-block" style="cursor:pointer;justify-content:flex-start">Import a CSV file<input id="importLearnersInput" type="file" accept=".csv,text/csv" hidden></label>
+          <button class="btn btn-outline btn-block" id="exportLearnersBtn" type="button" style="justify-content:flex-start">Export all learners (CSV)</button>
+        </div>
       </div>
     </section>
 
@@ -287,53 +298,72 @@
 
     <!-- FEES: record payment · fees dashboard · terms & fee structures · bursaries -->
     <section id="panel-payments" class="panel">
-      <div class="grid" style="grid-template-columns:minmax(280px,340px) 1fr;align-items:start" data-sub="record">
+      <div class="grid pay-grid" data-sub="record">
         <div class="card card-pad" id="recPaymentCard">
-          <div class="card-title">Record payment</div>
+          <div class="card-title">Record a payment</div>
+          <p class="card-desc">1 Choose the class and the child · 2 type the amount and how it was paid · 3 press Record payment, then print the receipt.</p>
+          <div class="tile" id="payDone" style="display:none;margin-top:12px" aria-live="polite"></div>
           <form id="paymentForm" class="form-grid" style="margin-top:12px">
-            <div><label class="form-label">Student</label><select class="input" name="studentId" id="paymentStudent" required><option value="">Choose…</option></select></div>
-            <div id="balancePreview" class="tile" style="display:none;font-size:12.5px"></div>
-            <div><label class="form-label">Amount (<span data-currency>UGX</span>)</label><input class="input" name="amount" type="number" min="1" step="1" required placeholder="150000"></div>
-            <div class="form-row">
-              <div><label class="form-label">Method</label><select class="input" name="method"><option>Cash</option><option>Mobile Money (MTN)</option><option>Mobile Money (Airtel)</option><option>Bank Deposit</option><option>Cheque</option><option>Bank Transfer</option></select></div>
-              <div><label class="form-label">Date</label><input class="input" name="date" type="date"></div>
+            <div class="form-row pay-pick">
+              <div><label class="form-label" for="payClass">Class</label><select class="input" id="payClass"><option value="">All classes</option></select></div>
+              <div><label class="form-label" for="paymentStudent">Learner *</label><select class="input" name="studentId" id="paymentStudent" required><option value="">Choose…</option></select></div>
             </div>
-            <div><label class="form-label">Reference <span class="opt">(receipt / transaction no.)</span></label><input class="input" name="reference" placeholder="e.g. MoMo TID or slip no."></div>
+            <div id="balancePreview" class="pay-acct" style="display:none" aria-live="polite"></div>
+            <div><label class="form-label" for="payAmount">Amount received (<span data-currency>UGX</span>) *</label><input class="input" name="amount" id="payAmount" type="number" min="1" step="1" inputmode="numeric" required placeholder="150000">
+              <div class="card-desc" id="payWords" style="margin-top:5px" aria-live="polite"></div></div>
+            <div class="form-row">
+              <div><label class="form-label" for="payMethod">How it was paid</label><select class="input" name="method" id="payMethod"><option>Cash</option><option>Mobile Money (MTN)</option><option>Mobile Money (Airtel)</option><option>Bank Deposit</option><option>Cheque</option><option>Bank Transfer</option></select></div>
+              <div><label class="form-label" for="payDate">Date paid</label><input class="input" name="date" id="payDate" type="date"></div>
+            </div>
+            <div><label class="form-label" for="payRef">Reference <span class="opt">(Mobile Money transaction ID, bank slip or cheque no.)</span></label><input class="input" name="reference" id="payRef" placeholder="e.g. MoMo TID 998877"></div>
             <button class="btn btn-primary" type="submit">Record payment</button>
           </form>
         </div>
-        <div class="card card-pad">
-          <div class="card-head" style="margin-bottom:0"><div class="card-title">Payment ledger</div>
-            <div class="toolbar"><button class="btn btn-outline btn-sm" id="exportPaymentsBtn" type="button">Export payments</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn" type="button">Export defaulters</button></div></div>
-          <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>ID</th><th>Student</th><th>Method</th><th>Recorded by</th><th class="t-num">Amount</th><th class="t-num"></th></tr></thead><tbody id="paymentsTableBody"></tbody></table></div>
+        <div class="card card-pad" id="paymentsCard">
+          <div class="card-head" style="margin-bottom:0"><div><div class="card-title">Payments</div><p class="card-desc">Every payment received, newest first. Tap Receipt to print one again. Reverse cancels a payment entered by mistake: it stays here, crossed out, with the reason.</p></div>
+            <div class="toolbar"><button class="btn btn-outline btn-sm" id="exportPaymentsBtn" type="button">Download payments (Excel)</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn" type="button">Download who owes (Excel)</button></div></div>
+          <div class="toolbar pay-filters" style="margin-top:12px">
+            <input class="input" id="paySearch" type="search" placeholder="Search a name or receipt no." aria-label="Search payments by name, admission no., receipt no. or reference">
+            <select class="input" id="payListClass" aria-label="Class"><option value="">All classes</option></select>
+            <select class="input" id="payPeriod" aria-label="When"><option value="current">This term</option></select>
+          </div>
+          <div class="reg-summary" id="paySummary"></div>
+          <div class="dir-list" id="paymentsTableBody"></div>
+          <div class="pager" id="payPager"></div>
         </div>
       </div>
-      <div data-sub="dashboard"><div class="banner banner-warn" id="arrearsHeadline"></div></div>
+      <div data-sub="dashboard"><p class="card-desc" id="feesDashNote" style="margin:0 0 10px"></p><div class="banner banner-warn" id="arrearsHeadline"></div></div>
       <div class="grid grid-2" data-sub="dashboard">
         <div class="card card-pad"><div class="card-title">Fees this term</div><div id="financeStats" style="margin-top:4px;font-size:13px"></div></div>
-        <div class="card card-pad"><div class="card-title">Collections by payment method</div><p class="card-desc">Money received this term.</p><div class="stack" id="collectionsByMethod" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Money received this term, by how it was paid</div><div class="stack" id="collectionsByMethod" style="margin-top:12px"></div></div>
       </div>
-      <div class="card card-pad" data-sub="dashboard">
-        <div class="card-head"><div><div class="card-title">Top defaulters</div><p class="card-desc">Largest balances, with one-tap reminders to guardians.</p></div>
-          <div class="toolbar"><button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Fee reminders</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn2" type="button">Export all defaulters</button></div></div>
-        <div class="table-wrap" id="topDefaulters"></div>
+      <div class="card card-pad" id="oweCard" data-sub="dashboard">
+        <div class="card-head"><div><div class="card-title">Who owes</div><p class="card-desc">1 Choose a class · 2 tap a name to see the child's fees, or SMS or WhatsApp one guardian · 3 or press Text all to remind every guardian in the list.</p></div></div>
+        <div class="toolbar">
+          <select class="input" id="oweClass" style="width:auto" aria-label="Class"><option value="">All classes</option></select>
+          <button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Text all guardians</button>
+          <button class="btn btn-outline btn-sm" id="exportDefaultersBtn2" type="button">Download this list (Excel)</button>
+        </div>
+        <div class="reg-summary" id="oweSummary"></div>
+        <div class="dir-list" id="topDefaulters"></div>
+        <div class="pager" id="owePager"></div>
       </div>
-      <div class="card card-pad" data-sub="dashboard"><div class="card-title">Fees by class</div><div class="table-wrap" id="arrearsByClass" style="margin-top:8px"></div></div>
+      <div class="card card-pad" data-sub="dashboard"><div class="card-title">Fees by class</div><p class="card-desc">Tap the number who owe to list them under Who owes.</p><div class="dir-list" id="arrearsByClass"></div></div>
       <div class="card card-pad" id="termMgmtCard" data-sub="terms">
         <div class="card-title">Terms</div>
-        <p class="card-desc">Opening a new term bills every learner from the fee structures. Unpaid balances carry forward as arrears.</p>
+        <p class="card-desc">1 Open the new term: every learner is billed from last term's fee structures, and anything unpaid carries forward as "from earlier terms" · 2 check the fee structures below · 3 if you changed any, press Apply to learners.</p>
         <form id="termForm" class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026"></div>
+          <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026" inputmode="numeric"></div>
           <div><label class="form-label">Term</label><select class="input" name="term"><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></div>
-          <div><label class="form-label">Start</label><input class="input" name="startDate" type="date"></div>
-          <div><label class="form-label">End</label><input class="input" name="endDate" type="date"></div>
+          <div><label class="form-label">First day</label><input class="input" name="startDate" type="date"></div>
+          <div><label class="form-label">Last day</label><input class="input" name="endDate" type="date"></div>
           <div><button class="btn btn-primary btn-block" type="submit">Open term</button></div>
         </form>
         <div class="banner banner-success" id="currentTermBanner" style="display:none;margin:12px 0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Term</th><th>Start</th><th>End</th><th class="t-center">Learners</th><th class="t-num">Billed</th><th>Status</th><th></th></tr></thead><tbody id="termsTableBody"></tbody></table></div>
+        <div class="dir-list" id="termsTableBody"></div>
       </div>
       <div class="card card-pad" id="feeStructCard" data-sub="terms">
-        <div class="card-head"><div><div class="card-title">Fee structures</div><p class="card-desc">What each class pays per term — tuition, boarding, PTA, development and more.</p></div></div>
+        <div class="card-head"><div><div class="card-title">Fee structures</div><p class="card-desc">What each class pays per term: tuition, boarding, PTA, development and more. A learner with no fee structure for their class is billed their own "Termly tuition".</p></div></div>
         <div class="toolbar" style="margin-bottom:12px">
           <select class="input" id="feeStructureTerm" style="width:auto" aria-label="Term"></select>
           <button class="btn btn-primary btn-sm" id="addFeeStructureBtn" type="button">Add fee structure</button>
@@ -343,13 +373,14 @@
       </div>
       <div class="card card-pad" id="bursariesCard" data-sub="bursaries">
         <div class="card-title">Bursaries</div>
-        <p class="card-desc">Reduce a learner's fees by a percentage: needs-based, staff children, academic or sports awards. This term's bill changes straight away, and every change is kept in the audit log.</p>
+        <p class="card-desc">A bursary takes a percentage off a learner's bill: needs-based, staff children, academic or sports awards. 1 Choose the class and the child · 2 press Change bursary and type the percentage · 3 check the new bill and press Save. This term's bill changes straight away; earlier terms do not. Every change is kept in "Who did what".</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label" for="bursaryStudent">Learner</label><select class="input" id="bursaryStudent"><option value="">Choose a student…</option></select></div>
-          <div><button class="btn btn-primary btn-block" id="bursarySetBtn" type="button">Set bursary…</button></div>
+          <div><label class="form-label" for="bursaryClass">Class</label><select class="input" id="bursaryClass"><option value="">All classes</option></select></div>
+          <div><label class="form-label" for="bursaryStudent">Learner</label><select class="input" id="bursaryStudent"><option value="">Choose a learner…</option></select></div>
+          <div><button class="btn btn-primary btn-block" id="bursarySetBtn" type="button">Change bursary…</button></div>
         </div>
         <div class="card-title" style="margin-top:20px">On a bursary</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Learner</th><th>Class</th><th class="t-center">Bursary</th><th class="t-num">Off this term</th><th></th></tr></thead><tbody id="bursaryListBody"></tbody></table></div>
+        <div class="dir-list" id="bursaryListBody"></div>
         <div id="bursaryRecommended"></div>
       </div>
     </section>
@@ -385,7 +416,7 @@
       </div>
       <div class="card card-pad" id="trainingFormCard" data-sub="training">
         <div class="card-title">Mark training attendance</div>
-        <p class="card-desc" id="trainingNote">Everyone starts as Present. Tap Absent for each athlete who did not come, then press Save session.</p>
+        <p class="card-desc" id="trainingNote">Tap Present or Absent for every athlete, then press Save session. Nobody is counted present until you mark them.</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
           <div><label class="form-label" for="attendanceProgram">Programme</label><select class="input" id="attendanceProgram"><option value="">Choose a programme…</option></select></div>
           <div><label class="form-label" for="attendanceDate">Session date</label><input class="input" id="attendanceDate" type="date"></div>
@@ -448,44 +479,60 @@
     <!-- DISCIPLINE -->
     <section id="panel-conduct" class="panel">
       <div class="card card-pad" id="conductFormCard">
-        <div class="card-title">Log conduct entry</div>
-        <p class="card-desc">Commendations, warnings and disciplinary actions.</p>
+        <div class="card-title">Log a conduct entry</div>
+        <p class="card-desc">1 Choose the class and the child · 2 choose what happened and write what the child did · 3 press Save entry, then send the message to the guardian if you want to.</p>
+        <div class="tile" id="conductDone" style="display:none;margin-top:12px" aria-live="polite"></div>
         <form id="conductForm" class="form-grid" style="margin-top:14px">
+          <div class="form-row pay-pick">
+            <div><label class="form-label" for="conductClass">Class</label><select class="input" id="conductClass"><option value="">All classes</option></select></div>
+            <div><label class="form-label" for="conductStudent">Learner *</label><select class="input" name="studentId" id="conductStudent" required><option value="">Choose…</option></select></div>
+          </div>
           <div class="form-row">
-            <div><label class="form-label">Student</label><select class="input" name="studentId" id="conductStudent" required><option value="">Choose…</option></select></div>
-            <div><label class="form-label">Type</label><select class="input" name="type" required><option>Commendation</option><option>Verbal Warning</option><option>Written Warning</option><option>Detention</option><option>Suspension</option><option>Counselling</option></select></div>
-            <div><label class="form-label">Severity</label><select class="input" name="severity" required><option>Positive</option><option>Minor</option><option>Major</option><option>Severe</option></select></div>
-            <div><label class="form-label">Reported by</label><input class="input" name="reportedBy" required placeholder="Mr. Kato"></div>
+            <div><label class="form-label" for="conductType">What happened *</label><select class="input" name="type" id="conductType" required>
+              <option value="">Choose…</option>
+              <optgroup label="Good"><option value="Commendation">Commendation</option></optgroup>
+              <optgroup label="A concern"><option value="Verbal Warning">Verbal warning</option><option value="Counselling">Counselling</option></optgroup>
+              <optgroup label="Serious"><option value="Written Warning">Written warning</option><option value="Detention">Detention</option><option value="Suspension">Suspension</option></optgroup>
+            </select></div>
+            <div><label class="form-label" for="conductDate">When</label><input class="input" name="date" id="conductDate" type="date"></div>
+            <div><label class="form-label" for="conductBy">Reported by *</label><input class="input" name="reportedBy" id="conductBy" required placeholder="Mr. Kato"></div>
           </div>
-          <div><label class="form-label">Description</label><textarea class="input" name="description" rows="2" required></textarea></div>
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <label class="check"><input type="checkbox" name="notifyGuardian"> SMS guardian after saving</label>
-            <button class="btn btn-primary btn-sm" type="submit" style="margin-left:auto">Save entry</button>
-          </div>
+          <div><label class="form-label" for="conductWhat">What the child did *</label><textarea class="input" name="description" id="conductWhat" rows="2" required placeholder="e.g. Helped a new pupil find their way around the school"></textarea></div>
+          <button class="btn btn-primary" type="submit" style="justify-self:start">Save entry</button>
         </form>
       </div>
-      <div class="card card-pad">
-        <div class="card-head"><div class="card-title">Conduct log</div>
-          <select class="input" id="conductFilter" style="width:auto"><option value="">All severities</option><option>Positive</option><option>Minor</option><option>Major</option><option>Severe</option></select></div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Student</th><th>Class</th><th>Type</th><th>Severity</th><th>Description</th><th>By</th><th></th></tr></thead><tbody id="conductTableBody"></tbody></table></div>
+      <div class="card card-pad" id="conductLogCard">
+        <div class="card-title">Conduct log</div>
+        <p class="card-desc">Tap a name to see all of that child's entries. SMS and WhatsApp send the guardian the message about that entry.</p>
+        <div class="toolbar pay-filters" style="margin-top:12px">
+          <select class="input" id="conductClassFilter" aria-label="Class"><option value="">All classes</option></select>
+          <select class="input" id="conductFilter" aria-label="Kind of entry"><option value="">Good and bad</option><option value="good">Good only</option><option value="concern">Concerns only</option><option value="serious">Serious only</option></select>
+          <select class="input" id="conductPeriod" aria-label="When"><option value="term">This term</option><option value="all">All terms</option></select>
+        </div>
+        <div class="reg-summary" id="conductSummary"></div>
+        <div class="dir-list" id="conductTableBody"></div>
       </div>
     </section>
 
     <!-- REPORTS: statistics · EMIS -->
     <section id="panel-reports" class="panel">
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Enrolment by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Class-by-class breakdown</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Class</th><th>Level</th><th class="t-center">Students</th><th class="t-center">Avg</th><th class="t-center">Cleared</th><th class="t-num">Outstanding</th><th class="t-center">Athletes</th></tr></thead><tbody id="classStatsBody"></tbody></table></div>
+      <div data-sub="statistics"><p class="card-desc" style="margin:0 0 10px">Every number is a button: tap it to see those children by name, and tap a name to open the child's page.</p></div>
+      <div class="banner banner-warn" id="reportWarnings" style="display:none" data-sub="statistics"></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Learners by level</div><div class="stat-row" id="levelStats" style="margin:12px 0 0"></div></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Class by class</div>
+        <p class="card-desc">In school order, from Baby Class to S.6.</p>
+        <div id="classStatsBody" style="margin-top:10px"></div>
       </div>
-      <div class="card card-pad" data-sub="statistics"><div class="card-title">Sports participation</div><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
+      <div class="card card-pad" data-sub="statistics"><div class="card-title">Sports programmes</div><p class="card-desc">Athletes on each programme's list in Sports.</p><div class="stack" id="sportStats" style="margin-top:12px"></div></div>
       <div class="grid grid-3" data-sub="statistics">
         <div class="card card-pad"><div class="card-title">Gender</div><div id="genderStats" style="margin-top:12px"></div></div>
-        <div class="card card-pad"><div class="card-title">Boarding status</div><div id="boardingStats" style="margin-top:12px"></div></div>
-        <div class="card card-pad"><div class="card-title">Special needs (SEN)</div><div id="senStats" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Day and boarding</div><div id="boardingStats" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Special needs</div><div id="senStats" style="margin-top:12px"></div></div>
       </div>
       <div class="card card-pad" id="emisCard" style="display:none" data-sub="emis">
-        <div class="card-head"><div><div class="card-title">EMIS report</div><p class="card-desc">Uganda Education Management Information System — termly enrolment statistics.</p></div>
-          <button class="btn btn-primary btn-sm" id="exportEmisBtn" type="button">Export EMIS CSV</button></div>
+        <div class="card-head"><div><div class="card-title">EMIS figures</div><p class="card-desc">The termly enrolment figures the Ministry asks for in EMIS (Education Management Information System): learners in each class by gender, day or boarding, and special needs. 1 Fix any warnings below (EMIS needs every class and gender) · 2 press Download · 3 copy the figures into the EMIS form.</p></div>
+          <button class="btn btn-primary btn-sm" id="exportEmisBtn" type="button">Download EMIS figures (Excel)</button></div>
+        <div class="banner banner-warn" id="emisWarnings" style="display:none;margin-top:4px"></div>
         <div id="emisPreview" style="margin-top:12px"></div>
       </div>
     </section>
@@ -494,60 +541,66 @@
     <section id="panel-noticeboard" class="panel">
       <div class="card card-pad">
         <div class="card-title">School notice board</div>
-        <p class="card-desc">Announcements visible to all signed-in staff.</p>
+        <p class="card-desc" id="noticesNote">Notices are seen by everyone who signs in to this app.</p>
         <div class="tile" id="noticeFormCard" style="margin:14px 0;display:none">
+          <div class="form-label" style="margin-bottom:8px">1 Write the title and the details · 2 choose the kind of notice<span data-edition="online"> and who can see it</span> · 3 press Post notice.</div>
           <form id="noticeForm" class="form-grid">
             <div class="form-row">
-              <div><label class="form-label">Title</label><input class="input" name="title" required placeholder="Term 2 begins 26 May 2026"></div>
-              <div><label class="form-label">Category</label><select class="input" name="category"><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
+              <div><label class="form-label" for="noticeTitle">Title *</label><input class="input" name="title" id="noticeTitle" required placeholder="Term 2 begins 26 May 2026"></div>
+              <div><label class="form-label" for="noticeCategory">Kind of notice</label><select class="input" name="category" id="noticeCategory"><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
               <div data-edition="online"><label class="form-label" for="noticeAudience">Who can see this</label><select class="input" name="audience" id="noticeAudience"><option value="staff">Staff only</option><option value="all">Staff and parents</option></select></div>
             </div>
-            <div><label class="form-label">Details</label><textarea class="input" name="body" rows="2"></textarea></div>
+            <div><label class="form-label" for="noticeBody">Details</label><textarea class="input" name="body" id="noticeBody" rows="2"></textarea></div>
             <label class="check" id="noticeSmsWrap" data-edition="online" style="display:none"><input type="checkbox" name="sms"> Also send it by SMS to every guardian</label>
             <button class="btn btn-primary btn-sm" type="submit" style="justify-self:start">Post notice</button>
           </form>
         </div>
+        <div class="toolbar" style="margin:6px 0 10px"><select class="input" id="noticeFilter" style="width:auto" aria-label="Kind of notice"><option value="">Every kind of notice</option><option>General</option><option>Academic</option><option>Finance</option><option>Sports</option><option>Discipline</option><option>Urgent</option></select></div>
         <div class="stack" id="noticesGrid"></div>
+        <p class="card-desc" style="margin-top:10px">The newest 200 notices are kept; older ones are removed.</p>
       </div>
     </section>
 
-    <!-- ADMINISTRATION: staff accounts · school profile & logo · data & backup -->
+    <!-- ADMINISTRATION: staff accounts and who did what · school profile & logo · SMS · backup and restore -->
     <section id="panel-admin" class="panel">
       <div class="grid grid-2">
 
         <div class="card card-pad" id="userMgmtCard" style="display:none" data-sub="staff">
-          <div class="card-title">Staff accounts</div>
-          <p class="card-desc">Portal staff accounts.</p>
+          <div class="card-head" style="margin-bottom:0"><div><div class="card-title">Staff accounts</div><p class="card-desc" id="staffNote">Everyone who can sign in to this app on this device.</p></div>
+            <button class="btn btn-primary btn-sm" id="addStaffBtn" type="button">Add a staff member</button></div>
           <div id="usersList" style="margin:12px 0"></div>
-          <details class="disclosure">
-            <summary>Add or edit a user account</summary>
+          <details class="disclosure" id="staffFormBox">
+            <summary id="staffFormTitle">Add a staff member</summary>
             <div class="disclosure-body">
+              <p class="card-desc" id="staffFormHelp" style="margin:0 0 10px">1 Type their name and <span data-edition="offline">a username</span><span data-edition="online" style="display:none">email address</span> · 2 choose the role (for a teacher, tick their classes)<span data-edition="offline"> · 3 give them a first password, which they must change when they first sign in</span> · then press Save account.</p>
               <form id="userEditForm" class="form-grid">
                 <input type="hidden" id="editUserId">
                 <div class="form-row">
-                  <div><label class="form-label">Username</label><input class="input" id="editUsername" required placeholder="teacher1"></div>
-                  <div><label class="form-label">Display name</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
+                  <div><label class="form-label" for="editUsername">Username *</label><input class="input" id="editUsername" required placeholder="teacher1" autocomplete="off"></div>
+                  <div><label class="form-label" for="editDisplayName">Name *</label><input class="input" id="editDisplayName" required placeholder="Mr. Opolot"></div>
                 </div>
                 <div class="form-row">
-                  <div><label class="form-label">Role</label><select class="input" id="editRole"><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
-                  <div><label class="form-label">Password <span class="opt">(blank = keep)</span></label><input class="input" id="editPassword" type="password"></div>
+                  <div><label class="form-label" for="editRole">Role *</label><select class="input" id="editRole"><option value="">Choose role…</option><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
+                  <div><label class="form-label" for="editPassword" id="editPasswordLabel">First password *</label><input class="input" id="editPassword" type="password" autocomplete="new-password"></div>
                 </div>
                 <div id="assignedClassesWrap" style="display:none"><div class="form-label">Classes this teacher handles</div><div class="pill-list" id="editAssignedClasses"></div></div>
-                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Clear</button></div>
+                <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Cancel</button></div>
               </form>
             </div>
           </details>
         </div>
 
         <div class="card card-pad" id="auditLogCard" style="display:none" data-sub="staff">
-          <div class="card-title">Audit log</div>
-          <p class="card-desc">Recent system and financial events.</p>
-          <div id="auditLogBody" style="max-height:300px;overflow-y:auto;margin-top:8px"></div>
+          <div class="card-title">Who did what</div>
+          <p class="card-desc">Money, learner and staff changes and sign-ins, newest first, in Kampala time. Tap a name to open the child's page.</p>
+          <div class="toolbar" style="margin-top:10px"><select class="input" id="auditFilter" style="width:auto" aria-label="Show"><option value="">Everything</option><option value="money">Money</option><option value="learners">Learners and records</option><option value="staff">Staff and settings</option><option value="signin">Sign-ins</option></select></div>
+          <div id="auditLogBody" style="margin-top:8px"></div>
+          <div class="pager" id="auditPager"></div>
         </div>
 
         <div class="card card-pad" id="settingsCard" style="display:none;grid-column:1/-1" data-sub="profile">
           <div class="card-title">School profile &amp; settings</div>
-          <p class="card-desc">These details appear on receipts, report cards and SMS messages.</p>
+          <p class="card-desc">These details appear on receipts, report cards and SMS messages. 1 Change what you need · 2 press Save settings. The logo is the exception: it is saved as soon as you upload or remove it.</p>
           <form id="settingsForm" class="form-grid" style="margin-top:12px">
             <div class="form-row">
               <div><label class="form-label">School name</label><input class="input" name="schoolName" id="setSchoolName" required></div>
@@ -571,24 +624,27 @@
               <div class="toolbar"><span id="logoPreview"></span>
                 <label class="btn btn-outline btn-sm" style="cursor:pointer">Upload logo<input id="logoInput" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
                 <button class="btn btn-ghost btn-sm" id="logoRemoveBtn" type="button">Remove</button></div>
-              <div class="form-hint">PNG or JPG. It is resized automatically and appears on the sign-in screen, receipts and report cards.</div></div>
+              <div class="form-hint">Saved straight away. PNG or JPG; it is resized automatically and appears on the sign-in screen, receipts and report cards.</div></div>
             <button class="btn btn-primary" type="submit">Save settings</button>
           </form>
         </div>
 
         <div class="card card-pad" data-sub="data">
-          <div class="card-title">Data management</div>
+          <div class="card-title">Backup and restore</div>
+          <p class="card-desc" data-edition="offline">Everything is kept on this device only. 1 Press Back up now at least once a week · 2 keep the file somewhere safe (a flash disk, or email it to yourself) · 3 to move to a new computer, open the app there and press Restore from a backup. The file holds the children's records, the money and the staff accounts, so keep it private.</p>
+          <p class="card-desc" data-edition="online" style="display:none">The school's records are kept in the school database and backed up there. Back up now downloads a copy for your own files.</p>
+          <p class="reg-summary" id="lastBackupLine" style="display:none"></p>
           <div class="stack" style="margin-top:12px">
-            <button class="btn btn-outline btn-block" id="adminExportBtn" type="button" style="justify-content:flex-start">Export backup (JSON)</button>
-            <label class="btn btn-outline btn-block" id="adminImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Restore from backup<input id="adminImportInput" type="file" accept="application/json" hidden></label>
-            <button class="btn btn-outline btn-block" id="snapshotsBtn" type="button" style="justify-content:flex-start;display:none">Restore a daily snapshot</button>
+            <button class="btn btn-primary btn-block" id="adminExportBtn" type="button" style="justify-content:flex-start">Back up now (download a file)</button>
+            <label class="btn btn-outline btn-block" id="adminImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Restore from a backup<input id="adminImportInput" type="file" accept="application/json" hidden></label>
+            <button class="btn btn-outline btn-block" id="snapshotsBtn" type="button" style="justify-content:flex-start;display:none">Go back to a daily copy (this device)</button>
             <label class="btn btn-outline btn-block" id="onlineImportLabel" style="cursor:pointer;justify-content:flex-start;display:none">Bring in data from the offline edition<input id="onlineImportInput" type="file" accept="application/json" hidden></label>
           </div>
         </div>
 
         <div class="card card-pad" id="resetCard" style="display:none" data-sub="data">
           <div class="card-title">Danger zone</div>
-          <p class="card-desc">Permanently erase every record on this device. Export a backup first.</p>
+          <p class="card-desc">Permanently erase every record on this device. Press Back up now first.</p>
           <button class="btn btn-danger-solid btn-block" id="resetBtn" type="button" style="margin-top:12px">Erase all data</button>
         </div>
 

@@ -123,9 +123,9 @@ async function classResults(page, cls) {
   await step('the director sees ten modules with plain names', async () => {
     assert(await page.isVisible('#appShell'), 'app shell hidden');
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["overview","directory","register","academics","payments","sports","conduct","reports","noticeboard","admin"]', 'modules ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["overview","directory","academics","payments","sports","conduct","reports","noticeboard","admin"]', 'modules ' + JSON.stringify(tabs));
     const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
-    assert(labels.join('|') === 'Dashboard|Students|Attendance|Academics|Fees|Sports|Discipline|Reports|Notices|Administration', 'labels ' + labels.join('|'));
+    assert(labels.join('|') === 'Dashboard|Students|Academics|Fees|Sports|Discipline|Reports|Notices|Administration', 'labels ' + labels.join('|'));
   });
 
   await step('school settings apply across the app', async () => {
@@ -153,6 +153,21 @@ async function classResults(page, cls) {
     assert(count === 1, 'expected 1 student, got ' + count);
     const g2 = await page.evaluate(() => window.KSA.state().students[0].guardian2);
     assert(g2 === '0701 234 567', 'second guardian = ' + g2);
+    const done = (await page.textContent('#admitDone')).replace(/\s+/g, ' ');
+    assert(/Admitted Nakato Sarah \(NPA\/2026\/001\) to S\.4/.test(done) && await page.isVisible('#admitDone [data-act="learner"]'), 'no "Admitted" panel: ' + done);
+  });
+
+  await step("a guardian's phone that is not a phone number is refused", async () => {
+    await page.fill('#registerForm input[name="name"]', 'No Phone');
+    await page.selectOption('#classSelect', 'P.5');
+    await page.fill('#registerForm input[name="guardian"]', '12345');
+    await page.fill('#registerForm input[name="fee"]', '100000');
+    await page.selectOption('#registerForm select[name="gender"]', 'Male');
+    await page.click('#registerForm button[type="submit"]');
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => window.KSA.state().students.length) === 1, 'learner with a bad guardian phone was saved');
+    assert(/guardian's phone is not a valid/.test(await page.textContent('#toastHost')), 'no message about the guardian phone');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('a second guardian number that is not a phone number is refused', async () => {
@@ -166,6 +181,9 @@ async function classResults(page, cls) {
     await page.waitForTimeout(200);
     assert(await page.evaluate(() => window.KSA.state().students.length) === 1, 'learner with a bad second number was saved');
     assert(/second guardian number is not a valid/.test(await page.textContent('#toastHost')), 'no message about the second number');
+    // A refused save keeps what was typed, so it can be corrected.
+    assert(await page.inputValue('#registerForm input[name="name"]') === 'Wrong Number', 'the form was wiped after a refusal');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('script-like admission number is rejected', async () => {
@@ -179,6 +197,7 @@ async function classResults(page, cls) {
     await page.waitForTimeout(200);
     const count = await page.evaluate(() => window.KSA.state().students.length);
     assert(count === 1, 'unsafe admission number accepted');
+    await page.evaluate(() => el('registerForm').reset());
   });
 
   await step('record a payment (any whole amount accepted)', async () => {
@@ -220,21 +239,31 @@ async function classResults(page, cls) {
     assert(/Aggregate/.test(text) && /Mathematics/.test(text), 'no aggregate shown: ' + text);
   });
 
-  await step('switching to competency grading re-grades entries', async () => {
+  await step('switching to competency grading asks first, then re-grades entries', async () => {
     await tab(page, 'admin', 'profile');
     await page.selectOption('#setGrading', 'cbc');
     await page.click('#settingsForm button[type="submit"]');
+    await page.waitForSelector('#mdOk');
+    assert(/graded again/.test(await page.textContent('#modalHost')), 'no warning before re-grading');
+    await page.click('#mdOk');
     await page.waitForTimeout(150);
     assert(/competency/.test(await classResults(page, 'S.4')), 'competency grades not shown');
   });
 
-  await step('financial actions are audited', async () => {
+  await step('"Who did what" lists money and learner changes in plain words and Kampala time', async () => {
     await tab(page, 'admin', 'staff');
-    assert(await page.isVisible('#auditLogBody'), 'audit log not on Administration → Staff accounts');
-    const audit = await page.textContent('#auditLogBody');
-    for (const action of ['PAYMENT_RECORD', 'PAYMENT_VOID', 'STUDENT_REGISTER', 'STUDENT_EDIT']) {
-      assert(audit.includes(action), action + ' not audited');
-    }
+    assert(await page.isVisible('#auditLogBody'), '"Who did what" not on Administration → Staff & who did what');
+    const audit = (await page.textContent('#auditLogBody')).replace(/\s+/g, ' ');
+    for (const words of ['Recorded a payment', 'Reversed a payment', 'Admitted a learner', "Changed a learner's details"]) assert(audit.includes(words), words + ' not shown: ' + audit.slice(0, 300));
+    assert(await page.$('#auditLogBody [data-act="learner"][data-id="NPA/2026/001"]'), 'the learner in an entry is not a link');
+    // Times are Kampala time (UTC+3), not the UTC stored.
+    const shown = await page.evaluate(() => { const e = AUTH.getAuditLog()[0]; return { ts: e.ts, text: document.querySelector('#auditLogBody .audit-ts').textContent }; });
+    const k = new Date(Date.parse(shown.ts) + 3 * 3600e3).toISOString().slice(11, 16);
+    assert(shown.text.endsWith(k), `time shown ${shown.text} for ${shown.ts}`);
+    await page.selectOption('#auditFilter', 'money');
+    const money = await page.$$eval('#auditLogBody .audit-what', ws => ws.map(w => w.textContent));
+    assert(money.length && money.every(w => /payment|bursary|term|fee structures/i.test(w)), 'money filter: ' + money.join(' | '));
+    await page.selectOption('#auditFilter', '');
   });
 
   await step('report card prints with school name and result', async () => {
@@ -320,6 +349,67 @@ async function classResults(page, cls) {
     assert(/Four Hundred Thousand Uganda Shillings only/.test(doc), 'amount in words missing');
   });
 
+  await step('Record payment: class first, amount in words, a receipt for that payment, and a refused payment keeps the form', async () => {
+    await tab(page, 'payments', 'record');
+    await page.selectOption('#payClass', 'S.4');
+    const opts = await page.$$eval('#paymentStudent option', os => os.slice(1).map(o => o.textContent));
+    assert(opts.length && opts.every(t => / — S\.4/.test(t)), 'class filter: ' + opts.join(' | '));
+    await page.selectOption('#paymentStudent', 'NPA/2026/001');
+    const preview = await page.textContent('#balancePreview');
+    assert(/This term's bill/.test(preview) && /Paid this term/.test(preview) && /Owes in total/.test(preview), 'preview: ' + preview);
+    await page.fill('#payAmount', '125000');
+    assert(/One Hundred and Twenty-Five Thousand Uganda Shillings/.test(await page.textContent('#payWords')), 'words: ' + await page.textContent('#payWords'));
+    const n = await page.evaluate(() => state.payments.length);
+    // A date in the future is refused, and nothing typed is lost.
+    await page.fill('#payDate', '2099-01-01');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForTimeout(150);
+    assert(await page.evaluate(() => state.payments.length) === n, 'future-dated payment recorded');
+    assert(await page.inputValue('#payAmount') === '125000' && await page.inputValue('#paymentStudent') === 'NPA/2026/001', 'a refused payment cleared the form');
+    assert(!(await page.isVisible('#payDone')), 'receipt panel shown for a refused payment');
+    await page.fill('#payDate', await page.evaluate(() => todayISO()));
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForSelector('#payDone', { state: 'visible' });
+    const done = (await page.textContent('#payDone')).replace(/\s+/g, ' ');
+    assert(/Recorded UGX 125,000 for Nakato Sarah/.test(done) && /still owes UGX/.test(done), 'panel: ' + done);
+    assert(await page.evaluate(() => state.payments.length) === n + 1, 'payment not recorded');
+    assert(await page.inputValue('#payClass') === 'S.4' && await page.inputValue('#payAmount') === '', 'form after saving');
+    await page.click('#payDone [data-act="paymentReceipt"]');
+    await page.waitForTimeout(100);
+    assert(/One Hundred and Twenty-Five Thousand Uganda Shillings only/.test(await page.textContent('#printArea')), 'Print receipt did not print this payment');
+    // The same money typed twice asks first; Cancel records nothing.
+    await page.selectOption('#paymentStudent', 'NPA/2026/001');
+    await page.fill('#payAmount', '125000');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForSelector('#mdCancel');
+    assert(/already recorded/.test(await page.textContent('#modalHost')), 'no warning for the same payment twice');
+    await page.click('#mdCancel');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.payments.length) === n + 1, 'duplicate recorded after Cancel');
+    await page.evaluate(() => el('paymentForm').reset());
+    // The Payments list finds it by receipt number; Reverse names the child and
+    // the amount, and needs a reason.
+    const pid = await page.evaluate(() => state.payments[state.payments.length - 1].id);
+    await page.fill('#paySearch', pid);
+    const listed = await page.$$eval('#paymentsTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(listed.length === 1 && /Nakato Sarah/.test(listed[0]) && /125,000/.test(listed[0]), 'search by receipt no.: ' + listed.join(' | '));
+    await page.click('#paymentsTableBody [data-act="voidPayment"]');
+    await page.waitForSelector('#mdInput');
+    assert(/Reverse UGX 125,000 paid for Nakato Sarah/.test(await page.textContent('#modalHost')), 'reverse dialog: ' + await page.textContent('#modalHost'));
+    await page.click('#mdOk');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(id => !state.payments.find(p => p.id === id).void, pid), 'reversed without a reason');
+    await page.click('#paymentsTableBody [data-act="voidPayment"]');
+    await page.waitForSelector('#mdInput');
+    await page.fill('#mdInput', 'Test entry');
+    await page.click('#mdOk');
+    await page.waitForTimeout(150);
+    const row = (await page.textContent('#paymentsTableBody')).replace(/\s+/g, ' ');
+    assert(/Reversed/.test(row) && /Test entry/.test(row), 'reversal reason not shown: ' + row);
+    await page.fill('#paySearch', '');
+    await page.selectOption('#payClass', '');
+  });
+
   await step('Fees → Fees dashboard shows arrears, methods and defaulters, and nothing else', async () => {
     await tab(page, 'payments', 'dashboard');
     assert(await page.isVisible('#topDefaulters') && await page.isVisible('#bulkSmsBtn'), 'fees dashboard not shown');
@@ -378,6 +468,120 @@ async function classResults(page, cls) {
     assert(label === 'Aggregate 11 · Division I', 'PLE result = ' + label);
   });
 
+  await step('Who owes: "N owe" in Fees by class lists that class\'s children, with the amounts and reminders', async () => {
+    await tab(page, 'payments', 'dashboard');
+    await page.click('#arrearsByClass [data-act="oweShowClass"][data-class="S.4"]');
+    assert(await page.inputValue('#oweClass') === 'S.4', 'class not chosen');
+    const names = await page.$$eval('#topDefaulters [data-act="learner"]', bs => bs.map(b => b.textContent).sort());
+    const expected = await page.evaluate(() => state.students.filter(s => s.class === 'S.4' && studentAccount(s).balance > 0).map(s => s.name).sort());
+    assert(expected.length === 2 && JSON.stringify(names) === JSON.stringify(expected), `who owes in S.4: ${names} vs ${expected}`);
+    assert(!/Achieng Mary/.test(await page.textContent('#topDefaulters')), 'a P.7 pupil is listed under S.4');
+    assert(/Owes UGX/.test(await page.textContent('#topDefaulters')), 'amounts missing');
+    assert(/^Text all 2 guardians in S\.4$/.test((await page.textContent('#bulkSmsBtn')).trim()), 'button: ' + await page.textContent('#bulkSmsBtn'));
+    // Offline, Text all opens the tap-to-SMS list for that class only.
+    await page.click('#bulkSmsBtn');
+    await page.waitForSelector('#modalHost .roster-item');
+    const modal = await page.textContent('#modalHost');
+    assert(/Fee reminders — S\.4/.test(modal) && /Mugisha Brian/.test(modal) && !/Achieng Mary/.test(modal), 'reminders: ' + modal);
+    await page.click('#modalHost [data-modal-close]');
+    // A name opens the learner page at Fees.
+    await page.click('#topDefaulters [data-act="learner"] >> nth=0');
+    await page.waitForSelector('#learnerBody');
+    assert(/Balance owed/.test(await page.textContent('#learnerBody')), 'learner page did not open at Fees');
+    await page.click('#modalHost [data-modal-close]');
+    await page.selectOption('#oweClass', '');
+  });
+
+  await step('Discipline: what happened sets how serious it is, and the message says the date and what happened', async () => {
+    await tab(page, 'conduct');
+    await page.selectOption('#conductClass', 'S.4');
+    const opts = await page.$$eval('#conductStudent option', os => os.slice(1).map(o => o.textContent));
+    assert(opts.length === 2 && opts.every(t => / — S\.4/.test(t)), 'class filter: ' + opts.join(' | '));
+    assert(await page.inputValue('#conductBy') !== '', '"Reported by" is not filled in with the signed-in person');
+    await page.selectOption('#conductStudent', secondId);
+    await page.selectOption('#conductType', 'Detention');
+    await page.fill('#conductWhat', 'Late for prep three times');
+    // A date in the future is refused and the form keeps what was typed.
+    await page.fill('#conductDate', '2099-01-01');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.conduct.length) === 0 && await page.inputValue('#conductWhat') === 'Late for prep three times', 'future date accepted, or the form was cleared');
+    const day = await page.evaluate(() => todayISO());
+    await page.fill('#conductDate', day);
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForSelector('#conductDone', { state: 'visible' });
+    const c = await page.evaluate(() => state.conduct[0]);
+    assert(c.type === 'Detention' && c.severity === 'Major' && c.date === day, 'stored ' + JSON.stringify(c));
+    let when = await page.evaluate(d => fmtDay(d), day);
+    let msg = await page.textContent('#conductMsg');
+    assert(msg.includes(`on ${when} Mugisha Brian (S.4) was given a detention: "Late for prep three times"`) && !/commendation/i.test(msg), 'message: ' + msg);
+    // The old bug: a detention whose severity says "Positive" was texted as a commendation.
+    const old = await page.evaluate(() => conductMessage({ type: 'Detention', severity: 'Positive', date: '2026-02-03', description: 'x', reportedBy: 'Mr. Kato' }, { name: 'Test Child', class: 'S.1' }));
+    assert(/was given a detention/.test(old) && !/commendation/i.test(old), 'old entry message: ' + old);
+    // A commendation from before this term opened reads as one, with its own date.
+    const earlier = await page.evaluate(() => addDaysISO(todayISO(), -3));
+    when = await page.evaluate(d => fmtDay(d), earlier);
+    await page.selectOption('#conductStudent', 'NPA/2026/001');
+    await page.selectOption('#conductType', 'Commendation');
+    await page.fill('#conductDate', earlier);
+    await page.fill('#conductWhat', 'Led the class clean-up');
+    await page.click('#conductForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    msg = await page.textContent('#conductMsg');
+    assert(msg.includes(`on ${when} Nakato Sarah (S.4) received a commendation: "Led the class clean-up"`) && /Well done/.test(msg), 'commendation message: ' + msg);
+    // The log: this term's summary, all terms, and a filter for serious entries only.
+    let sum = (await page.textContent('#conductSummary')).replace(/\s+/g, ' ');
+    assert(/1 entry/.test(sum) && /0 good/.test(sum) && /1 serious/.test(sum), 'this term: ' + sum);
+    await page.selectOption('#conductPeriod', 'all');
+    sum = (await page.textContent('#conductSummary')).replace(/\s+/g, ' ');
+    assert(/2 entries/.test(sum) && /1 good/.test(sum) && /1 serious/.test(sum), 'all terms: ' + sum);
+    await page.selectOption('#conductFilter', 'serious');
+    const rows = await page.$$eval('#conductTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(rows.length === 1 && /Mugisha Brian/.test(rows[0]) && /Detention/.test(rows[0]), 'serious only: ' + rows.join(' | '));
+    await page.selectOption('#conductFilter', '');
+    // The child's name opens their page at Discipline, with this term's totals.
+    await page.click(`#conductTableBody [data-act="learner"][data-id="${secondId}"]`);
+    await page.waitForSelector('#learnerBody');
+    const lp = (await page.textContent('#learnerBody')).replace(/\s+/g, ' ');
+    assert(/Serious ?1/.test(lp) && /Late for prep three times/.test(lp), 'learner page: ' + lp);
+    await page.click('#modalHost [data-modal-close]');
+    // Delete names the child and is written to "who did what".
+    await page.click(`#conductTableBody .dir-row:has([data-id="${secondId}"]) [data-act="deleteConduct"]`);
+    await page.waitForSelector('#mdOk');
+    assert(/detention for Mugisha Brian/.test(await page.textContent('#modalHost')), 'delete does not name the child');
+    await page.click('#mdOk');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.conduct.length) === 1, 'entry not deleted');
+    const audit = await page.evaluate(() => AUTH.getAuditLog().map(a => a.action));
+    assert(audit.includes('CONDUCT_ADD') && audit.includes('CONDUCT_DELETE'), 'conduct not audited: ' + audit.slice(0, 8));
+    await page.selectOption('#conductPeriod', 'term');
+  });
+
+  await step('Reports: classes in school order, every number opens those children, and EMIS per class with no money', async () => {
+    await tab(page, 'reports', 'statistics');
+    const classes = await page.$$eval('#classStatsBody tbody .ts-name', ts => ts.map(t => t.textContent.trim()));
+    assert(classes.indexOf('P.7') >= 0 && classes.indexOf('P.7') < classes.indexOf('S.4'), 'class order: ' + classes.join(', '));
+    await page.click('#classStatsBody [data-act="reportList"][data-cls="S.4"][data-key="all"]');
+    await page.waitForSelector('.modal .roster-item');
+    const names = await page.$$eval('.modal .roster-item [data-act="learner"]', bs => bs.map(b => b.textContent).sort());
+    const expected = await page.evaluate(() => state.students.filter(s => s.class === 'S.4').map(s => s.name).sort());
+    assert(expected.length >= 2 && JSON.stringify(names) === JSON.stringify(expected), `S.4 learners: ${names} vs ${expected}`);
+    await page.click('#modalHost [data-modal-close]');
+    const girls = await page.evaluate(() => state.students.filter(s => s.gender === 'Female').length);
+    assert(new RegExp('^' + girls + '$').test((await page.textContent('#genderStats [data-key="girls"]')).trim()), 'girls count is not a button with the right number');
+    // A class the app does not know, or a missing gender, is named as a warning (EMIS needs both).
+    const w = await page.evaluate(() => { state.students.push({ id: 'TMP1', name: 'Temp Child', class: 'Form 2', gender: '' }); const h = reportWarningsHtml(); state.students.pop(); return h; });
+    assert(/class the app does not recognise/.test(w) && /no gender set/.test(w), 'warnings: ' + w);
+    await page.click('#subNav [data-sub="emis"]');
+    const preview = (await page.textContent('#emisPreview')).replace(/\s+/g, ' ');
+    assert(/Boys/.test(preview) && /Girls/.test(preview) && /S\.4/.test(preview) && /Total/.test(preview), 'EMIS preview: ' + preview);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#exportEmisBtn')]);
+    const text = require('fs').readFileSync(await dl.path(), 'utf8');
+    assert(text.charCodeAt(0) === 0xFEFF, 'the EMIS file has no byte-order mark, so Excel garbles it');
+    assert(/"Class","Boys","Girls","Total"/.test(text) && /"S\.4"/.test(text) && /"P\.7"/.test(text) && /\n"Total"/.test(text), 'EMIS file: ' + text);
+    assert(!/UGX|Outstanding|Cleared|fee/i.test(text), 'EMIS file carries money: ' + text);
+  });
+
   await step('grading scales can be edited and restored (Academics → Grading scales)', async () => {
     await tab(page, 'academics', 'grading');
     const text = await page.inputValue('#bands-primary');
@@ -428,15 +632,34 @@ async function classResults(page, cls) {
   });
 
   /* ───────────────────────── Phase 1: register ───────────────────────── */
-  await step('class register records absences and offers guardian SMS (Attendance → Daily register)', async () => {
-    await tab(page, 'register', 'daily');
+  await step('Students → Take register: nobody is present until the teacher marks them, and the register saves only when everyone is marked', async () => {
+    await tab(page, 'directory', 'daily');
+    const subs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(subs.join('|') === 'All students|Take register|Who was absent|Term sheet|Admit a student|Import from Excel', 'Students sub-tabs: ' + subs.join('|'));
+    assert(!(await page.$('#regAllPresentBtn')), 'the "Mark everyone present" button is still there');
     await page.selectOption('#regClass', 'S.4');
+    // Every child starts unmarked.
+    const marks = await page.$$eval('#registerRoster .reg-row', rs => rs.map(r => r.dataset.status));
+    assert(marks.length === 2 && marks.every(m => m === ''), 'rows start marked: ' + JSON.stringify(marks));
+    assert(await page.$$eval('#registerRoster .reg-row [aria-checked="true"]', b => b.length) === 0, 'a button is lit before the teacher taps it');
+    let line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/2 not marked yet/.test(line) && /0 present/.test(line), 'running line before marking: ' + line);
+    // One child marked absent, the other not marked: Save is refused and names her.
     await page.click(`#registerRoster .reg-row[data-student="${secondId}"] [data-set-status="A"]`);
-    const line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
-    assert(/2 learners · 1 present · 1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
     assert(await page.textContent(`#registerRoster .reg-row[data-student="${secondId}"] .on-A`) === 'Absent', 'the button does not say Absent');
     await page.click('#regSaveBtn');
     await page.waitForTimeout(150);
+    assert(await page.evaluate(() => (state.registers || []).length) === 0, 'a register with an unmarked child was saved');
+    assert(/1 child is not marked yet \(Nakato Sarah\)/.test(await page.textContent('#toastHost')), 'refusal does not name the child: ' + await page.textContent('#toastHost'));
+    assert(await page.$eval('#registerRoster .reg-row[data-student="NPA/2026/001"]', r => r.classList.contains('needs-mark')), 'the unmarked child is not highlighted');
+    // The teacher marks her present: now everyone is marked and it saves.
+    await page.click('#registerRoster .reg-row[data-student="NPA/2026/001"] [data-set-status="P"]');
+    line = (await page.textContent('#regSummary')).replace(/\s+/g, ' ');
+    assert(/everyone marked/.test(line) && /1 present/.test(line) && /1 absent: Mugisha Brian/.test(line), 'running line: ' + line);
+    await page.click('#regSaveBtn');
+    await page.waitForTimeout(150);
+    const saved = await page.evaluate(() => state.registers[0].records.map(r => r.status).sort().join(''));
+    assert(saved === 'AP', 'saved marks: ' + saved);
     const rec = await page.evaluate(id => state.registers[0].records.find(r => r.studentId === id).status, secondId);
     assert(rec === 'A', 'status saved = ' + rec);
     assert(/Mugisha Brian/.test(await page.textContent('#registerAbsentees')), 'absentee list missing');
@@ -457,7 +680,8 @@ async function classResults(page, cls) {
     await tab(page, 'overview');
     assert(await page.isVisible('#jobsCard'), "Today's jobs not shown");
     const jobs = await page.$$eval('#jobsList .job', bs => bs.map(b => b.dataset.to || 'act:' + b.dataset.act));
-    for (const to of ['register/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/admit']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    for (const to of ['directory/daily', 'act:absentToday', 'academics/marks', 'academics/reportcards', 'payments/record', 'directory/list', 'directory/admit', 'conduct', 'noticeboard', 'act:backupNow']) assert(jobs.includes(to), `missing ${to} in ${jobs.join(' ')}`);
+    assert(/Then print the receipt/.test(await page.textContent('#jobsList [data-to="payments/record"]')), 'the payment job does not mention the receipt');
     await page.click('#jobsList [data-to="academics/reportcards"]');
     assert(await page.isVisible('#rcList') && !(await page.isVisible('#markSheetRoster')), 'did not land on Academics → Report cards');
     const active = await page.$eval('#subNav [aria-selected="true"]', b => b.textContent);
@@ -468,8 +692,27 @@ async function classResults(page, cls) {
     assert(await page.isVisible('#absenceList') && await page.inputValue('#absFrom') === today && await page.inputValue('#absTo') === today, 'Who is absent today did not open on today');
   });
 
+  await step('on a phone, one Menu lists every module and the account buttons in words', async () => {
+    const before = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    try {
+      assert(await page.isVisible('#menuBtn') && !(await page.isVisible('.navbar')) && !(await page.isVisible('#logoutBtn')), 'phone top bar not switched to the Menu');
+      await page.click('#menuBtn');
+      await page.waitForSelector('.modal .menu-grid');
+      const items = await page.$$eval('.modal .menu-item', bs => bs.map(b => b.textContent.trim()));
+      assert(items.length === 9 && items.includes('Students') && !items.includes('Attendance') && items.includes('Administration'), 'menu items: ' + items.join('|'));
+      const acts = await page.$$eval('.modal .menu-acts button', bs => bs.map(b => b.textContent.trim()));
+      assert(acts.includes('Sign out') && acts.includes('Change my password'), 'account buttons: ' + acts.join('|'));
+      await page.click('.modal .menu-item[data-tab="reports"]');
+      assert(await page.isVisible('#panel-reports') && (await page.textContent('#currentModule')) === 'Reports', 'Menu did not open Reports');
+    } finally {
+      if (await page.isVisible('.modal-overlay')) await page.click('.modal [data-modal-close]');
+      await page.setViewportSize(before || { width: 1280, height: 720 });
+    }
+  });
+
   await step('Who was absent names the child, and "Change this register" opens that register', async () => {
-    await tab(page, 'register', 'recent');
+    await tab(page, 'directory', 'recent');
     const list = (await page.textContent('#absenceList')).replace(/\s+/g, ' ');
     assert(/S\.4/.test(list) && /1 of 2 present/.test(list) && /Absent: Mugisha Brian/.test(list), 'list: ' + list);
     assert(/Mugisha Brian \(1 day\)/.test(await page.textContent('#absTop')), 'most-absent line missing');
@@ -481,7 +724,7 @@ async function classResults(page, cls) {
   });
 
   await step('the term sheet shows each child by day, like the paper register, with totals', async () => {
-    await tab(page, 'register', 'sheet');
+    await tab(page, 'directory', 'sheet');
     await page.selectOption('#tsClass', 'S.4');
     const rows = await page.$$eval('#termSheet .ts tbody tr', trs => trs.map(tr => [...tr.cells].map(td => td.textContent.trim())));
     const brian = rows.find(r => r[0] === 'Mugisha Brian');
@@ -493,7 +736,7 @@ async function classResults(page, cls) {
   });
 
   await step("a child's name opens their learner page, with the dates absent", async () => {
-    await tab(page, 'register', 'recent');
+    await tab(page, 'directory', 'recent');
     await page.click(`#absenceList [data-act="learner"][data-id="${secondId}"]`);
     await page.waitForSelector('.modal #learnerBody');
     try {
@@ -505,17 +748,47 @@ async function classResults(page, cls) {
     } finally { await page.click('.modal [data-modal-close]'); }
   });
 
-  await step('a teacher account can be limited to chosen classes', async () => {
+  await step('staff accounts: a role and a first password are needed, and a teacher is limited to chosen classes', async () => {
     await tab(page, 'admin', 'staff');
-    await page.click('#userMgmtCard summary');
+    await page.click('#addStaffBtn');
+    assert(await page.textContent('#staffFormTitle') === 'Add a staff member' && await page.inputValue('#editRole') === '', 'the form does not start empty, with no role');
     await page.fill('#editUsername', 'tkato');
     await page.fill('#editDisplayName', 'Mr. Kato');
+    const count = async () => page.evaluate(() => AUTH.getUsers().length);
+    const before = await count();
+    // No role chosen: refused.
+    await page.fill('#editPassword', 'Teach2026x');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForTimeout(300);
+    assert(await count() === before && /Choose the role/.test(await page.textContent('#toastHost')), 'saved without a role');
+    // No password for a new account: refused (it could never sign in).
     await page.selectOption('#editRole', 'teacher');
     await page.check('#editAssignedClasses input[value="S.4"]');
+    await page.fill('#editPassword', '');
+    await page.click('#userEditForm button[type="submit"]');
+    await page.waitForTimeout(300);
+    assert(await count() === before && /first password/.test(await page.textContent('#toastHost')), 'saved without a password');
     await page.fill('#editPassword', 'Teach2026x');
     await page.click('#userEditForm button[type="submit"]');
     await page.waitForTimeout(400);
-    assert(/Mr\. Kato/.test(await page.textContent('#usersList')), 'teacher not listed');
+    const list = await page.textContent('#usersList');
+    assert(/Mr\. Kato/.test(list) && /Teacher/.test(list) && /Must choose a new password/.test(list), 'teacher not listed as needing a new password: ' + list);
+    // Editing says whose account it is.
+    await page.click('#usersList [data-act="editUser"] >> nth=-1');
+    assert(/^Editing /.test(await page.textContent('#staffFormTitle')), 'edit title: ' + await page.textContent('#staffFormTitle'));
+    await page.click('#clearUserBtn');
+  });
+
+  await step('an old account with no password gets a message at sign-in, not a stuck button', async () => {
+    const r = await page.evaluate(async () => {
+      const users = JSON.parse(localStorage.getItem('ksa_users'));
+      users.push({ id: 'UOLD', username: 'nopass', displayName: 'No Pass', role: 'admin', mustChangePassword: true });
+      localStorage.setItem('ksa_users', JSON.stringify(users));
+      const res = await AUTH.login('nopass', 'Whatever123');
+      localStorage.setItem('ksa_users', JSON.stringify(users.filter(u => u.id !== 'UOLD')));
+      return res;
+    });
+    assert(r && r.ok === false && /no password yet/.test(r.error), 'login result: ' + JSON.stringify(r));
   });
 
   /* ───────────────────────── Phase 1: tools ───────────────────────── */
@@ -534,12 +807,39 @@ async function classResults(page, cls) {
     assert(/Import 2 learners/.test(await page.textContent('#importGo')), 'expected 2 good rows');
     assert(/second guardian phone not a valid/.test(await page.textContent('.modal')), 'bad second number not reported');
     await page.click('#importGo');
-    await page.waitForTimeout(200);
+    await page.waitForSelector('.modal [data-act="learner"]');
+    const result = (await page.textContent('.modal')).replace(/\s+/g, ' ');
+    assert(/Imported 2 learners/.test(result) && /Opio Daniel/.test(result), 'result: ' + result);
+    await page.click('.modal [data-modal-close]');
     const opio = await page.evaluate(() => { const s = state.students.find(x => x.id === 'NPA/2026/050'); return s && { cls: s.class, stream: s.stream, arrears: studentAccount(s).arrears, g2: s.guardian2 }; });
     assert(opio && opio.cls === 'S.2' && opio.stream === 'East' && opio.arrears === 120000 && opio.g2 === '0701 555 222', 'imported learner ' + JSON.stringify(opio));
+    // The same file again adds nobody twice.
+    await page.setInputFiles('#importLearnersInput', { name: 'learners.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await page.waitForSelector('#importGo');
+    assert(await page.textContent('#importGo') === 'Import 0 learners' && /<strong>2<\/strong> already in the school/.test(await page.innerHTML('.modal')), 'a second import would add learners twice');
+    await page.click('.modal [data-modal-close]');
+  });
+
+  await step('Students: one "Owes" figure, search in any word order or by phone, and the owe-fees list', async () => {
+    await tab(page, 'directory', 'list');
+    const sarah = await page.evaluate(() => { const s = state.students.find(x => x.name === 'Nakato Sarah'); const b = studentAccount(s).balance; return { phone: s.guardian, label: b > 0 ? 'Owes ' + fmtMoney(b) : 'Paid up' }; });
+    const rows = async () => page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    await page.fill('#searchInput', '  sarah NAKATO ');
+    let found = await rows();
+    assert(found.length === 1 && found[0].includes('Nakato Sarah') && found[0].includes(sarah.label), 'name search: ' + found.join(' | '));
+    await page.fill('#searchInput', '+256 ' + sarah.phone.replace(/\D/g, '').slice(-9));
+    found = await rows();
+    assert(found.some(r => r.includes('Nakato Sarah')), 'phone search: ' + found.join(' | '));
+    await page.fill('#searchInput', '');
+    const owing = await page.evaluate(() => state.students.filter(s => studentAccount(s).balance > 0).map(s => s.name).sort());
+    await page.click('#dirSummary [data-act="dirShowOwe"]');
+    const shown = await rows();
+    assert(shown.length === owing.length && owing.every(n => shown.some(r => r.includes(n))), `owe-fees list ${shown.length} vs ${owing.length}`);
+    await page.selectOption('#dirShow', '');
   });
 
   await step('CSV export neutralises spreadsheet formulas and includes both guardians', async () => {
+    await tab(page, 'directory', 'import');
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#exportLearnersBtn')]);
     const text = require('fs').readFileSync(await dl.path(), 'utf8');
     assert(text.includes("\"'=HYPERLINK(1)\""), 'formula not neutralised');
@@ -559,6 +859,24 @@ async function classResults(page, cls) {
     assert(brand === '#7a1f2b', 'brand colour = ' + brand);
   });
 
+  await step('Back up now: the file holds the staff accounts and "who did what", and restore says what is in it', async () => {
+    await tab(page, 'admin', 'data');
+    assert(/No backup has been made|Last backup/.test(await page.textContent('#lastBackupLine')), 'no last-backup line');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#adminExportBtn')]);
+    assert(/-backup-\d{4}-\d{2}-\d{2}\.json$/.test(dl.suggestedFilename()), 'file name ' + dl.suggestedFilename());
+    const file = JSON.parse(require('fs').readFileSync(await dl.path(), 'utf8'));
+    assert(file._backup && file._backup.users.some(u => u.username === 'tkato' && u.passwordHash) && file._backup.audit.length > 5, 'backup lacks staff or who did what');
+    assert(/Last backup on this device: .* \(today\)/.test(await page.textContent('#lastBackupLine')), 'last backup line: ' + await page.textContent('#lastBackupLine'));
+    // Restore shows what is in the file before anything is replaced; Cancel leaves everything as it was.
+    const n = await page.evaluate(() => state.students.length);
+    await page.setInputFiles('#adminImportInput', await dl.path());
+    await page.waitForSelector('#restoreStaff');
+    const box = (await page.textContent('#modalHost')).replace(/\s+/g, ' ');
+    assert(box.includes(`${n} learners`) && /staff accounts/.test(box) && /Saved/.test(box), 'restore summary: ' + box);
+    await page.click('#mdCancel');
+    assert(await page.evaluate(() => state.students.length) === n, 'Cancel changed the data');
+  });
+
   await step('a daily snapshot is kept and listed for restore', async () => {
     await page.waitForTimeout(300);
     await tab(page, 'admin', 'data');
@@ -567,6 +885,31 @@ async function classResults(page, cls) {
     const today = await page.evaluate(() => todayISO());
     assert(await page.$(`[data-snap="${today}"]`), 'no snapshot for today');
     await page.click('.modal [data-modal-close]');
+  });
+
+  await step('Notices: post, filter by kind, edit and delete, each recorded', async () => {
+    await tab(page, 'noticeboard');
+    assert(!(await page.isVisible('#noticeAudience')), '"Who can see this" (parents) is offered in the offline edition');
+    await page.fill('#noticeTitle', 'Staff meeting on Friday');
+    await page.selectOption('#noticeCategory', 'Academic');
+    await page.fill('#noticeBody', 'In the library at 4pm.');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    const today = await page.evaluate(() => fmtDay(todayISO()));
+    let grid = await page.textContent('#noticesGrid');
+    assert(/Staff meeting on Friday/.test(grid) && grid.includes(today), 'notice or its date missing: ' + grid);
+    await page.selectOption('#noticeFilter', 'Sports');
+    assert(!/Staff meeting on Friday/.test(await page.textContent('#noticesGrid')), 'filter by kind does not filter');
+    await page.selectOption('#noticeFilter', '');
+    await page.click('#noticesGrid [data-act="editNotice"] >> nth=0');
+    await page.waitForSelector('#neTitle');
+    await page.fill('#neTitle', 'Staff meeting moved to Monday');
+    await page.click('#neSave');
+    await page.waitForTimeout(100);
+    grid = await page.textContent('#noticesGrid');
+    assert(/Staff meeting moved to Monday/.test(grid) && !/Staff meeting on Friday/.test(grid), 'edit not saved: ' + grid);
+    const audit = await page.evaluate(() => AUTH.getAuditLog().map(a => a.action));
+    assert(audit.includes('NOTICE_POST') && audit.includes('NOTICE_EDIT'), 'notices not audited: ' + audit.slice(0, 8));
   });
 
   await step('sign out', async () => {
@@ -604,12 +947,16 @@ async function classResults(page, cls) {
     await page.waitForTimeout(150);
     const card = await page.$eval(`#programsGrid [data-id="${progId}"][data-act="programAthletes"]`, b => b.closest('.tile').textContent.replace(/\s+/g, ' '));
     assert(card.includes('Athletes (2)') && card.includes(a1.name) && card.includes(a2.name), 'athletes not listed on the programme: ' + card);
-    // A session: tap Absent for one athlete; the line, the sessions list and who-attends name them.
+    // A session: every athlete starts unmarked; the coach marks each one.
     await page.click('#subNav [data-sub="training"]');
     await page.selectOption('#attendanceProgram', progId);
     assert(await page.inputValue('#attendanceDate') === await page.evaluate(() => todayISO()), 'session date is not today');
     await page.click(`#attendanceRoster .reg-row[data-student="${a2.id}"] [data-set-att="A"]`);
     assert((await page.textContent('#trainSummary')).includes('1 missed: ' + a2.name), 'running line: ' + await page.textContent('#trainSummary'));
+    await page.click('#saveAttendanceBtn');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.attendance.length) === 0, 'a session with an unmarked athlete was saved');
+    await page.click(`#attendanceRoster .reg-row[data-student="${a1.id}"] [data-set-att="P"]`);
     await page.click('#saveAttendanceBtn');
     await page.waitForTimeout(150);
     const sessions = (await page.textContent('#sessionList')).replace(/\s+/g, ' ');
@@ -617,6 +964,22 @@ async function classResults(page, cls) {
     const today = await page.evaluate(() => fmtDay(todayISO(), false));
     const row = await page.$eval('#attendanceTableBody', b => [...b.rows].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | '));
     assert(row.includes(a2.name) && row.includes(today), 'who attends: ' + row);
+  });
+
+  await step("the coach can change their own notices, but not the director's", async () => {
+    await tab(page, 'noticeboard');
+    await page.fill('#noticeTitle', 'Football practice moved to 5pm');
+    await page.selectOption('#noticeCategory', 'Sports');
+    await page.click('#noticeForm button[type="submit"]');
+    await page.waitForTimeout(100);
+    const item = async title => page.$eval('#noticesGrid', (g, t) => [...g.querySelectorAll('.notice-item')].find(n => n.textContent.includes(t)).querySelectorAll('[data-act="editNotice"], [data-act="deleteNotice"]').length, title);
+    assert(await item('Football practice moved to 5pm') === 2, "no Edit and Delete on the coach's own notice");
+    assert(await item('Staff meeting moved to Monday') === 0, "the coach is offered Edit or Delete on the director's notice");
+    const id = await page.evaluate(() => state.notices.find(n => n.title === 'Staff meeting moved to Monday').id);
+    await page.evaluate(i => deleteNotice(i), id);
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(i => state.notices.some(n => n.id === i), id), "the coach deleted the director's notice");
+    assert(/Only the person who posted this notice/.test(await page.textContent('#toastHost')), 'no explanation for the refusal');
   });
 
   await step('signing in right after someone signs out keeps you signed in', async () => {
@@ -682,17 +1045,25 @@ async function classResults(page, cls) {
     assert(/Achieng Mary/.test(list) && /20%/.test(list) && /70,000/.test(list), 'bursary list: ' + list);
   });
 
-  await step('teacher sees only the register, academics and assigned classes', async () => {
+  await step('teacher: Students (their classes, the register, no fees), Academics and Notices only', async () => {
     await page.click('#logoutBtn');
     await page.waitForSelector('#mdOk');
     await page.click('#mdOk');
     await signIn(page, 'tkato', 'Teach2026x');
+    await changePassword(page, 'Teach2026x', 'Teach2026New');   // a first password must be replaced
     await page.waitForSelector('#appShell', { state: 'visible' });
     const tabs = await page.$$eval('.nav-tab', ns => ns.map(n => n.dataset.tab));
-    assert(JSON.stringify(tabs) === '["register","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
+    assert(JSON.stringify(tabs) === '["directory","academics","noticeboard"]', 'teacher tabs ' + JSON.stringify(tabs));
     const labels = await page.$$eval('.nav-tab', ns => ns.map(n => n.textContent.trim()));
-    assert(labels.join('|') === 'Attendance|Academics|Notices', 'teacher labels ' + labels.join('|'));
-    await tab(page, 'register');
+    assert(labels.join('|') === 'Students|Academics|Notices', 'teacher labels ' + labels.join('|'));
+    await tab(page, 'directory');
+    const tsubs = await page.$$eval('#subNav [data-sub]', bs => bs.map(b => b.textContent));
+    assert(tsubs.join('|') === 'My classes|Take register|Who was absent|Term sheet', 'teacher Students sub-tabs: ' + tsubs.join('|'));
+    await page.click('#subNav [data-sub="list"]');
+    const mine = await page.$$eval('#studentTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(mine.length === 2 && mine.every(r => /S\.4/.test(r)), 'teacher list is not their class: ' + mine.join(' | '));
+    assert(!mine.some(r => /Owes|Paid up|UGX/.test(r)) && !(await page.isVisible('#dirShow')), 'the teacher sees fees: ' + mine.join(' | '));
+    await page.click('#subNav [data-sub="daily"]');
     const classes = await page.$$eval('#regClass option', o => o.map(x => x.value).filter(Boolean));
     assert(JSON.stringify(classes) === '["S.4"]', 'teacher classes ' + JSON.stringify(classes));
     await tab(page, 'academics');

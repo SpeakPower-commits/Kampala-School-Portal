@@ -6,8 +6,10 @@
    P = present, A = absent, L = late (counts as present), E = excused.
    A class with streams is called stream by stream, as on paper.
 
-   Screens (Attendance module):
-     Take register   — tap Absent, Late or Excused; a running line names them.
+   Screens (under Students):
+     Take register   — every child starts unmarked; the teacher taps Present,
+                       Absent, Late or Excused for each one, and the register
+                       is saved only when every child is marked.
      Who was absent  — every register taken, with the children's names.
      Term sheet      — the class as on the paper register: a line per child,
                        a column per day, totals per child and per day.
@@ -82,16 +84,17 @@ function renderRegisterRoster() {
   if (!learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; renderRegisterSummary(); return; }
   const map = {};
   if (existing) existing.records.forEach(r => { map[r.studentId] = r.status; });
+  // Nobody is assumed present: a child is marked only when the teacher marks them.
   box.innerHTML = learners.map(s => {
-    const status = map[s.id] || 'P';
-    return `<div class="roster-item reg-row" data-student="${escapeHtml(s.id)}" data-status="${status}">
-      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.id)}</div></div>
+    const status = map[s.id] || '';
+    return `<div class="roster-item reg-row${status ? '' : ' is-unmarked'}" data-student="${escapeHtml(s.id)}" data-status="${status}">
+      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.id)}<span class="reg-unmarked"> · Not marked</span></div></div>
       <div class="seg seg-words" role="radiogroup" aria-label="Attendance for ${escapeHtml(s.name)}">${REGISTER_STATUSES.map(st => `<button type="button" role="radio" aria-checked="${st.id === status}" class="${st.id === status ? 'on-' + st.id : ''}" data-set-status="${st.id}">${st.label}</button>`).join('')}</div>
     </div>`;
   }).join('');
   if (note) note.textContent = existing
     ? `Already taken by ${existing.markedBy || '—'}. Change anyone below and press Save register to update it.`
-    : 'Everyone starts as Present. Tap Absent, Late or Excused for each child who is not here, then press Save register.';
+    : '1 Choose the class · 2 tap Present, Absent, Late or Excused for every child · 3 press Save register. Nobody is counted present until you mark them.';
   renderRegisterSummary();
 }
 
@@ -100,18 +103,21 @@ function renderRegisterSummary() {
   const box = el('regSummary'); if (!box) return;
   const rows = [...document.querySelectorAll('#registerRoster .reg-row')];
   if (!rows.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
-  const names = st => rows.filter(r => r.dataset.status === st).map(r => escapeHtml(learnerName(r.dataset.student)));
-  const absent = names('A'), late = names('L'), excused = names('E');
-  const present = rows.length - absent.length - excused.length;
+  const names = st => rows.filter(r => (r.dataset.status || '') === st).map(r => escapeHtml(learnerName(r.dataset.student)));
+  const unmarked = names(''), absent = names('A'), late = names('L'), excused = names('E');
+  const present = rows.filter(r => r.dataset.status === 'P').length;
   box.style.display = '';
-  box.innerHTML = `<strong>${rows.length}</strong> learner${rows.length === 1 ? '' : 's'} · <span class="t-ok">${present} present</span> · `
-    + (absent.length ? `<span class="t-bad">${absent.length} absent: ${absent.join(', ')}</span>` : '<span class="t-ok">nobody absent</span>')
+  box.innerHTML = `<strong>${rows.length}</strong> learner${rows.length === 1 ? '' : 's'}`
+    + (unmarked.length ? ` · <span class="t-warn">${unmarked.length} not marked yet: ${unmarked.join(', ')}</span>` : ' · <span class="t-ok">everyone marked</span>')
+    + ` · <span class="t-ok">${present} present</span>`
+    + (absent.length ? ` · <span class="t-bad">${absent.length} absent: ${absent.join(', ')}</span>` : '')
     + (late.length ? ` · <span class="t-warn">${late.length} late: ${late.join(', ')}</span>` : '')
     + (excused.length ? ` · ${excused.length} excused: ${excused.join(', ')}` : '');
 }
 
 function setRowStatus(row, status) {
   row.dataset.status = status;
+  row.classList.remove('is-unmarked', 'needs-mark');
   row.querySelectorAll('[data-set-status]').forEach(b => {
     const on = b.dataset.setStatus === status;
     b.className = on ? 'on-' + status : '';
@@ -127,15 +133,30 @@ function saveRegister() {
   if (date > todayISO()) return toast('You cannot mark a register for a future date.', 'error');
   const rows = [...document.querySelectorAll('#registerRoster .reg-row')];
   if (!rows.length) return toast('No learners to mark.', 'error');
-  const records = rows.map(r => ({ studentId: r.dataset.student, status: r.dataset.status || 'P' }));
+  if (refuseUnmarked(rows, 'child')) return;
+  const records = rows.map(r => ({ studentId: r.dataset.student, status: r.dataset.status }));
   state.registers = state.registers || [];
   const existing = findRegister(cls, stream, date);
   if (existing) { existing.records = records; existing.markedBy = currentSession.displayName; existing.updatedAt = nowISO(); }
-  else state.registers.push({ id: 'REG' + uid().slice(0, 6), class: cls, stream: stream || '', date, records, markedBy: currentSession.displayName, createdAt: nowISO() });
+  else state.registers.push({ id: newId('REG'), class: cls, stream: stream || '', date, records, markedBy: currentSession.displayName, createdAt: nowISO() });
   saveState(); renderAll();
   const absent = records.filter(r => r.status === 'A').map(r => learnerName(r.studentId));
   toast(`Register saved for ${classLabel(cls, stream)}, ${fmtDay(date)}: ${records.length - absent.length} here${absent.length ? ', absent: ' + absent.join(', ') : ', nobody absent'}.`, 'success');
   showAbsentees(cls, stream, date);
+}
+
+/* A register is saved only when every child on it has been marked. Returns
+   true (and names them, highlights their rows and scrolls to the first)
+   when some are not. Also used by Sports training attendance. */
+function refuseUnmarked(rows, noun) {
+  const left = rows.filter(r => !r.dataset.status);
+  rows.forEach(r => r.classList.toggle('needs-mark', !r.dataset.status));
+  if (!left.length) return false;
+  const names = left.map(r => learnerName(r.dataset.student));
+  const shown = names.slice(0, 6).join(', ') + (names.length > 6 ? ` and ${names.length - 6} more` : '');
+  toast(`Not saved: ${left.length} ${noun}${left.length === 1 ? ' is' : (noun === 'child' ? 'ren are' : 's are')} not marked yet (${shown}). Mark each one, then save.`, 'error');
+  if (left[0].scrollIntoView) left[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  return true;
 }
 
 function showAbsentees(cls, stream, date) {
@@ -346,7 +367,7 @@ Object.assign(ACTIONS, {
   waAbsence: d => messageAbsence(d.id, d.date, 'wa'),
   // From Who was absent: open that register on Take register, ready to change.
   openRegister: d => {
-    switchTab('register', 'daily');
+    switchTab('directory', 'daily');
     el('regClass').value = d.class;
     renderRegisterControls();
     el('regStream').value = d.stream || '-';
@@ -355,7 +376,7 @@ Object.assign(ACTIONS, {
     showAbsentees(d.class, d.stream, d.date);
   },
   absentToday: () => {
-    switchTab('register', 'recent');
+    switchTab('directory', 'recent');
     el('absClass').value = '';
     el('absFrom').value = el('absTo').value = todayISO();
     renderAbsenceList();
@@ -368,7 +389,6 @@ MODULES.push({
     on('regClass', 'change', () => { renderRegisterControls(); renderRegisterRoster(); el('registerAbsentees').innerHTML = ''; });
     on('regStream', 'change', () => { renderRegisterRoster(); el('registerAbsentees').innerHTML = ''; });
     on('regDate', 'change', () => { renderRegisterRoster(); showAbsentees(el('regClass').value, regStream(), el('regDate').value); });
-    on('regAllPresentBtn', 'click', () => document.querySelectorAll('#registerRoster .reg-row').forEach(r => setRowStatus(r, 'P')));
     on('regSaveBtn', 'click', saveRegister);
     on('registerRoster', 'click', e => {
       const b = e.target.closest('[data-set-status]'); if (!b) return;
