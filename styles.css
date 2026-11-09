@@ -528,6 +528,22 @@ details.disclosure .disclosure-body { padding: 15px; }
 .dir-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .dir-owes { font-size: 13.5px; white-space: nowrap; }
 .link-btn.t-bad { color: var(--danger); }
+/* Fees: Record a payment beside the Payments list (stacked on a phone) */
+.pay-grid { grid-template-columns: minmax(280px, 360px) 1fr; align-items: start; }
+.pay-acct { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 13px; font-size: 13.5px; background: var(--panel-soft); }
+.pay-acct-head { padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.pay-acct-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.pay-acct-row:last-child { border-bottom: none; }
+.pay-acct-row strong { white-space: nowrap; }
+.pay-done { border-color: #a7e0bb; background: var(--success-bg); }
+.pay-done.is-pending { border-color: #f3d38a; background: var(--warn-bg); }
+.pay-done-title { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+.pay-filters .input { width: auto; flex: 1 1 150px; }
+.pay-pick { grid-template-columns: minmax(110px, 0.7fr) 1.6fr; }
+.dir-row.fees-total { border-top: 2px solid var(--line-strong); }
+.dir-row.is-void .dir-main { opacity: 0.75; }
+.pay-struck { text-decoration: line-through; color: var(--faint); font-weight: 600; }
+.pay-void-why { margin-top: 3px; font-size: 12.5px; color: var(--danger); }
 /* Forms in numbered groups (Admit a student) */
 .fs-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 14px; margin: 0; }
 .fs-group legend { font-weight: 700; color: var(--brand); padding: 0 6px; font-size: 13.5px; }
@@ -595,6 +611,8 @@ details.disclosure .disclosure-body { padding: 15px; }
   .seg.seg-words button { flex: 1; padding: 10px 4px; }
   .lp-row { grid-template-columns: 1fr; gap: 2px; }
   .dir-side { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+  .pay-grid, .pay-pick { grid-template-columns: 1fr; }
+  .pay-filters .input { flex: 1 1 100%; }
 }
 
 /* =========================================================================

@@ -248,17 +248,30 @@ function updateStudent(id, f) {
   return true;
 }
 
+/* Returns { payment, student, pending } when the payment is kept (pending:
+   the connection dropped before the database confirmed it), or null when it
+   was refused, so the form keeps what was typed. */
 async function recordPayment(f) {
-  if (!can('canRecordPayment')) return toast('You do not have permission to record payments.', 'error');
+  const no = (msg) => { toast(msg, 'error'); return null; };
+  if (!can('canRecordPayment')) return no('You do not have permission to record payments.');
   const s = state.students.find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a student first.', 'error');
+  if (!s) return no('Choose the learner first.');
   const amount = Number(f.amount);
-  if (!amount || amount <= 0) return toast('Enter a valid amount.', 'error');
-  if (needsConnection('Recording a payment')) return;
+  if (!amount || amount <= 0) return no('Type the amount received, e.g. 150000.');
   const date = f.date || todayISO();
+  if (date > todayISO()) return no('The date paid cannot be in the future.');
+  const method = f.method || 'Cash';
+  const reference = (f.reference || '').trim();
+  // The same money entered twice is the commonest mistake at the bursar's desk.
+  const twin = state.payments.find(p => !p.void && p.studentId === s.id && Number(p.amount) === amount && p.date === date && (p.reference || '') === reference);
+  if (twin && !await confirmDialog({
+    title: 'Already recorded?',
+    message: `${fmtMoney(amount)} for ${s.name} paid on ${fmtDay(date)}${reference ? ' with reference ' + reference : ''} is already recorded (receipt no. ${twin.id}). Record it a second time?`,
+    confirmLabel: 'Yes, record it again',
+  })) return null;
+  if (needsConnection('Recording a payment')) return null;
   const payment = {
-    id: 'P' + uid(), studentId: s.id, amount, method: f.method || 'Cash',
-    reference: (f.reference || '').trim(), date,
+    id: 'P' + uid(), studentId: s.id, amount, method, reference, date,
     recordedBy: currentSession.userId, recordedByName: currentSession.displayName,
     ts: nowISO(), void: false,
   };
@@ -270,23 +283,25 @@ async function recordPayment(f) {
     // payment. Keep it, with the same id, so it is saved (or matched) when the
     // connection returns. Recording it again would count it twice.
     renderAll();
-    return toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+    toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+    return { payment, student: s, pending: true };
   }
   if (!saved.ok) {
     state.payments = state.payments.filter(x => x !== payment);
     recomputePaid(); renderAll();
-    return toast('The payment was NOT recorded. ' + saved.error, 'error');
+    return no('The payment was NOT recorded. ' + saved.error);
   }
   renderAll();
-  AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${f.method || 'Cash'}`);
+  AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${method}`);
   toast('Recorded ' + fmtMoney(amount) + ' for ' + s.name + '.', 'success');
+  return { payment, student: s };
 }
 
 async function voidPayment(id, reason) {
   if (!can('canVoidPayment')) return toast('You do not have permission to reverse payments.', 'error');
   const p = state.payments.find(x => x.id === id);
   if (!p || p.void) return;
-  if (ONLINE_EDITION && !(reason || '').trim()) return toast('Give a reason for the reversal.', 'error');
+  if (!(reason || '').trim()) return toast('Write why the payment is being reversed. The payment was not reversed.', 'error');
   if (needsConnection('Reversing a payment')) return;
   p.void = true; p.voidReason = (reason || '').trim(); p.voidedBy = currentSession.displayName; p.voidedAt = nowISO();
   recomputePaid();
@@ -303,8 +318,9 @@ async function voidPayment(id, reason) {
     return toast('The payment was NOT reversed. ' + saved.error, 'error');
   }
   renderAll();
-  AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)} · ${p.voidReason}`);
-  toast('Payment reversed.', 'warn');
+  const s = state.students.find(x => x.id === p.studentId);
+  AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)}${s ? ' · ' + s.name : ''} · ${p.voidReason}`);
+  toast(`Payment reversed: ${fmtMoney(p.amount)}${s ? ' is back on what ' + s.name + ' owes' : ''}.`, 'warn');
 }
 
 async function deleteStudent(id) {
@@ -400,16 +416,34 @@ function saveAttendance(programId, date, records) {
   toast(`Session saved for ${fmtDay(date)}: ${records.length - missed.length} came${missed.length ? ', missed: ' + missed.join(', ') : ', nobody missed'}.`, 'success');
 }
 
+/* Change a learner's bursary. This term's bill is rebuilt; online the change
+   waits for the school database, and is undone on screen if it is refused. */
 async function setBursary(studentId) {
   if (!can('canAwardBursary')) return toast('You do not have permission.', 'error');
   const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const val = await promptDialog({ title: 'Award bursary', label: `Bursary percentage for ${s.name} (0–100)`, value: String(s.bursaryPct || 0), type: 'number' });
-  if (val === null) return;
-  s.bursaryPct = Math.max(0, Math.min(100, Number(val) || 0));
+  const pct = await bursaryDialog(s);
+  if (pct === null) return;
+  const old = Number(s.bursaryPct) || 0;
+  if (pct === old) return toast(`${s.name} already has ${pct ? pct + '%' : 'no bursary'}. Nothing changed.`, 'info');
+  if (needsConnection('Changing a bursary')) return;
+  const t = getCurrentTerm();
+  const inv = t && findInvoice(s.id, t.id);
+  const before = inv ? JSON.parse(JSON.stringify(inv)) : null;
+  s.bursaryPct = pct;
   refreshCurrentInvoice(s);
-  saveState(); renderAll();
-  AUTH.audit('BURSARY_AWARD', `${s.name} (${s.id}) → ${s.bursaryPct}%`);
-  toast(`Bursary set to ${s.bursaryPct}% for ${s.name}.`, 'success');
+  const saved = await persistNow();
+  if (!saved.ok && !saved.offline) {
+    s.bursaryPct = old;
+    const now = t && findInvoice(s.id, t.id);
+    if (now && before) { Object.keys(now).forEach(k => delete now[k]); Object.assign(now, before); }
+    else if (now) state.invoices = state.invoices.filter(i => i !== now);
+    saveState(); renderAll();
+    return toast('The bursary was NOT changed. ' + saved.error, 'error');
+  }
+  renderAll();
+  AUTH.audit('BURSARY_AWARD', `${s.name} (${s.id}) ${old}% → ${pct}%`);
+  if (!saved.ok) return toast(`Connection lost while saving the bursary for ${s.name}. It is kept and will be saved automatically when the connection returns.`, 'warn');
+  toast(`${s.name}: ${pct ? pct + '% bursary' : 'bursary removed'}. This term's bill is now ${fmtMoney(studentAccount(s).currentBilled)}.`, 'success');
 }
 
 /* ── Messaging ─────────────────────────────────────────────────────────── */
@@ -442,28 +476,31 @@ function smsConduct(conductId) {
   const body = `${opener} "${c.description}" — ${c.reportedBy || 'school staff'}. ${schoolName()}`;
   window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
 }
-/* Fee reminders: real SMS through the school's account in the online
-   edition; elsewhere (or when SMS is not set up) a tap-to-SMS list. */
+/* Fee reminders for the class chosen under Who owes (or every class): real
+   SMS through the school's account in the online edition; elsewhere (or when
+   SMS is not set up) a tap-to-SMS list. */
 function openBulkSms() {
-  if (ONLINE_EDITION) return SMS.openRun('fees', {}, 'Fee reminders by SMS', openFeeReminderLinks);
-  openFeeReminderLinks();
+  const cls = (el('oweClass') || {}).value || '';
+  if (ONLINE_EDITION) return SMS.openRun('fees', cls ? { class: cls } : {}, 'Fee reminders by SMS' + (cls ? ' — ' + cls : ''), () => openFeeReminderLinks(cls));
+  openFeeReminderLinks(cls);
 }
-function openFeeReminderLinks() {
-  const debtors = state.students.map(s => ({ s, bal: studentBalance(s) })).filter(x => x.bal > 0).sort((a, b) => b.bal - a.bal);
+function openFeeReminderLinks(cls = '') {
+  const debtors = state.students.filter(s => !cls || s.class === cls).map(s => ({ s, bal: studentBalance(s) })).filter(x => x.bal > 0).sort((a, b) => b.bal - a.bal);
   const total = debtors.reduce((a, x) => a + x.bal, 0);
+  const where = cls ? ' in ' + cls : '';
   const body = !debtors.length
-    ? `<div class="banner banner-success">${icon('check')} All fees are cleared — no reminders needed.</div>`
-    : `<p class="card-desc" style="margin-bottom:12px">Outstanding across ${debtors.length} student${debtors.length > 1 ? 's' : ''}: <strong style="color:var(--danger)">${fmtMoney(total)}</strong></p>
+    ? `<div class="banner banner-success">${icon('check')} Nobody${escapeHtml(where)} owes fees: no reminders needed.</div>`
+    : `<p class="card-desc" style="margin-bottom:12px">${debtors.length} learner${debtors.length > 1 ? 's' : ''}${escapeHtml(where)} owe <strong style="color:var(--danger)">${fmtMoney(total)}</strong>. Tap SMS or WhatsApp to send each guardian a reminder from this phone.</p>
        <div class="scroll-box">${debtors.map(({ s, bal }) => `
          <div class="roster-item">
-           <div><div style="font-weight:600">${escapeHtml(s.name)}</div>
-           <div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.guardian)} · <span style="color:var(--danger);font-weight:600">${fmtMoney(bal)}</span></div></div>
+           <div><div style="font-weight:600">${learnerLink(s.id, s.name, 'fees')}</div>
+           <div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.guardian)} · <span style="color:var(--danger);font-weight:600">owes ${fmtMoney(bal)}</span></div></div>
            <div style="display:flex;gap:6px">
-             <button class="btn btn-outline btn-xs" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 14)} SMS</button>
+             <button class="btn btn-outline btn-xs" data-act="smsBalance" data-id="${escapeHtml(s.id)}">SMS</button>
              <button class="btn btn-outline btn-xs" data-act="waBalance" data-id="${escapeHtml(s.id)}">WhatsApp</button>
            </div>
          </div>`).join('')}</div>`;
-  openModal({ title: 'Fee reminders', bodyHtml: body, footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>` });
+  openModal({ title: 'Fee reminders' + escapeHtml(cls ? ' — ' + cls : ''), bodyHtml: body, footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>` });
 }
 
 /* ── Backup / restore ──────────────────────────────────────────────────── */
@@ -495,6 +532,10 @@ function importLedger(file) {
    Rendering
    ========================================================================= */
 function renderAll() {
+  acctCache = new Map();
+  try { renderAllNow(); } finally { acctCache = null; }
+}
+function renderAllNow() {
   const guard = (fn) => { try { fn(); } catch (err) { console.error(err); } };
   guard(updateMetrics);
   guard(renderStudentTable);
@@ -537,18 +578,18 @@ function updateMetrics() {
     const f = financeSnapshot();
     cards = [
       { label: 'Learners', value: s.length },
-      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
-      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'from earlier terms' },
+      { label: 'Paid this term', value: fmtMoney(f.paidNow), cls: 'is-success', money: true, sub: `${f.rate}% of this term's bills` },
+      { label: 'Owed', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'From earlier terms', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'part of what is owed' },
       { label: 'Fully paid', value: cleared, cls: 'is-info' },
     ];
   } else if (role === 'bursary') {
     const f = financeSnapshot();
     cards = [
       { label: 'Learners', value: s.length },
-      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
-      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true },
+      { label: 'Paid this term', value: fmtMoney(f.paidNow), cls: 'is-success', money: true, sub: `${f.rate}% of this term's bills` },
+      { label: 'Owed', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'From earlier terms', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'part of what is owed' },
       { label: 'Fully paid', value: cleared, cls: 'is-info' },
     ];
   } else if (role === 'teacher') {
@@ -643,34 +684,6 @@ function renderStudentTable() {
         <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="prev" ${studentPage <= 1 ? 'disabled' : ''}>${icon('left', 14)} Previous</button>
         <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="next" ${studentPage >= pages ? 'disabled' : ''}>Next ${icon('right', 14)}</button>
       </span>` : '';
-  }
-}
-
-function renderPaymentsTable() {
-  const body = el('paymentsTableBody');
-  const recent = el('recentPaymentsBody');
-  const sorted = [...state.payments].sort((a, b) => (b.ts || b.date).localeCompare(a.ts || a.date));
-  if (body) {
-    body.innerHTML = sorted.length ? sorted.map(p => {
-      const s = state.students.find(x => x.id === p.studentId);
-      const voidCol = `<button class="btn-icon" title="Print receipt" data-act="paymentReceipt" data-id="${escapeHtml(p.id)}">${icon('printer', 15)}</button>` + (can('canVoidPayment') && !p.void ? ` <button class="btn btn-danger btn-xs" data-act="voidPayment" data-id="${escapeHtml(p.id)}">Reverse</button>` : '');
-      return `<tr style="${p.void ? 'opacity:0.55' : ''}">
-        <td class="t-muted">${p.date}</td>
-        <td class="t-id">${escapeHtml(p.studentId)}</td>
-        <td style="font-weight:600">${s ? escapeHtml(s.name) : '<em class="t-muted">(removed)</em>'}${p.void ? ' <span class="badge badge-danger">Reversed</span>' : ''}</td>
-        <td>${escapeHtml(p.method || 'Cash')}${p.reference ? '<div class="card-desc">Ref: ' + escapeHtml(p.reference) + '</div>' : ''}</td>
-        <td class="card-desc">${escapeHtml(p.recordedByName || '—')}</td>
-        <td class="t-num" style="color:var(--success);font-weight:600;${p.void ? 'text-decoration:line-through' : ''}">${fmtMoney(p.amount)}</td>
-        <td class="t-num">${voidCol}</td>
-      </tr>`;
-    }).join('') : '<tr><td colspan="7" class="empty">No payments recorded yet.</td></tr>';
-  }
-  if (recent) {
-    const live = sorted.filter(p => !p.void).slice(0, 6);
-    recent.innerHTML = live.length ? live.map(p => {
-      const s = state.students.find(x => x.id === p.studentId);
-      return `<tr><td class="t-muted">${p.date}</td><td>${s ? escapeHtml(s.name) : '—'}</td><td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(p.amount)}</td></tr>`;
-    }).join('') : '<tr><td colspan="3" class="empty">No payments yet.</td></tr>';
   }
 }
 
@@ -983,21 +996,9 @@ function renderStudentSelects() {
     sel.innerHTML = '<option value="">Choose a student…</option>' + state.students.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.class)}${label(s)}</option>`).join('');
     if (cur) sel.value = cur;
   };
-  fill('paymentStudent', s => ` (Balance ${fmtMoney(studentBalance(s))})`);
   fill('perfStudent', s => s.sport ? ' · ' + s.sport : '');
   fill('conductStudent', s => ' · ' + s.class);
-  updateBalancePreview();
 }
-function updateBalancePreview() {
-  const sel = el('paymentStudent'); const box = el('balancePreview');
-  if (!sel || !box) return;
-  const s = state.students.find(x => x.id === sel.value);
-  if (!s) { box.style.display = 'none'; return; }
-  const a = studentAccount(s);
-  box.style.display = 'block';
-  box.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${escapeHtml(s.class)}<br>This term ${fmtMoney(a.currentBilled)}${s.bursaryPct > 0 ? ` <span style="color:var(--warn)">(−${s.bursaryPct}% bursary)</span>` : ''}${a.arrears ? ` · <span style="color:var(--danger)">Arrears ${fmtMoney(a.arrears)}</span>` : ''}<br>Paid ${fmtMoney(a.paid)} · <span style="font-weight:700;color:${a.balance <= 0 ? 'var(--success)' : 'var(--danger)'}">Balance ${fmtMoney(a.balance)}</span>`;
-}
-
 /* ── Detail modals ─────────────────────────────────────────────────────── */
 function openNotes(studentId) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
@@ -1447,7 +1448,17 @@ Object.assign(ACTIONS, {
   admitAnother: () => { el('admitDone').style.display = 'none'; const n = document.querySelector('#registerForm input[name="name"]'); if (n) n.focus(); },
   deleteStudent: d => deleteStudent(d.id),
   notes: d => openNotes(d.id),
-  voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
+  voidPayment: async d => {
+    const p = state.payments.find(x => x.id === d.id); if (!p || p.void) return;
+    const s = state.students.find(x => x.id === p.studentId);
+    const who = s ? s.name : p.studentId;
+    const r = await promptDialog({
+      title: 'Reverse a payment',
+      message: `Reverse ${fmtMoney(p.amount)} paid for ${who} on ${fmtDay(p.date)} (receipt no. ${p.id})? The receipt stops being valid and the amount goes back onto what ${who} owes. The payment stays in the list, crossed out, with your reason.`,
+      label: 'Why is it being reversed?', okLabel: 'Reverse payment', danger: true,
+    });
+    if (r !== null) voidPayment(d.id, r);
+  },
   deleteProgram: d => deleteProgram(d.id),
   programAthletes: d => openProgramAthletes(d.id),
   menuGo: d => { closeModal(); switchTab(d.tab); },
@@ -1490,7 +1501,21 @@ function setupBindings() {
   if (bindingsReady) return;
   bindingsReady = true;
   bind('registerForm', async (f, form) => { const s = await registerStudent(f); if (s) { form.reset(); showAdmitDone(s); } });
-  bind('paymentForm', (f, form) => { recordPayment(f); form.reset(); el('balancePreview').style.display = 'none'; });
+  let paying = false;   // one tap, one payment: the button is off until the answer is back
+  bind('paymentForm', async (f, form) => {
+    if (paying) return;
+    paying = true;
+    const btn = form.querySelector('button[type="submit"]'); if (btn) btn.disabled = true;
+    try {
+      const r = await recordPayment(f);
+      if (!r) return;   // refused: keep what was typed
+      const cls = el('payClass').value;
+      form.reset();
+      el('payClass').value = cls;
+      renderPayStudentOptions();
+      showPayDone(r);
+    } finally { paying = false; if (btn) btn.disabled = false; }
+  });
   bind('programForm', (f, form) => { f.days = new FormData(form).getAll('days'); addProgram(f); form.reset(); });
   bind('performanceForm', (f, form) => { logPerformance(f); form.reset(); });
   bind('conductForm', (f, form) => { f.notifyGuardian = form.notifyGuardian.checked; addConduct(f); form.reset(); });
@@ -1507,7 +1532,6 @@ function setupBindings() {
   on('compSeasonFilter', 'change', renderCompetitionsTable);
   on('athleteProfileFilter', 'change', renderAthleteProfiles);
   on('bulkSmsBtn', 'click', openBulkSms);
-  on('paymentStudent', 'change', updateBalancePreview);
   on('attendanceProgram', 'change', renderAttendanceRoster);
   on('attendanceDate', 'change', renderAttendanceRoster);
   on('addCompetitionBtn', 'click', openCompetitionForm);

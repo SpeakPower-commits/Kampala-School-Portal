@@ -106,10 +106,13 @@ function addDaysISO(iso, n) {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
-/* A learner's name that opens their learner page (learner.js). */
-function learnerLink(id, name) {
-  return `<button type="button" class="link-btn" data-act="learner" data-id="${escapeHtml(id)}">${escapeHtml(name)}</button>`;
+/* A learner's name that opens their learner page (learner.js), optionally
+   at one section (e.g. 'fees'). */
+function learnerLink(id, name, section) {
+  return `<button type="button" class="link-btn" data-act="learner" data-id="${escapeHtml(id)}"${section ? ` data-section="${escapeHtml(section)}"` : ''}>${escapeHtml(name)}</button>`;
 }
+/* Classes in school order (Baby Class … S.6); a class the app does not know goes last. */
+function classRank(c) { const i = CLASS_OPTIONS.indexOf(c); return i < 0 ? 999 : i; }
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtDay(iso, year = true) {
@@ -232,12 +235,13 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
     modalResolver = () => resolve(false);
   });
 }
-function promptDialog({ title, label, value = '', type = 'text' }) {
+/* message: an optional paragraph above the box (e.g. what is being changed). */
+function promptDialog({ title, label, value = '', type = 'text', message = '', okLabel = 'Save', danger = false }) {
   return new Promise(resolve => {
     openModal({
       title,
-      bodyHtml: `<label class="form-label">${escapeHtml(label)}</label><input class="input" id="mdInput" type="${type}" value="${escapeHtml(value)}">`,
-      footHtml: `<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn btn-primary" id="mdOk">Save</button>`,
+      bodyHtml: `${message ? `<p style="font-size:14px;margin:0 0 12px">${escapeHtml(message)}</p>` : ''}<label class="form-label" for="mdInput">${escapeHtml(label)}</label><input class="input" id="mdInput" type="${type}" value="${escapeHtml(value)}">`,
+      footHtml: `<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}" id="mdOk">${escapeHtml(okLabel)}</button>`,
       onOpen(root) {
         const input = root.querySelector('#mdInput');
         root.querySelector('#mdCancel').addEventListener('click', () => { cleanup(); resolve(null); });

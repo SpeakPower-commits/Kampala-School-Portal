@@ -171,15 +171,15 @@ function commitImport(recs) {
 }
 
 /* ── Exports ───────────────────────────────────────────────────────────── */
-function exportLearnersCSV(onlyDefaulters) {
+function exportLearnersCSV(onlyDefaulters, cls = '') {
   if (!can('canExport')) return toast('You do not have permission to export.', 'error');
-  let list = state.students.map(s => ({ s, a: studentAccount(s) }));
+  let list = state.students.filter(s => !cls || s.class === cls).map(s => ({ s, a: studentAccount(s) }));
   if (onlyDefaulters) list = list.filter(x => x.a.balance > 0).sort((a, b) => b.a.balance - a.a.balance);
-  downloadCSV(`${onlyDefaulters ? 'defaulters' : 'learners'}-${todayISO()}.csv`, [
+  downloadCSV(`${onlyDefaulters ? 'who-owes' : 'learners'}${cls ? '-' + cls.replace(/[^A-Za-z0-9]+/g, '') : ''}-${todayISO()}.csv`, [
     ['admission_no', 'name', 'class', 'stream', 'gender', 'guardian_phone', 'guardian2_phone', 'boarding', 'uneb_index', 'special_needs', 'sport', 'arrears', 'this_term_due', 'total_balance'],
     ...list.map(({ s, a }) => [s.id, s.name, s.class, s.stream || '', s.gender, s.guardian, s.guardian2 || '', s.boardingStatus, s.unebIndexNo, s.senFlag, s.sport, a.arrears, a.currentDue, a.balance]),
   ]);
-  toast(onlyDefaulters ? `Exported ${list.length} defaulters.` : `Exported ${list.length} learners.`, 'success');
+  toast(onlyDefaulters ? `Downloaded ${list.length} learner${list.length === 1 ? '' : 's'} who owe${cls ? ' in ' + cls : ''}.` : `Downloaded ${list.length} learners.`, 'success');
 }
 function exportPaymentsCSV() {
   if (!can('canExport')) return toast('You do not have permission to export.', 'error');
@@ -319,7 +319,7 @@ MODULES.push({
     on('importLearnersInput', 'change', e => { if (e.target.files[0]) importLearnersFile(e.target.files[0]); e.target.value = ''; });
     on('exportLearnersBtn', 'click', () => exportLearnersCSV(false));
     on('exportDefaultersBtn', 'click', () => exportLearnersCSV(true));
-    on('exportDefaultersBtn2', 'click', () => exportLearnersCSV(true));
+    on('exportDefaultersBtn2', 'click', () => exportLearnersCSV(true, (el('oweClass') || {}).value || ''));
     on('exportPaymentsBtn', 'click', exportPaymentsCSV);
     on('logoInput', 'change', e => { if (e.target.files[0]) uploadLogo(e.target.files[0]); e.target.value = ''; });
     on('logoRemoveBtn', 'click', removeLogo);

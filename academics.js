@@ -195,7 +195,7 @@ function visibleClasses() {
   const classes = AUTH.currentUserClasses();
   const present = [...new Set(state.students.map(s => s.class).filter(Boolean))];
   const list = classes ? classes : present;
-  return [...list].sort((a, b) => CLASS_OPTIONS.indexOf(a) - CLASS_OPTIONS.indexOf(b));
+  return [...list].sort((a, b) => classRank(a) - classRank(b) || String(a).localeCompare(String(b)));
 }
 function streamsFor(cls) { return [...new Set(state.students.filter(s => s.class === cls).map(s => s.stream).filter(Boolean))].sort(); }
 function termOptions(selectedId) {

@@ -339,6 +339,67 @@ async function classResults(page, cls) {
     assert(/Four Hundred Thousand Uganda Shillings only/.test(doc), 'amount in words missing');
   });
 
+  await step('Record payment: class first, amount in words, a receipt for that payment, and a refused payment keeps the form', async () => {
+    await tab(page, 'payments', 'record');
+    await page.selectOption('#payClass', 'S.4');
+    const opts = await page.$$eval('#paymentStudent option', os => os.slice(1).map(o => o.textContent));
+    assert(opts.length && opts.every(t => / — S\.4/.test(t)), 'class filter: ' + opts.join(' | '));
+    await page.selectOption('#paymentStudent', 'NPA/2026/001');
+    const preview = await page.textContent('#balancePreview');
+    assert(/This term's bill/.test(preview) && /Paid this term/.test(preview) && /Owes in total/.test(preview), 'preview: ' + preview);
+    await page.fill('#payAmount', '125000');
+    assert(/One Hundred and Twenty-Five Thousand Uganda Shillings/.test(await page.textContent('#payWords')), 'words: ' + await page.textContent('#payWords'));
+    const n = await page.evaluate(() => state.payments.length);
+    // A date in the future is refused, and nothing typed is lost.
+    await page.fill('#payDate', '2099-01-01');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForTimeout(150);
+    assert(await page.evaluate(() => state.payments.length) === n, 'future-dated payment recorded');
+    assert(await page.inputValue('#payAmount') === '125000' && await page.inputValue('#paymentStudent') === 'NPA/2026/001', 'a refused payment cleared the form');
+    assert(!(await page.isVisible('#payDone')), 'receipt panel shown for a refused payment');
+    await page.fill('#payDate', await page.evaluate(() => todayISO()));
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForSelector('#payDone', { state: 'visible' });
+    const done = (await page.textContent('#payDone')).replace(/\s+/g, ' ');
+    assert(/Recorded UGX 125,000 for Nakato Sarah/.test(done) && /still owes UGX/.test(done), 'panel: ' + done);
+    assert(await page.evaluate(() => state.payments.length) === n + 1, 'payment not recorded');
+    assert(await page.inputValue('#payClass') === 'S.4' && await page.inputValue('#payAmount') === '', 'form after saving');
+    await page.click('#payDone [data-act="paymentReceipt"]');
+    await page.waitForTimeout(100);
+    assert(/One Hundred and Twenty-Five Thousand Uganda Shillings only/.test(await page.textContent('#printArea')), 'Print receipt did not print this payment');
+    // The same money typed twice asks first; Cancel records nothing.
+    await page.selectOption('#paymentStudent', 'NPA/2026/001');
+    await page.fill('#payAmount', '125000');
+    await page.click('#paymentForm button[type="submit"]');
+    await page.waitForSelector('#mdCancel');
+    assert(/already recorded/.test(await page.textContent('#modalHost')), 'no warning for the same payment twice');
+    await page.click('#mdCancel');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => state.payments.length) === n + 1, 'duplicate recorded after Cancel');
+    await page.evaluate(() => el('paymentForm').reset());
+    // The Payments list finds it by receipt number; Reverse names the child and
+    // the amount, and needs a reason.
+    const pid = await page.evaluate(() => state.payments[state.payments.length - 1].id);
+    await page.fill('#paySearch', pid);
+    const listed = await page.$$eval('#paymentsTableBody .dir-row', rs => rs.map(r => r.textContent.replace(/\s+/g, ' ')));
+    assert(listed.length === 1 && /Nakato Sarah/.test(listed[0]) && /125,000/.test(listed[0]), 'search by receipt no.: ' + listed.join(' | '));
+    await page.click('#paymentsTableBody [data-act="voidPayment"]');
+    await page.waitForSelector('#mdInput');
+    assert(/Reverse UGX 125,000 paid for Nakato Sarah/.test(await page.textContent('#modalHost')), 'reverse dialog: ' + await page.textContent('#modalHost'));
+    await page.click('#mdOk');
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(id => !state.payments.find(p => p.id === id).void, pid), 'reversed without a reason');
+    await page.click('#paymentsTableBody [data-act="voidPayment"]');
+    await page.waitForSelector('#mdInput');
+    await page.fill('#mdInput', 'Test entry');
+    await page.click('#mdOk');
+    await page.waitForTimeout(150);
+    const row = (await page.textContent('#paymentsTableBody')).replace(/\s+/g, ' ');
+    assert(/Reversed/.test(row) && /Test entry/.test(row), 'reversal reason not shown: ' + row);
+    await page.fill('#paySearch', '');
+    await page.selectOption('#payClass', '');
+  });
+
   await step('Fees → Fees dashboard shows arrears, methods and defaulters, and nothing else', async () => {
     await tab(page, 'payments', 'dashboard');
     assert(await page.isVisible('#topDefaulters') && await page.isVisible('#bulkSmsBtn'), 'fees dashboard not shown');
@@ -395,6 +456,30 @@ async function classResults(page, cls) {
     }
     const label = await page.evaluate(id => studentTermResult(state.students.find(s => s.id === id), getCurrentTerm().id).label, pid);
     assert(label === 'Aggregate 11 · Division I', 'PLE result = ' + label);
+  });
+
+  await step('Who owes: "N owe" in Fees by class lists that class\'s children, with the amounts and reminders', async () => {
+    await tab(page, 'payments', 'dashboard');
+    await page.click('#arrearsByClass [data-act="oweShowClass"][data-class="S.4"]');
+    assert(await page.inputValue('#oweClass') === 'S.4', 'class not chosen');
+    const names = await page.$$eval('#topDefaulters [data-act="learner"]', bs => bs.map(b => b.textContent).sort());
+    const expected = await page.evaluate(() => state.students.filter(s => s.class === 'S.4' && studentAccount(s).balance > 0).map(s => s.name).sort());
+    assert(expected.length === 2 && JSON.stringify(names) === JSON.stringify(expected), `who owes in S.4: ${names} vs ${expected}`);
+    assert(!/Achieng Mary/.test(await page.textContent('#topDefaulters')), 'a P.7 pupil is listed under S.4');
+    assert(/Owes UGX/.test(await page.textContent('#topDefaulters')), 'amounts missing');
+    assert(/^Text all 2 guardians in S\.4$/.test((await page.textContent('#bulkSmsBtn')).trim()), 'button: ' + await page.textContent('#bulkSmsBtn'));
+    // Offline, Text all opens the tap-to-SMS list for that class only.
+    await page.click('#bulkSmsBtn');
+    await page.waitForSelector('#modalHost .roster-item');
+    const modal = await page.textContent('#modalHost');
+    assert(/Fee reminders — S\.4/.test(modal) && /Mugisha Brian/.test(modal) && !/Achieng Mary/.test(modal), 'reminders: ' + modal);
+    await page.click('#modalHost [data-modal-close]');
+    // A name opens the learner page at Fees.
+    await page.click('#topDefaulters [data-act="learner"] >> nth=0');
+    await page.waitForSelector('#learnerBody');
+    assert(/Balance owed/.test(await page.textContent('#learnerBody')), 'learner page did not open at Fees');
+    await page.click('#modalHost [data-modal-close]');
+    await page.selectOption('#oweClass', '');
   });
 
   await step('grading scales can be edited and restored (Academics → Grading scales)', async () => {

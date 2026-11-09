@@ -423,6 +423,15 @@ if (fees) {
   check('… with the balance in the text', /Achen Grace M\. \(S\.4\).*UGX 900,000/.test(fees.sample), fees.sample);
   check('… in the plain SMS alphabet, one page', fees.parts === 1, JSON.stringify(fees));
 }
+try {
+  const s4 = await prep(U.bursar, 'fees', { class: 'S.4' });
+  const p7 = await prep(U.bursar, 'fees', { class: 'P.7' });
+  check('fee reminders for one class reach only that class', s4.recipients === 1 && p7.recipients === 0, JSON.stringify({ s4, p7 }));
+  // Neither run is sent: the S.4 draft is withdrawn, and the empty P.7 run
+  // (stored as done) is cleared so the counts below are unchanged.
+  await as(U.bursar, 'select public.sms_cancel_campaign($1)', [s4.campaign_id]);
+  await db.query('delete from public.sms_campaigns where id = $1', [p7.campaign_id]);
+} catch (e) { check('fee reminders for one class reach only that class', false, e.message); }
 await denied('a teacher cannot send fee reminders', U.teacherS4, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /Bursary Officer/i);
 await denied('the head of sports cannot send anything', U.coach, "select public.sms_create_campaign($1, 'broadcast', '{\"message\":\"Hi all\"}')", [A], /Executive Director/i);
 await denied('a parent cannot send anything', U.parent, "select public.sms_create_campaign($1, 'fees', '{}')", [A], /not a member/i);

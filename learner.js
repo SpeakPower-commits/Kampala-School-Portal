@@ -161,7 +161,7 @@ Object.assign(ACTIONS, {
   payFor: d => {
     closeModal();
     switchTab('payments', 'record');
-    const sel = el('paymentStudent');
-    if (sel) { sel.value = d.id; sel.dispatchEvent(new Event('change')); }
+    choosePayLearner(d.id);
+    const amt = el('payAmount'); if (amt) amt.focus();
   },
 });

@@ -302,53 +302,72 @@
 
     <!-- FEES: record payment · fees dashboard · terms & fee structures · bursaries -->
     <section id="panel-payments" class="panel">
-      <div class="grid" style="grid-template-columns:minmax(280px,340px) 1fr;align-items:start" data-sub="record">
+      <div class="grid pay-grid" data-sub="record">
         <div class="card card-pad" id="recPaymentCard">
-          <div class="card-title">Record payment</div>
+          <div class="card-title">Record a payment</div>
+          <p class="card-desc">1 Choose the class and the child · 2 type the amount and how it was paid · 3 press Record payment, then print the receipt.</p>
+          <div class="tile" id="payDone" style="display:none;margin-top:12px" aria-live="polite"></div>
           <form id="paymentForm" class="form-grid" style="margin-top:12px">
-            <div><label class="form-label">Student</label><select class="input" name="studentId" id="paymentStudent" required><option value="">Choose…</option></select></div>
-            <div id="balancePreview" class="tile" style="display:none;font-size:12.5px"></div>
-            <div><label class="form-label">Amount (<span data-currency>UGX</span>)</label><input class="input" name="amount" type="number" min="1" step="1" required placeholder="150000"></div>
-            <div class="form-row">
-              <div><label class="form-label">Method</label><select class="input" name="method"><option>Cash</option><option>Mobile Money (MTN)</option><option>Mobile Money (Airtel)</option><option>Bank Deposit</option><option>Cheque</option><option>Bank Transfer</option></select></div>
-              <div><label class="form-label">Date</label><input class="input" name="date" type="date"></div>
+            <div class="form-row pay-pick">
+              <div><label class="form-label" for="payClass">Class</label><select class="input" id="payClass"><option value="">All classes</option></select></div>
+              <div><label class="form-label" for="paymentStudent">Learner *</label><select class="input" name="studentId" id="paymentStudent" required><option value="">Choose…</option></select></div>
             </div>
-            <div><label class="form-label">Reference <span class="opt">(receipt / transaction no.)</span></label><input class="input" name="reference" placeholder="e.g. MoMo TID or slip no."></div>
+            <div id="balancePreview" class="pay-acct" style="display:none" aria-live="polite"></div>
+            <div><label class="form-label" for="payAmount">Amount received (<span data-currency>UGX</span>) *</label><input class="input" name="amount" id="payAmount" type="number" min="1" step="1" inputmode="numeric" required placeholder="150000">
+              <div class="card-desc" id="payWords" style="margin-top:5px" aria-live="polite"></div></div>
+            <div class="form-row">
+              <div><label class="form-label" for="payMethod">How it was paid</label><select class="input" name="method" id="payMethod"><option>Cash</option><option>Mobile Money (MTN)</option><option>Mobile Money (Airtel)</option><option>Bank Deposit</option><option>Cheque</option><option>Bank Transfer</option></select></div>
+              <div><label class="form-label" for="payDate">Date paid</label><input class="input" name="date" id="payDate" type="date"></div>
+            </div>
+            <div><label class="form-label" for="payRef">Reference <span class="opt">(Mobile Money transaction ID, bank slip or cheque no.)</span></label><input class="input" name="reference" id="payRef" placeholder="e.g. MoMo TID 998877"></div>
             <button class="btn btn-primary" type="submit">Record payment</button>
           </form>
         </div>
-        <div class="card card-pad">
-          <div class="card-head" style="margin-bottom:0"><div class="card-title">Payment ledger</div>
-            <div class="toolbar"><button class="btn btn-outline btn-sm" id="exportPaymentsBtn" type="button">Export payments</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn" type="button">Export defaulters</button></div></div>
-          <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>ID</th><th>Student</th><th>Method</th><th>Recorded by</th><th class="t-num">Amount</th><th class="t-num"></th></tr></thead><tbody id="paymentsTableBody"></tbody></table></div>
+        <div class="card card-pad" id="paymentsCard">
+          <div class="card-head" style="margin-bottom:0"><div><div class="card-title">Payments</div><p class="card-desc">Every payment received, newest first. Tap Receipt to print one again. Reverse cancels a payment entered by mistake: it stays here, crossed out, with the reason.</p></div>
+            <div class="toolbar"><button class="btn btn-outline btn-sm" id="exportPaymentsBtn" type="button">Download payments (Excel)</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn" type="button">Download who owes (Excel)</button></div></div>
+          <div class="toolbar pay-filters" style="margin-top:12px">
+            <input class="input" id="paySearch" type="search" placeholder="Search a name or receipt no." aria-label="Search payments by name, admission no., receipt no. or reference">
+            <select class="input" id="payListClass" aria-label="Class"><option value="">All classes</option></select>
+            <select class="input" id="payPeriod" aria-label="When"><option value="current">This term</option></select>
+          </div>
+          <div class="reg-summary" id="paySummary"></div>
+          <div class="dir-list" id="paymentsTableBody"></div>
+          <div class="pager" id="payPager"></div>
         </div>
       </div>
-      <div data-sub="dashboard"><div class="banner banner-warn" id="arrearsHeadline"></div></div>
+      <div data-sub="dashboard"><p class="card-desc" id="feesDashNote" style="margin:0 0 10px"></p><div class="banner banner-warn" id="arrearsHeadline"></div></div>
       <div class="grid grid-2" data-sub="dashboard">
         <div class="card card-pad"><div class="card-title">Fees this term</div><div id="financeStats" style="margin-top:4px;font-size:13px"></div></div>
-        <div class="card card-pad"><div class="card-title">Collections by payment method</div><p class="card-desc">Money received this term.</p><div class="stack" id="collectionsByMethod" style="margin-top:12px"></div></div>
+        <div class="card card-pad"><div class="card-title">Money received this term, by how it was paid</div><div class="stack" id="collectionsByMethod" style="margin-top:12px"></div></div>
       </div>
-      <div class="card card-pad" data-sub="dashboard">
-        <div class="card-head"><div><div class="card-title">Top defaulters</div><p class="card-desc">Largest balances, with one-tap reminders to guardians.</p></div>
-          <div class="toolbar"><button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Fee reminders</button><button class="btn btn-outline btn-sm" id="exportDefaultersBtn2" type="button">Export all defaulters</button></div></div>
-        <div class="table-wrap" id="topDefaulters"></div>
+      <div class="card card-pad" id="oweCard" data-sub="dashboard">
+        <div class="card-head"><div><div class="card-title">Who owes</div><p class="card-desc">1 Choose a class · 2 tap a name to see the child's fees, or SMS or WhatsApp one guardian · 3 or press Text all to remind every guardian in the list.</p></div></div>
+        <div class="toolbar">
+          <select class="input" id="oweClass" style="width:auto" aria-label="Class"><option value="">All classes</option></select>
+          <button class="btn btn-gold btn-sm" id="bulkSmsBtn" type="button">Text all guardians</button>
+          <button class="btn btn-outline btn-sm" id="exportDefaultersBtn2" type="button">Download this list (Excel)</button>
+        </div>
+        <div class="reg-summary" id="oweSummary"></div>
+        <div class="dir-list" id="topDefaulters"></div>
+        <div class="pager" id="owePager"></div>
       </div>
-      <div class="card card-pad" data-sub="dashboard"><div class="card-title">Fees by class</div><div class="table-wrap" id="arrearsByClass" style="margin-top:8px"></div></div>
+      <div class="card card-pad" data-sub="dashboard"><div class="card-title">Fees by class</div><p class="card-desc">Tap the number who owe to list them under Who owes.</p><div class="dir-list" id="arrearsByClass"></div></div>
       <div class="card card-pad" id="termMgmtCard" data-sub="terms">
         <div class="card-title">Terms</div>
-        <p class="card-desc">Opening a new term bills every learner from the fee structures. Unpaid balances carry forward as arrears.</p>
+        <p class="card-desc">1 Open the new term: every learner is billed from last term's fee structures, and anything unpaid carries forward as "from earlier terms" · 2 check the fee structures below · 3 if you changed any, press Apply to learners.</p>
         <form id="termForm" class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026"></div>
+          <div><label class="form-label">Year</label><input class="input" name="year" required placeholder="2026" inputmode="numeric"></div>
           <div><label class="form-label">Term</label><select class="input" name="term"><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></div>
-          <div><label class="form-label">Start</label><input class="input" name="startDate" type="date"></div>
-          <div><label class="form-label">End</label><input class="input" name="endDate" type="date"></div>
+          <div><label class="form-label">First day</label><input class="input" name="startDate" type="date"></div>
+          <div><label class="form-label">Last day</label><input class="input" name="endDate" type="date"></div>
           <div><button class="btn btn-primary btn-block" type="submit">Open term</button></div>
         </form>
         <div class="banner banner-success" id="currentTermBanner" style="display:none;margin:12px 0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Term</th><th>Start</th><th>End</th><th class="t-center">Learners</th><th class="t-num">Billed</th><th>Status</th><th></th></tr></thead><tbody id="termsTableBody"></tbody></table></div>
+        <div class="dir-list" id="termsTableBody"></div>
       </div>
       <div class="card card-pad" id="feeStructCard" data-sub="terms">
-        <div class="card-head"><div><div class="card-title">Fee structures</div><p class="card-desc">What each class pays per term — tuition, boarding, PTA, development and more.</p></div></div>
+        <div class="card-head"><div><div class="card-title">Fee structures</div><p class="card-desc">What each class pays per term: tuition, boarding, PTA, development and more. A learner with no fee structure for their class is billed their own "Termly tuition".</p></div></div>
         <div class="toolbar" style="margin-bottom:12px">
           <select class="input" id="feeStructureTerm" style="width:auto" aria-label="Term"></select>
           <button class="btn btn-primary btn-sm" id="addFeeStructureBtn" type="button">Add fee structure</button>
@@ -358,13 +377,14 @@
       </div>
       <div class="card card-pad" id="bursariesCard" data-sub="bursaries">
         <div class="card-title">Bursaries</div>
-        <p class="card-desc">Reduce a learner's fees by a percentage: needs-based, staff children, academic or sports awards. This term's bill changes straight away, and every change is kept in the audit log.</p>
+        <p class="card-desc">A bursary takes a percentage off a learner's bill: needs-based, staff children, academic or sports awards. 1 Choose the class and the child · 2 press Change bursary and type the percentage · 3 check the new bill and press Save. This term's bill changes straight away; earlier terms do not. Every change is kept in "Who did what".</p>
         <div class="form-row" style="margin-top:12px;align-items:end">
-          <div><label class="form-label" for="bursaryStudent">Learner</label><select class="input" id="bursaryStudent"><option value="">Choose a student…</option></select></div>
-          <div><button class="btn btn-primary btn-block" id="bursarySetBtn" type="button">Set bursary…</button></div>
+          <div><label class="form-label" for="bursaryClass">Class</label><select class="input" id="bursaryClass"><option value="">All classes</option></select></div>
+          <div><label class="form-label" for="bursaryStudent">Learner</label><select class="input" id="bursaryStudent"><option value="">Choose a learner…</option></select></div>
+          <div><button class="btn btn-primary btn-block" id="bursarySetBtn" type="button">Change bursary…</button></div>
         </div>
         <div class="card-title" style="margin-top:20px">On a bursary</div>
-        <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Learner</th><th>Class</th><th class="t-center">Bursary</th><th class="t-num">Off this term</th><th></th></tr></thead><tbody id="bursaryListBody"></tbody></table></div>
+        <div class="dir-list" id="bursaryListBody"></div>
         <div id="bursaryRecommended"></div>
       </div>
     </section>

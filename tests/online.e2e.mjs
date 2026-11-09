@@ -56,6 +56,15 @@ const tab = async (name, sub) => {
 };
 const app = fn => page.evaluate(fn);
 const saved = async () => { const r = await page.evaluate(() => SYNC.flush()); assert(r.ok, 'not saved: ' + r.error); };
+// Poll the database (from the test, not the page) until a check comes true.
+async function eventually(check, timeout = 5000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    if (await check()) return true;
+    if (Date.now() > end) return false;
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
 // Wait until a check run inside the page comes true. This polls with
 // page.evaluate instead of page.waitForFunction: some Playwright versions run
 // waitForFunction's check as eval inside the page, which the portal's
@@ -282,23 +291,43 @@ try {
     assert(p && p.recorded_by === bursarId, 'payment not signed by the bursar');
   });
 
-  await step("the bursar's bursary reaches the database and lowers this term's bill", async () => {
+  await step("the bursar's bursary shows the new bill first, waits for the database, and is refused without internet", async () => {
     await tab('payments', 'bursaries');
+    await page.selectOption('#bursaryClass', 'S.4');
     await page.selectOption('#bursaryStudent', 'KHS/2026/001');
     await page.click('#bursarySetBtn');
     await page.fill('#mdInput', '25');
+    const preview = (await page.textContent('#bursaryPreview')).replace(/\s+/g, ' ');
+    assert(/UGX 600,000 → UGX 450,000/.test(preview) && /UGX 150,000 off/.test(preview), 'preview: ' + preview);
     await page.click('#mdOk');
-    await saved();
+    // The "bill is now" message comes only once the database has the change.
+    await until(() => /This term's bill is now UGX 450,000/.test(document.getElementById('toastHost').textContent));
     const l = await one("select bursary_pct from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
     assert(l && Number(l.bursary_pct) === 25, 'bursary in database: ' + JSON.stringify(l));
     const bill = await one("select total from public.invoices where school_id = $1 and learner_id = 'KHS/2026/001'", [school]);
     assert(bill && Number(bill.total) === 450000, 'bill in database: ' + JSON.stringify(bill));
-    assert(await count('audit_log', "and action = 'BURSARY_AWARD'") === 1, 'no BURSARY_AWARD audit entry');
+    assert(await eventually(async () => await count('audit_log', "and action = 'BURSARY_AWARD'") === 1), 'no BURSARY_AWARD audit entry');
+    await context.setOffline(true);
+    try {
+      await page.click('#bursarySetBtn');
+      await page.fill('#mdInput', '40');
+      await page.click('#mdOk');
+      await until(() => /needs an internet connection/.test(document.getElementById('toastHost').textContent));
+    } finally { await context.setOffline(false); }
+    assert(await app(() => window.KSA.state().students.find(s => s.id === 'KHS/2026/001').bursaryPct) === 25, 'bursary changed without internet');
+    await saved();
+    const again = await one("select bursary_pct from public.learners where school_id = $1 and id = 'KHS/2026/001'", [school]);
+    assert(Number(again.bursary_pct) === 25, 'bursary in database after the refusal: ' + JSON.stringify(again));
   });
 
   await step('the bursar sends fee reminders by SMS to both guardians, with the balance', async () => {
     const before = S.smsOutbox.length;
     await tab('payments', 'dashboard');
+    // Who owes, one class at a time: nobody in P.7 owes; in S.4, Nakato Sarah.
+    await page.selectOption('#oweClass', 'P.7');
+    assert(await page.isDisabled('#bulkSmsBtn') && /Nobody in P\.7 owes fees/.test(await page.textContent('#oweSummary')), 'P.7: ' + await page.textContent('#oweSummary'));
+    await page.selectOption('#oweClass', 'S.4');
+    assert((await page.textContent('#bulkSmsBtn')).trim() === 'Text all 1 guardian in S.4', 'button: ' + await page.textContent('#bulkSmsBtn'));
     await page.click('#bulkSmsBtn');
     await page.waitForSelector('#smsSend');
     await page.check('#smsBoth');
@@ -310,6 +339,8 @@ try {
     // Bill 450,000 after the 25% bursary; paid 75,000 + 100,000 (the 250,000 was reversed).
     assert(sms.length === 2 && sms.every(m => /Nakato Sarah \(S\.4\) is UGX 275,000/.test(m.message)), JSON.stringify(sms));
     assert(JSON.stringify(sms.map(m => m.to).sort()) === '["+256701234567","+256772123456"]', 'numbers ' + sms.map(m => m.to));
+    const camp = await one("select options from public.sms_campaigns where school_id = $1 and kind = 'fees' and status <> 'draft' order by created_at desc limit 1", [school]);
+    assert(camp && camp.options.class === 'S.4', 'the reminders were not limited to S.4: ' + JSON.stringify(camp));
   });
 
   await step('the director publishes the term to parents and posts a notice for them by SMS', async () => {

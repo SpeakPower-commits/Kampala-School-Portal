@@ -126,7 +126,16 @@ function allocate(s) {
   });
   return { rows, credit: Math.max(0, pool) };
 }
+/* During one redraw (renderAll) each learner's account is worked out once and
+   reused by every list on the screen. Outside a redraw it is always fresh. */
+let acctCache = null;
 function studentAccount(s) {
+  if (acctCache && acctCache.has(s)) return acctCache.get(s);
+  const acct = computeAccount(s);
+  if (acctCache) acctCache.set(s, acct);
+  return acct;
+}
+function computeAccount(s) {
   const { rows, credit } = allocate(s);
   const cur = getCurrentTerm();
   const curKey = termOrderKey(cur);
@@ -250,17 +259,22 @@ function renderTermsTable() {
   const banner = el('currentTermBanner');
   if (banner) {
     banner.style.display = ct ? 'flex' : 'none';
-    if (ct) banner.querySelector('span').textContent = `Current term: ${termLabel(ct)}${ct.startDate ? ' · ' + ct.startDate + ' → ' + (ct.endDate || '?') : ''}`;
+    if (ct) banner.querySelector('span').textContent = `Current term: ${termLabel(ct)}${ct.startDate ? ' · ' + fmtDay(ct.startDate) + ' to ' + (ct.endDate ? fmtDay(ct.endDate) : 'last day not set') : ''}`;
   }
   const rows = termsInOrder().reverse();
   body.innerHTML = rows.length ? rows.map(t => {
     const invs = state.invoices.filter(i => i.termId === t.id);
     const billed = invs.reduce((a, i) => a + i.total, 0);
-    return `<tr><td style="font-weight:600">${escapeHtml(termLabel(t))}</td><td>${escapeHtml(t.startDate || '—')}</td><td>${escapeHtml(t.endDate || '—')}</td>
-      <td class="t-center">${invs.length}</td><td class="t-num">${fmtMoney(billed)}</td>
-      <td>${t.isActive ? '<span class="badge badge-success">Current</span>' : '<span class="badge badge-neutral">Closed</span>'}</td>
-      <td><div class="row-actions">${!t.isActive ? `<button class="btn btn-outline btn-xs" data-act="setActiveTerm" data-id="${escapeHtml(t.id)}">Make current</button>` : ''}<button class="btn-icon" data-act="deleteTerm" data-id="${escapeHtml(t.id)}" title="Remove">${icon('trash', 15)}</button></div></td></tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">No terms yet.</td></tr>';
+    // A term with bills or marks cannot be removed, so it gets no Remove button.
+    const removable = !invs.length && !state.students.some(s => (s.academics || []).some(a => a.termId === t.id));
+    const days = t.startDate || t.endDate ? `${t.startDate ? fmtDay(t.startDate) : 'first day not set'} to ${t.endDate ? fmtDay(t.endDate) : 'last day not set'}` : 'Days not set';
+    return `<div class="dir-row">
+      <div class="dir-main"><div style="font-weight:700">${escapeHtml(termLabel(t))} ${t.isActive ? '<span class="badge badge-success">Current</span>' : '<span class="badge badge-neutral">Closed</span>'}</div>
+        <div class="card-desc">${escapeHtml(days)}</div>
+        <div class="card-desc">${invs.length} learner${invs.length === 1 ? '' : 's'} billed · ${fmtMoney(billed)}</div></div>
+      <div class="dir-side"><div class="row-actions">${!t.isActive ? `<button class="btn btn-outline btn-xs" type="button" data-act="setActiveTerm" data-id="${escapeHtml(t.id)}">Make current</button>` : ''}${removable ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteTerm" data-id="${escapeHtml(t.id)}" aria-label="Remove ${escapeHtml(termLabel(t))}">Remove</button>` : ''}</div></div>
+    </div>`;
+  }).join('') : '<div class="empty">No terms yet.</div>';
   const sel = el('feeStructureTerm');
   if (sel) {
     const termChanged = renderTermsTable.lastCurrent !== (ct && ct.id);
@@ -288,7 +302,7 @@ function renderFeeStructures() {
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
         <div><div style="font-weight:700">${escapeHtml(appliesToLabel(fs.appliesTo))}${fs.draft ? ' <span class="badge badge-warn">Draft from old fee components</span>' : ''}</div>
           <div class="card-desc">Day scholar ${fmtMoney(structureTotal(fs, false))} · Boarder ${fmtMoney(structureTotal(fs, true))}${(fs.installments || []).length ? ` · ${fs.installments.length} installments` : ''}</div></div>
-        <div class="row-actions"><button class="btn btn-outline btn-xs" data-act="editFeeStructure" data-id="${escapeHtml(fs.id)}">Edit</button><button class="btn-icon" data-act="deleteFeeStructure" data-id="${escapeHtml(fs.id)}" title="Remove">${icon('trash', 15)}</button></div>
+        <div class="row-actions"><button class="btn btn-outline btn-xs" data-act="editFeeStructure" data-id="${escapeHtml(fs.id)}">Edit</button><button class="btn btn-ghost btn-xs t-bad" data-act="deleteFeeStructure" data-id="${escapeHtml(fs.id)}" aria-label="Remove the ${escapeHtml(appliesToLabel(fs.appliesTo))} fee structure">Remove</button></div>
       </div>
       <table style="margin-top:8px"><tbody>${fs.items.map(i => `<tr><td>${escapeHtml(i.name)}${i.who !== 'all' ? ` <span class="badge badge-neutral">${i.who === 'boarders' ? 'Boarders' : 'Day scholars'}</span>` : ''}</td><td class="t-num">${fmtMoney(i.amount)}</td></tr>`).join('')}</tbody></table>
     </div>`).join('') : `<p class="card-desc">No fee structures for ${escapeHtml(termLabel(t))} yet. Without one, each learner is billed their own "Termly tuition".</p>`;
@@ -378,7 +392,8 @@ async function deleteFeeStructure(id) {
 async function applyFeeStructures() {
   if (!can('canManageTerms')) return toast('You do not have permission.', 'error');
   const t = getCurrentTerm(); if (!t) return;
-  const ok = await confirmDialog({ title: 'Re-bill this term', message: `Rebuild every learner's ${termLabel(t)} bill from the current fee structures? Payments already made are kept and re-allocated. Earlier terms are not changed.`, confirmLabel: 'Re-bill learners' });
+  const n = state.students.length;
+  const ok = await confirmDialog({ title: 'Apply the fee structures', message: `Rebuild the ${termLabel(t)} bill of all ${n} learner${n === 1 ? '' : 's'} from the fee structures? Bursaries are applied again, payments already made are kept, and earlier terms are not changed.`, confirmLabel: `Re-bill ${n} learner${n === 1 ? '' : 's'}` });
   if (!ok) return;
   if (needsConnection('Re-billing learners')) return;
   state.students.forEach(refreshCurrentInvoice);
@@ -453,26 +468,37 @@ function printPaymentReceipt(paymentId) {
   const acct = s ? studentAccount(s) : null;
   printDoc(`${docHeader('Official Receipt')}
     <div style="font-family:Arial,sans-serif;font-size:13px">
-    <div style="display:flex;justify-content:space-between;margin-bottom:14px"><div><strong>Receipt no.:</strong> ${escapeHtml(p.id)}</div><div><strong>Date:</strong> ${escapeHtml(p.date)}</div></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:14px"><div><strong>Receipt no.:</strong> ${escapeHtml(p.id)}</div><div><strong>Date paid:</strong> ${escapeHtml(fmtDay(p.date))}</div></div>
     ${p.void ? '<div style="border:2px solid #b91c1c;color:#b91c1c;font-weight:700;text-align:center;padding:6px;margin-bottom:12px">REVERSED — NOT VALID</div>' : ''}
     <p style="line-height:2">Received from the parent/guardian of <strong>${escapeHtml(s ? s.name : p.studentId)}</strong>${s ? ` (${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}, admission no. ${escapeHtml(s.id)})` : ''}<br>
     the sum of <strong>${escapeHtml(amountInWords(p.amount))} ${escapeHtml(currencyWords())} only</strong><br>
     being payment of school fees by <strong>${escapeHtml(p.method || 'Cash')}</strong>${p.reference ? `, reference <strong>${escapeHtml(p.reference)}</strong>` : ''}.</p>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
       <div style="border:2px solid #111;padding:8px 16px;font-size:18px;font-weight:700">${fmtMoney(p.amount)}</div>
-      ${acct ? `<div style="text-align:right;font-size:12px">Balance as at ${todayISO()}: <strong>${fmtMoney(acct.balance)}</strong>${acct.arrears ? `<br>of which arrears: ${fmtMoney(acct.arrears)}` : ''}</div>` : ''}
+      ${acct ? `<div style="text-align:right;font-size:12px">Still owed on ${escapeHtml(fmtDay(todayISO()))}: <strong>${fmtMoney(acct.balance)}</strong>${acct.arrears ? `<br>of which from earlier terms: ${fmtMoney(acct.arrears)}` : ''}</div>` : ''}
     </div>
     <div style="margin-top:36px;display:flex;justify-content:space-between;font-size:11px"><div>Received by: ${escapeHtml(p.recordedByName || '')}<br>____________________<br>Signature</div><div style="text-align:right">____________________<br>School stamp</div></div>
     </div>`);
 }
 
 /* ── Finance dashboard ─────────────────────────────────────────────────── */
-function paymentsInTerm(t) {
-  if (!t) return state.payments.filter(p => !p.void);
-  const from = t.startDate || (t.openedAt || '').slice(0, 10);
-  const to = t.endDate || '9999-12-31';
-  return state.payments.filter(p => !p.void && (!from || p.date >= from) && p.date <= to);
+/* The days a term covers: its own first and last day when they are set;
+   otherwise from the day it was opened (the school's first term: from the
+   start) to the day before the next term opened. */
+function termWindow(t) {
+  if (!t) return { from: '', to: '9999-12-31' };
+  const key = termOrderKey(t);
+  const ordered = termsInOrder();
+  const prev = ordered.filter(x => termOrderKey(x) < key).pop();
+  const next = ordered.find(x => termOrderKey(x) > key);
+  const nextStart = next ? (next.startDate || (next.openedAt || '').slice(0, 10)) : '';
+  return {
+    from: t.startDate || (prev ? (t.openedAt || '').slice(0, 10) : ''),
+    to: t.endDate || (nextStart ? addDaysISO(nextStart, -1) : '9999-12-31'),
+  };
 }
+function inTermWindow(date, t) { const w = termWindow(t); return (!w.from || date >= w.from) && date <= w.to; }
+function paymentsInTerm(t) { return state.payments.filter(p => !p.void && inTermWindow(p.date, t)); }
 function financeSnapshot() {
   const ct = getCurrentTerm();
   const accts = state.students.map(s => ({ s, a: studentAccount(s) }));
@@ -491,23 +517,35 @@ function financeSnapshot() {
     bursaries: state.invoices.filter(i => ct && i.termId === ct.id).reduce((a, i) => a + (i.discount || 0), 0),
   };
 }
+/* Classes that have learners, in school order. */
+function classesWithLearners(list = state.students) {
+  return [...new Set(list.map(s => s.class).filter(Boolean))].sort((a, b) => classRank(a) - classRank(b) || a.localeCompare(b));
+}
+const classAndStream = s => s.class + (s.stream ? ' ' + s.stream : '');
+const telLink = g => { const n = normalizePhone(g); return n ? `<a href="tel:${escapeHtml(n)}">${escapeHtml(g)}</a>` : escapeHtml(g || '—'); };
+
 function renderFinanceDashboard() {
   const box = el('financeStats'); if (!box) return;
   const f = financeSnapshot();
-  const row = (l, v, st = '') => `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><span class="t-muted">${l}</span><span style="font-weight:700;${st}">${v}</span></div>`;
-  box.innerHTML = `<p class="card-desc" style="margin-bottom:6px">${escapeHtml(termLabel(f.ct))}</p>`
-    + row('Billed this term (after bursaries)', fmtMoney(f.billedNow))
-    + row('Paid against this term', fmtMoney(f.paidNow), 'color:var(--success)')
-    + row('Cash received this term', fmtMoney(f.collectedThisTerm), 'color:var(--success)')
-    + row('Outstanding this term', fmtMoney(f.currentDue), 'color:var(--danger)')
-    + row('Arrears from earlier terms', fmtMoney(f.arrears), 'color:var(--danger)')
-    + row('Bursaries granted this term', fmtMoney(f.bursaries), 'color:var(--warn)')
-    + `<div style="display:flex;justify-content:space-between;padding:9px 0;font-weight:700"><span>Collection rate this term</span><span style="color:${f.rate >= 75 ? 'var(--success)' : f.rate >= 50 ? 'var(--warn)' : 'var(--danger)'}">${f.rate}%</span></div>`;
+  const term = escapeHtml(termLabel(f.ct));
+  const note = el('feesDashNote');
+  if (note) note.textContent = `${termLabel(f.ct)}. "This term" means ${termLabel(f.ct)} only; "from earlier terms" is what is still unpaid from before it.`;
+  const row = (l, v, st = '') => `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)"><span class="t-muted">${l}</span><span style="font-weight:700;white-space:nowrap;${st}">${v}</span></div>`;
+  // Colour only an amount that is there: a red or orange zero reads as a problem.
+  const tint = (n, colour) => n ? `color:var(--${colour})` : '';
+  box.innerHTML = row(`${term} bills <span class="card-desc">(after bursaries)</span>`, fmtMoney(f.billedNow))
+    + row('Paid towards this term', fmtMoney(f.paidNow), tint(f.paidNow, 'success'))
+    + row('Still owed for this term', fmtMoney(f.currentDue), tint(f.currentDue, 'danger'))
+    + row('Owed from earlier terms', fmtMoney(f.arrears), tint(f.arrears, 'danger'))
+    + row('Owed in total', fmtMoney(f.outstanding), tint(f.outstanding, 'danger'))
+    + row('Bursaries this term', fmtMoney(f.bursaries), tint(f.bursaries, 'warn'))
+    + row('Money received this term <span class="card-desc">(every payment, for any term)</span>', fmtMoney(f.collectedThisTerm), tint(f.collectedThisTerm, 'success'))
+    + `<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 0;font-weight:700"><span>Share of this term's bills paid</span><span style="color:${f.rate >= 75 ? 'var(--success)' : f.rate >= 50 ? 'var(--warn)' : 'var(--danger)'}">${f.rate}%</span></div>`;
 
   const headline = el('arrearsHeadline');
   if (headline) {
     headline.innerHTML = f.outstanding > 0
-      ? `${icon('alert')}<span><strong>${fmtMoney(f.outstanding)}</strong> is owed by <strong>${f.debtors}</strong> learner${f.debtors === 1 ? '' : 's'} — ${fmtMoney(f.arrears)} of it from earlier terms.</span>`
+      ? `${icon('alert')}<span><strong>${fmtMoney(f.outstanding)}</strong> is owed by <strong>${f.debtors}</strong> learner${f.debtors === 1 ? '' : 's'}${f.arrears ? ` — ${fmtMoney(f.arrears)} of it from earlier terms` : ''}. <button type="button" class="link-btn" data-act="oweShowClass" data-class="">See who owes</button></span>`
       : `${icon('check')}<span>Every learner is fully paid up.</span>`;
     headline.className = 'banner ' + (f.outstanding > 0 ? 'banner-warn' : 'banner-success');
   }
@@ -524,44 +562,264 @@ function renderFinanceDashboard() {
   const cEl = el('arrearsByClass');
   if (cEl) {
     const byClass = {};
-    f.accts.forEach(({ s, a }) => { const k = s.class || 'Unassigned'; byClass[k] = byClass[k] || { billed: 0, out: 0, n: 0 }; byClass[k].billed += a.currentBilled; byClass[k].out += a.balance; byClass[k].n++; });
-    const order = (k) => { const i = CLASS_OPTIONS.indexOf(k); return i < 0 ? 99 : i; };
-    cEl.innerHTML = Object.keys(byClass).length ? `<table><thead><tr><th>Class</th><th class="t-center">Learners</th><th class="t-num">Billed this term</th><th class="t-num">Outstanding (all terms)</th></tr></thead><tbody>${Object.keys(byClass).sort((a, b) => order(a) - order(b)).map(k => `<tr><td style="font-weight:600">${escapeHtml(k)}</td><td class="t-center">${byClass[k].n}</td><td class="t-num">${fmtMoney(byClass[k].billed)}</td><td class="t-num" style="color:${byClass[k].out ? 'var(--danger)' : 'var(--success)'}">${fmtMoney(byClass[k].out)}</td></tr>`).join('')}</tbody></table>` : '<p class="card-desc">No learners yet.</p>';
+    f.accts.forEach(({ s, a }) => {
+      const k = s.class || 'No class';
+      const c = byClass[k] = byClass[k] || { billed: 0, out: 0, n: 0, owe: 0 };
+      c.billed += a.currentBilled; c.out += a.balance; c.n++; if (a.balance > 0) c.owe++;
+    });
+    const keys = Object.keys(byClass).sort((a, b) => classRank(a) - classRank(b) || a.localeCompare(b));
+    const owe = (k, n) => n ? `<button type="button" class="link-btn t-bad" data-act="oweShowClass" data-class="${escapeHtml(k === 'No class' ? '' : k)}">${n} owe</button>` : '<span class="t-ok">nobody owes</span>';
+    const line = (name, n, billed, out, owing, total) => `<div class="dir-row${total ? ' fees-total' : ''}">
+      <div class="dir-main"><div style="font-weight:700">${escapeHtml(name)}</div><div class="card-desc">${n} learner${n === 1 ? '' : 's'} · billed this term ${fmtMoney(billed)}</div></div>
+      <div class="dir-side"><div class="dir-owes ${out ? 't-bad' : 't-ok'}">${out ? 'Still owed ' + fmtMoney(out) : 'Paid up'}</div><div>${owe(name === 'All classes' ? '' : name, owing)}</div></div>
+    </div>`;
+    cEl.innerHTML = keys.length ? keys.map(k => line(k, byClass[k].n, byClass[k].billed, byClass[k].out, byClass[k].owe)).join('')
+      + (keys.length > 1 ? line('All classes', f.accts.length, f.billedNow, f.outstanding, f.debtors, true) : '')
+      : '<p class="card-desc">No learners yet.</p>';
   }
 
-  const dEl = el('topDefaulters');
-  if (dEl) {
-    const top = f.accts.filter(x => x.a.balance > 0).sort((a, b) => b.a.balance - a.a.balance).slice(0, 10);
-    dEl.innerHTML = top.length ? `<table><thead><tr><th>Learner</th><th>Class</th><th class="t-num">Arrears</th><th class="t-num">This term</th><th class="t-num">Total</th><th class="t-num">Overdue installment</th><th></th></tr></thead><tbody>${top.map(({ s, a }) => {
-      const overdue = overdueInstallment(s);
-      return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td class="t-num">${fmtMoney(a.arrears)}</td><td class="t-num">${fmtMoney(a.currentDue)}</td><td class="t-num" style="color:var(--danger);font-weight:700">${fmtMoney(a.balance)}</td><td class="t-num">${overdue ? fmtMoney(overdue) : '—'}</td>
-        <td><div class="row-actions"><button class="btn-icon" title="SMS guardian" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 15)}</button><button class="btn btn-outline btn-xs" data-act="waBalance" data-id="${escapeHtml(s.id)}">WhatsApp</button></div></td></tr>`;
-    }).join('')}</tbody></table>` : '<p class="card-desc">No defaulters. Well done.</p>';
+  renderOweList(f);
+}
+
+/* ── Who owes: every child who owes in the chosen class ────────────────── */
+let oweLimit = 25;
+function renderOweList(f) {
+  const box = el('topDefaulters'); if (!box) return;
+  const owingIn = c => f.accts.filter(x => x.s.class === c && x.a.balance > 0).length;
+  fillSelect('oweClass', `<option value="">All classes (${f.debtors} owe)</option>` + classesWithLearners().map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${owingIn(c)} owe)</option>`).join(''));
+  const cls = el('oweClass') ? el('oweClass').value : '';
+  const inClass = f.accts.filter(x => !cls || x.s.class === cls);
+  const owing = inClass.filter(x => x.a.balance > 0).sort((a, b) => b.a.balance - a.a.balance || a.s.name.localeCompare(b.s.name));
+  const total = owing.reduce((a, x) => a + x.a.balance, 0);
+  const earlier = owing.reduce((a, x) => a + x.a.arrears, 0);
+  const where = cls ? ' in ' + escapeHtml(cls) : '';
+  const sum = el('oweSummary');
+  if (sum) sum.innerHTML = owing.length
+    ? `<strong>${owing.length}</strong> of ${inClass.length} learner${inClass.length === 1 ? '' : 's'}${where} owe <strong class="t-bad">${fmtMoney(total)}</strong>${earlier ? ` — ${fmtMoney(earlier)} of it from earlier terms` : ''}.`
+    : `<span class="t-ok">Nobody${where} owes fees.</span>`;
+  const bulk = el('bulkSmsBtn');
+  if (bulk) {
+    bulk.textContent = owing.length ? `Text all ${owing.length} guardian${owing.length === 1 ? '' : 's'}${cls ? ' in ' + cls : ''}` : 'Text all guardians';
+    bulk.disabled = !owing.length;
   }
+  box.innerHTML = owing.length ? owing.slice(0, oweLimit).map(({ s, a }) => {
+    const overdue = overdueInstallment(s);
+    const parts = [`This term ${fmtMoney(a.currentDue)}`, a.arrears ? `<span class="t-bad">from earlier terms ${fmtMoney(a.arrears)}</span>` : '', overdue ? `<span class="t-warn">instalment overdue ${fmtMoney(overdue)}</span>` : ''].filter(Boolean);
+    return `<div class="dir-row">
+      <div class="dir-main">
+        <div style="font-weight:600">${learnerLink(s.id, s.name, 'fees')} <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span></div>
+        <div class="card-desc">${parts.join(' · ')}</div>
+        <div class="card-desc">Guardian ${telLink(s.guardian)}${s.guardian2 ? ' · ' + telLink(s.guardian2) : ''}</div>
+      </div>
+      <div class="dir-side">
+        <div class="dir-owes t-bad">Owes ${fmtMoney(a.balance)}</div>
+        <div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="smsBalance" data-id="${escapeHtml(s.id)}">SMS</button><button class="btn btn-outline btn-xs" type="button" data-act="waBalance" data-id="${escapeHtml(s.id)}">WhatsApp</button></div>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty">${f.accts.length ? `Nobody${where} owes fees. Well done.` : 'No learners yet.'}</div>`;
+  const pager = el('owePager');
+  if (pager) pager.innerHTML = owing.length > oweLimit
+    ? `<span>Showing the ${oweLimit} who owe most, of ${owing.length}</span><span class="pager-btns"><button class="btn btn-outline btn-xs" type="button" data-act="oweAll">See all ${owing.length} who owe</button></span>` : '';
+}
+
+/* ── Record a payment ──────────────────────────────────────────────────── */
+/* The class picker narrows the learner list; the list stays A–Z. */
+function renderPayStudentOptions() {
+  if (!el('paymentStudent')) return;
+  fillSelect('payClass', '<option value="">All classes</option>' + classesWithLearners().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const cls = el('payClass') ? el('payClass').value : '';
+  const list = state.students.filter(s => !cls || s.class === cls).sort((a, b) => a.name.localeCompare(b.name));
+  fillSelect('paymentStudent', `<option value="">${list.length ? 'Choose a learner…' : 'No learners in this class'}</option>` + list.map(s => {
+    const owes = studentAccount(s).balance;
+    return `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(classAndStream(s))} · ${owes > 0 ? 'owes ' + fmtMoney(owes) : 'paid up'}</option>`;
+  }).join(''));
+  const d = el('payDate');
+  if (d) { d.max = todayISO(); if (!d.value) d.value = todayISO(); }
+  updateBalancePreview();
+}
+/* Choose a learner on Record payment (e.g. from their learner page). */
+function choosePayLearner(id) {
+  const s = state.students.find(x => x.id === id); if (!s) return;
+  const pc = el('payClass');
+  if (pc) { pc.value = [...pc.options].some(o => o.value === s.class) ? s.class : ''; }
+  renderPayStudentOptions();
+  const sel = el('paymentStudent'); if (sel) sel.value = id;
+  updateBalancePreview();
+}
+/* The chosen child's fees, in the learner page's words. */
+function updateBalancePreview() {
+  const sel = el('paymentStudent'); const box = el('balancePreview');
+  if (!sel || !box) return;
+  const s = state.students.find(x => x.id === sel.value);
+  if (!s) { box.style.display = 'none'; box.innerHTML = ''; updatePayWords(); return; }
+  const a = studentAccount(s);
+  const line = (label, value, cls = '') => `<div class="pay-acct-row"><span>${label}</span><strong class="${cls}">${value}</strong></div>`;
+  box.style.display = '';
+  box.innerHTML = `<div class="pay-acct-head">${learnerLink(s.id, s.name, 'fees')} <span class="card-desc">· ${escapeHtml(classAndStream(s))} · ${escapeHtml(s.id)}</span></div>`
+    + line(`This term's bill${Number(s.bursaryPct) > 0 ? ` <span class="t-warn">(after ${Number(s.bursaryPct)}% bursary)</span>` : ''}`, fmtMoney(a.currentBilled))
+    + line('Paid this term', fmtMoney(a.currentPaid), a.currentPaid ? 't-ok' : '')
+    + (a.arrears > 0 ? line('From earlier terms', fmtMoney(a.arrears), 't-bad') : '')
+    + (a.balance > 0 ? line('Owes in total', fmtMoney(a.balance), 't-bad')
+      : a.credit > 0 ? line('Paid ahead', fmtMoney(a.credit) + ' credit', 't-ok') : line('Owes', 'Nothing: paid up', 't-ok'));
+  updatePayWords();
+}
+/* The amount in words as it is typed, and a word if it is more than owed. */
+function updatePayWords() {
+  const box = el('payWords'); if (!box) return;
+  const amount = Math.round(Number((el('payAmount') || {}).value) || 0);
+  if (amount <= 0) { box.innerHTML = ''; return; }
+  const s = state.students.find(x => x.id === (el('paymentStudent') || {}).value);
+  const owes = s ? studentAccount(s).balance : 0;
+  box.innerHTML = `In words: <strong>${escapeHtml(amountInWords(amount))} ${escapeHtml(currencyWords())}</strong>`
+    + (s && amount > owes ? `<br><span class="t-warn">${owes > 0 ? `That is ${fmtMoney(amount - owes)} more than ${escapeHtml(s.name)} owes.` : `${escapeHtml(s.name)} owes nothing.`} The extra counts towards next term's bill.</span>` : '');
+}
+/* After saving: what was recorded, what is still owed, and the receipt. */
+function showPayDone(r) {
+  const box = el('payDone'); if (!box || !r) return;
+  const { payment: p, student: s, pending } = r;
+  const owes = studentAccount(s).balance;
+  box.className = 'tile pay-done' + (pending ? ' is-pending' : '');
+  box.style.display = '';
+  box.innerHTML = `<div class="pay-done-title">${icon(pending ? 'alert' : 'check', 18)} Recorded ${fmtMoney(p.amount)} for ${escapeHtml(s.name)}</div>
+    <div class="card-desc" style="margin-top:4px">${escapeHtml(amountInWords(p.amount))} ${escapeHtml(currencyWords())} · ${escapeHtml(p.method || 'Cash')} · paid ${escapeHtml(fmtDay(p.date))} · receipt no. ${escapeHtml(p.id)}</div>
+    <div style="margin-top:6px">${owes > 0 ? `${escapeHtml(s.name)} still owes <strong class="t-bad">${fmtMoney(owes)}</strong>.` : `<span class="t-ok">${escapeHtml(s.name)} is fully paid up.</span>`}</div>
+    ${pending ? '<div class="t-warn" style="margin-top:6px">The connection dropped before the school database confirmed it. It is kept and saved automatically when the connection returns. Do not record it again.</div>' : ''}
+    <div class="toolbar" style="margin-top:10px">
+      <button class="btn btn-primary btn-sm" type="button" data-act="paymentReceipt" data-id="${escapeHtml(p.id)}">Print receipt</button>
+      <button class="btn btn-outline btn-sm" type="button" data-act="payAnother">Record another</button>
+      <button class="btn btn-outline btn-sm" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="fees">Open ${escapeHtml(s.name)}</button>
+    </div>`;
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
+}
+
+/* ── Payments: search, class and period, 50 at a time ─────────────────── */
+let payLimit = 50;
+function renderPaymentsTable() {
+  const body = el('paymentsTableBody');
+  if (body) {
+    const ct = getCurrentTerm();
+    fillSelect('payListClass', '<option value="">All classes</option>' + classesWithLearners().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+    fillSelect('payPeriod', `<option value="current">This term (${escapeHtml(termLabel(ct))})</option><option value="today">Today</option>`
+      + termsInOrder().reverse().filter(t => t !== ct).map(t => `<option value="T:${escapeHtml(t.id)}">${escapeHtml(termLabel(t))}</option>`).join('')
+      + '<option value="all">All payments</option>');
+    const period = (el('payPeriod') && el('payPeriod').value) || 'current';
+    const cls = el('payListClass') ? el('payListClass').value : '';
+    const raw = ((el('paySearch') || {}).value || '').trim().toLowerCase();
+    const words = raw.split(/\s+/).filter(Boolean);
+    const term = period === 'current' ? ct : period.startsWith('T:') ? termById(period.slice(2)) : null;
+    const today = todayISO();
+    const byId = new Map(state.students.map(s => [s.id, s]));
+    const list = state.payments.filter(p => {
+      if (period === 'today' ? p.date !== today : term ? !inTermWindow(p.date, term) : false) return false;
+      const s = byId.get(p.studentId);
+      if (cls && (!s || s.class !== cls)) return false;
+      if (!words.length) return true;
+      const hay = [s ? s.name : '', p.studentId, p.id, p.reference || ''].join(' ').toLowerCase();
+      return words.every(w => hay.includes(w));
+    }).sort((a, b) => String(b.ts || b.date).localeCompare(String(a.ts || a.date)));
+    const live = list.filter(p => !p.void);
+    const total = live.reduce((a, p) => a + Number(p.amount || 0), 0);
+    const reversed = list.length - live.length;
+    const when = period === 'today' ? 'today' : term ? 'in ' + termLabel(term) : 'in all';
+    const sum = el('paySummary');
+    if (sum) sum.innerHTML = `<strong>${live.length}</strong> payment${live.length === 1 ? '' : 's'} ${escapeHtml(when)}${cls ? ' for ' + escapeHtml(cls) : ''}${raw ? ' matching your search' : ''}: <strong class="t-ok">${fmtMoney(total)}</strong> received${reversed ? ` · ${reversed} reversed, not counted` : ''}`;
+    body.innerHTML = list.length ? list.slice(0, payLimit).map(p => paymentRow(p, byId.get(p.studentId))).join('')
+      : `<div class="empty">${state.payments.length ? 'No payments match. Clear the search, or choose All classes or All payments.' : 'No payments recorded yet.'}</div>`;
+    const pager = el('payPager');
+    if (pager) pager.innerHTML = list.length > payLimit
+      ? `<span>Showing ${payLimit} of ${list.length}</span><span class="pager-btns"><button class="btn btn-outline btn-xs" type="button" data-act="payMore">Show ${Math.min(50, list.length - payLimit)} more</button></span>` : '';
+  }
+  const recent = el('recentPaymentsBody');
+  if (recent) {
+    const live = state.payments.filter(p => !p.void).sort((a, b) => String(b.ts || b.date).localeCompare(String(a.ts || a.date))).slice(0, 6);
+    recent.innerHTML = live.length ? live.map(p => {
+      const s = state.students.find(x => x.id === p.studentId);
+      return `<tr><td class="t-muted">${escapeHtml(fmtDay(p.date, false))}</td><td>${s ? learnerLink(s.id, s.name, 'fees') : '—'}</td><td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(p.amount)}</td></tr>`;
+    }).join('') : '<tr><td colspan="3" class="empty">No payments yet.</td></tr>';
+  }
+}
+function paymentRow(p, s) {
+  const reverse = can('canVoidPayment') && !p.void ? `<button class="btn btn-danger btn-xs" type="button" data-act="voidPayment" data-id="${escapeHtml(p.id)}" aria-label="Reverse ${escapeHtml(fmtMoney(p.amount))} for ${escapeHtml(s ? s.name : p.studentId)}">Reverse</button>` : '';
+  const who = s ? `${learnerLink(s.id, s.name, 'fees')} <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span>` : `<em class="t-muted">Learner removed (${escapeHtml(p.studentId)})</em>`;
+  return `<div class="dir-row${p.void ? ' is-void' : ''}">
+    <div class="dir-main">
+      <div style="font-weight:600">${who}${p.void ? ' <span class="badge badge-danger">Reversed</span>' : ''}</div>
+      <div class="card-desc">Paid ${escapeHtml(fmtDay(p.date))} · ${escapeHtml(p.method || 'Cash')}${p.reference ? ' · ref. ' + escapeHtml(p.reference) : ''}</div>
+      <div class="card-desc">Receipt no. ${escapeHtml(p.id)}${p.recordedByName ? ' · recorded by ' + escapeHtml(p.recordedByName) : ''}</div>
+      ${p.void ? `<div class="pay-void-why">Reversed${p.voidedBy ? ' by ' + escapeHtml(p.voidedBy) : ''}${p.voidedAt ? ' on ' + escapeHtml(fmtDay(p.voidedAt.slice(0, 10))) : ''}${p.voidReason ? ': ' + escapeHtml(p.voidReason) : ''}</div>` : ''}
+    </div>
+    <div class="dir-side">
+      <div class="dir-owes ${p.void ? 'pay-struck' : 't-ok'}">${fmtMoney(p.amount)}</div>
+      <div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="paymentReceipt" data-id="${escapeHtml(p.id)}">Receipt</button>${reverse}</div>
+    </div>
+  </div>`;
 }
 
 /* ── Bursaries (Fees → Bursaries) ──────────────────────────────────────── */
 /* Any learner can hold a bursary. Awarding goes through setBursary(), which
-   checks permission, re-bills this term and writes the audit log. */
+   checks permission, re-bills this term, waits for the school database online
+   and writes "who did what". */
 function renderBursaries() {
   const body = el('bursaryListBody'); if (!body) return;
+  fillSelect('bursaryClass', '<option value="">All classes</option>' + classesWithLearners().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const cls = el('bursaryClass') ? el('bursaryClass').value : '';
   const byName = [...state.students].sort((a, b) => a.name.localeCompare(b.name));
-  fillSelect('bursaryStudent', '<option value="">Choose a student…</option>' + byName.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.class)}${Number(s.bursaryPct) > 0 ? ` (${Number(s.bursaryPct)}%)` : ''}</option>`).join(''));
+  fillSelect('bursaryStudent', '<option value="">Choose a learner…</option>' + byName.filter(s => !cls || s.class === cls)
+    .map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(classAndStream(s))}${Number(s.bursaryPct) > 0 ? ` · ${Number(s.bursaryPct)}% bursary` : ''}</option>`).join(''));
   const ct = getCurrentTerm();
   const offThisTerm = s => { const inv = ct && findInvoice(s.id, ct.id); return inv ? inv.discount || 0 : 0; };
-  const holders = byName.filter(s => Number(s.bursaryPct) > 0).sort((a, b) => b.bursaryPct - a.bursaryPct);
-  body.innerHTML = holders.length ? holders.map(s => `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td>
-      <td class="t-center" style="font-weight:700;color:var(--warn)">${Number(s.bursaryPct)}%</td><td class="t-num">${fmtMoney(offThisTerm(s))}</td>
-      <td class="t-num"><button class="btn btn-outline btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Change</button></td></tr>`).join('')
-    : '<tr><td colspan="5" class="empty">No learner has a bursary yet.</td></tr>';
+  const holders = byName.filter(s => Number(s.bursaryPct) > 0).sort((a, b) => b.bursaryPct - a.bursaryPct || a.name.localeCompare(b.name));
+  body.innerHTML = holders.length ? holders.map(s => `<div class="dir-row">
+      <div class="dir-main"><div style="font-weight:600">${learnerLink(s.id, s.name, 'fees')} <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span></div>
+        <div class="card-desc">${Number(s.bursaryPct)}% off · ${fmtMoney(offThisTerm(s))} off the ${escapeHtml(termLabel(ct))} bill</div></div>
+      <div class="dir-side"><div class="dir-owes t-warn">${Number(s.bursaryPct)}% bursary</div>
+        <div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="setBursary" data-id="${escapeHtml(s.id)}">Change bursary</button></div></div>
+    </div>`).join('')
+    : '<div class="empty">No learner has a bursary yet.</div>';
 
   const rec = el('bursaryRecommended'); if (!rec) return;
   const picks = byName.filter(s => bursaryEligible(s) && !(Number(s.bursaryPct) > 0));
   rec.innerHTML = picks.length ? `<div class="card-title" style="margin-top:20px">Recommended by Sports</div>
     <p class="card-desc">Athletes who meet the sports bursary rules (skill, training attendance and evaluations) and have no bursary yet.</p>
-    <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Athlete</th><th>Class</th><th>Sport</th><th class="t-center">Score</th><th></th></tr></thead><tbody>
-    ${picks.map(s => `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td class="t-center">${bursaryScore(s)}</td>
-      <td class="t-num"><button class="btn btn-gold btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Award</button></td></tr>`).join('')}</tbody></table></div>` : '';
+    <div class="dir-list">${picks.map(s => `<div class="dir-row">
+      <div class="dir-main"><div style="font-weight:600">${learnerLink(s.id, s.name)} <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span></div>
+        <div class="card-desc">${escapeHtml(s.sport)} · sports score ${bursaryScore(s)}</div></div>
+      <div class="dir-side"><div class="row-actions"><button class="btn btn-gold btn-xs" type="button" data-act="setBursary" data-id="${escapeHtml(s.id)}">Give a bursary</button></div></div>
+    </div>`).join('')}</div>` : '';
+}
+/* The bursary percentage, with this term's new bill shown before saving.
+   Resolves to a number 0–100, or null when cancelled. */
+function bursaryDialog(s) {
+  const t = getCurrentTerm();
+  const billAt = pct => buildInvoice({ ...s, bursaryPct: pct }, t ? t.id : null).total;
+  const now = Number(s.bursaryPct) || 0;
+  return new Promise(resolve => {
+    openModal({
+      title: `Bursary for ${escapeHtml(s.name)}`,
+      bodyHtml: `<p class="card-desc" style="margin:0 0 12px">${escapeHtml(classAndStream(s))} · now ${now ? now + '% bursary' : 'no bursary'} · ${escapeHtml(termLabel(t))} bill ${fmtMoney(billAt(now))}</p>
+        <label class="form-label" for="mdInput">Bursary: percentage off (0 for none)</label>
+        <input class="input" id="mdInput" type="number" min="0" max="100" step="1" inputmode="numeric" value="${now}">
+        <div class="tile" id="bursaryPreview" style="margin-top:12px;font-size:14px" aria-live="polite"></div>`,
+      footHtml: '<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn btn-primary" id="mdOk">Save bursary</button>',
+      onOpen(root) {
+        const input = root.querySelector('#mdInput'), out = root.querySelector('#bursaryPreview');
+        const read = () => { const v = String(input.value).trim(); const n = Number(v); return v !== '' && Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 100) / 100 : null; };
+        const show = () => {
+          const pct = read();
+          out.innerHTML = pct === null ? '<span class="t-bad">Type a percentage from 0 to 100.</span>'
+            : `${escapeHtml(termLabel(t))} bill: <strong>${fmtMoney(billAt(now))}</strong> → <strong>${fmtMoney(billAt(pct))}</strong>${pct ? ` <span class="card-desc">(${fmtMoney(billAt(0) - billAt(pct))} off)</span>` : ' <span class="card-desc">(no bursary)</span>'}<div class="card-desc" style="margin-top:4px">Earlier terms do not change.</div>`;
+        };
+        const done = v => { modalResolver = null; el('modalHost').innerHTML = ''; resolve(v); };
+        const ok = () => { const pct = read(); if (pct === null) { show(); input.focus(); return; } done(pct); };
+        input.addEventListener('input', show);
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+        root.querySelector('#mdOk').addEventListener('click', ok);
+        root.querySelector('#mdCancel').addEventListener('click', () => done(null));
+        show();
+      },
+    });
+    modalResolver = () => resolve(null);
+  });
 }
 
 /* ── Wiring ────────────────────────────────────────────────────────────── */
@@ -571,6 +829,21 @@ Object.assign(ACTIONS, {
   editFeeStructure: d => openFeeStructureEditor(d.id),
   deleteFeeStructure: d => deleteFeeStructure(d.id),
   paymentReceipt: d => printPaymentReceipt(d.id),
+  payMore: () => { payLimit += 50; renderPaymentsTable(); },
+  payAnother: () => {
+    const box = el('payDone'); if (box) box.style.display = 'none';
+    const sel = el('paymentStudent'); if (sel) sel.focus();
+  },
+  oweAll: () => { oweLimit = Infinity; renderOweList(financeSnapshot()); },
+  // "5 owe" in Fees by class, or "See who owes": list them under Who owes.
+  oweShowClass: d => {
+    if (currentTab !== 'payments' || lastSub.payments !== 'dashboard') switchTab('payments', 'dashboard');
+    const sel = el('oweClass');
+    if (sel) sel.value = [...sel.options].some(o => o.value === d.class) ? d.class : '';
+    oweLimit = 25;
+    renderOweList(financeSnapshot());
+    const card = el('oweCard'); if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  },
 });
 MODULES.push({
   name: 'billing',
@@ -580,11 +853,19 @@ MODULES.push({
     on('feeStructureTerm', 'change', renderFeeStructures);
     on('addFeeStructureBtn', 'click', () => openFeeStructureEditor(null));
     on('applyFeeStructuresBtn', 'click', applyFeeStructures);
+    on('bursaryClass', 'change', renderBursaries);
     on('bursarySetBtn', 'click', () => {
       const id = el('bursaryStudent').value;
-      if (!id) return toast('Choose a learner first.', 'error');
+      if (!id) return toast('Choose the learner first.', 'error');
       setBursary(id);
     });
+    on('payClass', 'change', () => { el('paymentStudent').value = ''; renderPayStudentOptions(); });
+    on('paymentStudent', 'change', updateBalancePreview);
+    on('payAmount', 'input', updatePayWords);
+    on('paymentForm', 'input', () => { const d = el('payDone'); if (d) d.style.display = 'none'; });
+    on('paySearch', 'input', () => { payLimit = 50; renderPaymentsTable(); });
+    ['payListClass', 'payPeriod'].forEach(id => on(id, 'change', () => { payLimit = 50; renderPaymentsTable(); }));
+    on('oweClass', 'change', () => { oweLimit = 25; renderOweList(financeSnapshot()); });
   },
-  render() { renderTermsTable(); renderFeeStructures(); renderFinanceDashboard(); renderBursaries(); },
+  render() { renderTermsTable(); renderFeeStructures(); renderFinanceDashboard(); renderBursaries(); renderPayStudentOptions(); },
 });
