@@ -5,7 +5,6 @@
 'use strict';
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
-const PAGE_SIZE = 25;
 
 const DEFAULT_PROGRAMS = [
   { id: 'PRG001', name: 'Football', sport: 'Football', coach: 'To be assigned', days: ['Tuesday', 'Thursday'], requirements: ['Football boots', 'Team jersey', 'Shin guards'] },
@@ -176,19 +175,34 @@ function secondGuardianOk(raw) { return !String(raw || '').trim() || phoneValid(
    ========================================================================= */
 const ADMISSION_RE = /^[A-Za-z0-9][A-Za-z0-9/_-]{0,23}$/;
 
-function registerStudent(f) {
+/* A short admission number for a learner admitted without one, never one in use. */
+function newLearnerId() {
+  let id;
+  do { id = 'S' + uid().slice(0, 6); } while (state.students.some(s => s.id.toLowerCase() === id.toLowerCase()));
+  return id;
+}
+async function registerStudent(f) {
   if (!can('canRegisterStudent')) return toast('You do not have permission to register students.', 'error');
   let id = (f.admissionNo || '').trim();
   if (id) {
     if (!ADMISSION_RE.test(id)) return toast('Admission number may only contain letters, numbers, / _ and -.', 'error');
     if (state.students.some(s => s.id.toLowerCase() === id.toLowerCase())) return toast('Admission number "' + id + '" is already in use.', 'error');
   } else {
-    id = 'S' + uid().slice(0, 6);
+    id = newLearnerId();
   }
-  if (!f.name || !f.name.trim()) return toast('Student name is required.', 'error');
+  const name = (f.name || '').trim(), cls = (f.class || '').trim();
+  if (!name) return toast('Type the child\'s full name.', 'error');
+  if (!cls) return toast('Choose the class.', 'error');
+  if (!phoneValid(f.guardian)) return toast('The guardian\'s phone is not a valid Ugandan number (for example 0772 123 456).', 'error');
   if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
-  state.students.push({
-    id, name: f.name.trim(), class: (f.class || '').trim(), level: classifyLevel(f.class),
+  const t = getCurrentTerm();
+  if (!(Number(f.fee) > 0) && t && !structureFor({ class: cls, level: classifyLevel(cls) }, t.id)) {
+    return toast(`Type the termly fees: no fee structure covers ${cls} yet (Fees → Terms & fee structures).`, 'error');
+  }
+  const same = state.students.find(s => s.class === cls && s.name.trim().toLowerCase() === name.toLowerCase());
+  if (same && !(await confirmDialog({ title: 'Same name in this class', message: `${same.name} (${same.id}) is already in ${same.class}. Admit another child with the same name?`, confirmLabel: 'Admit anyway' }))) return null;
+  const s = {
+    id, name, class: cls, level: classifyLevel(cls),
     combination: (f.combination || '').split(',').map(x => x.trim()).filter(Boolean).join(', '),
     guardian: (f.guardian || '').trim(), guardian2: (f.guardian2 || '').trim(), fee: Number(f.fee) || 0, paid: 0, stream: (f.stream || '').trim(),
     sport: (f.sport || '').trim(), skillLevel: (f.skillLevel || '').trim(),
@@ -196,17 +210,28 @@ function registerStudent(f) {
     unebIndexNo: (f.unebIndexNo || '').trim(), senFlag: (f.senFlag || '').trim(),
     performanceNotes: [], academics: [], bursaryPct: 0, feeComponents: [], injuryLog: [],
     athleteProfile: {}, comments: {}, createdAt: todayISO(),
-  });
-  billStudentForCurrentTerm(state.students[state.students.length - 1]);
+  };
+  state.students.push(s);
+  billStudentForCurrentTerm(s);
   saveState(); renderAll();
-  AUTH.audit('STUDENT_REGISTER', `${f.name.trim()} (${id})`);
-  toast('Registered ' + f.name.trim() + ' (' + id + ').', 'success');
+  AUTH.audit('STUDENT_REGISTER', `${name} (${id})`);
+  toast('Registered ' + name + ' (' + id + ').', 'success');
+  return s;
+}
+/* After admitting: say who, and offer their page or the next admission. */
+function showAdmitDone(s) {
+  const box = el('admitDone'); if (!box) return;
+  box.style.display = '';
+  box.innerHTML = `${icon('check', 16)} Admitted <strong>${escapeHtml(s.name)}</strong> (${escapeHtml(s.id)}) to ${escapeHtml(s.class + (s.stream ? ' ' + s.stream : ''))}.
+    <div class="toolbar" style="margin-top:8px"><button class="btn btn-primary btn-sm" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open their page</button><button class="btn btn-outline btn-sm" type="button" data-act="admitAnother">Admit another</button></div>`;
 }
 
 function updateStudent(id, f) {
   if (!can('canEditStudents')) return toast('You do not have permission to edit students.', 'error');
   const s = state.students.find(x => x.id === id);
   if (!s) return toast('Student not found.', 'error');
+  if (!(f.name || '').trim()) return toast('The name cannot be empty.', 'error');
+  if (!phoneValid(f.guardian)) return toast('The guardian\'s phone is not a valid Ugandan number (for example 0772 123 456).', 'error');
   if (!secondGuardianOk(f.guardian2)) return toast('The second guardian number is not a valid Ugandan phone number.', 'error');
   s.name = (f.name || '').trim() || s.name;
   s.class = (f.class || '').trim() || s.class;
@@ -226,19 +251,33 @@ function updateStudent(id, f) {
   saveState(); renderAll();
   AUTH.audit('STUDENT_EDIT', `${s.name} (${s.id})`);
   toast('Updated ' + s.name + '.', 'success');
+  return true;
 }
 
+/* Returns { payment, student, pending } when the payment is kept (pending:
+   the connection dropped before the database confirmed it), or null when it
+   was refused, so the form keeps what was typed. */
 async function recordPayment(f) {
-  if (!can('canRecordPayment')) return toast('You do not have permission to record payments.', 'error');
+  const no = (msg) => { toast(msg, 'error'); return null; };
+  if (!can('canRecordPayment')) return no('You do not have permission to record payments.');
   const s = state.students.find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a student first.', 'error');
+  if (!s) return no('Choose the learner first.');
   const amount = Number(f.amount);
-  if (!amount || amount <= 0) return toast('Enter a valid amount.', 'error');
-  if (needsConnection('Recording a payment')) return;
+  if (!amount || amount <= 0) return no('Type the amount received, e.g. 150000.');
   const date = f.date || todayISO();
+  if (date > todayISO()) return no('The date paid cannot be in the future.');
+  const method = f.method || 'Cash';
+  const reference = (f.reference || '').trim();
+  // The same money entered twice is the commonest mistake at the bursar's desk.
+  const twin = state.payments.find(p => !p.void && p.studentId === s.id && Number(p.amount) === amount && p.date === date && (p.reference || '') === reference);
+  if (twin && !await confirmDialog({
+    title: 'Already recorded?',
+    message: `${fmtMoney(amount)} for ${s.name} paid on ${fmtDay(date)}${reference ? ' with reference ' + reference : ''} is already recorded (receipt no. ${twin.id}). Record it a second time?`,
+    confirmLabel: 'Yes, record it again',
+  })) return null;
+  if (needsConnection('Recording a payment')) return null;
   const payment = {
-    id: 'P' + uid(), studentId: s.id, amount, method: f.method || 'Cash',
-    reference: (f.reference || '').trim(), date,
+    id: 'P' + uid(), studentId: s.id, amount, method, reference, date,
     recordedBy: currentSession.userId, recordedByName: currentSession.displayName,
     ts: nowISO(), void: false,
   };
@@ -250,23 +289,25 @@ async function recordPayment(f) {
     // payment. Keep it, with the same id, so it is saved (or matched) when the
     // connection returns. Recording it again would count it twice.
     renderAll();
-    return toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+    toast(`Connection lost while saving ${fmtMoney(amount)} for ${s.name}. It is kept and will be saved automatically when the connection returns. Do not record it again.`, 'warn');
+    return { payment, student: s, pending: true };
   }
   if (!saved.ok) {
     state.payments = state.payments.filter(x => x !== payment);
     recomputePaid(); renderAll();
-    return toast('The payment was NOT recorded. ' + saved.error, 'error');
+    return no('The payment was NOT recorded. ' + saved.error);
   }
   renderAll();
-  AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${f.method || 'Cash'}`);
+  AUTH.audit('PAYMENT_RECORD', `${fmtMoney(amount)} · ${s.name} (${s.id}) · ${method}`);
   toast('Recorded ' + fmtMoney(amount) + ' for ' + s.name + '.', 'success');
+  return { payment, student: s };
 }
 
 async function voidPayment(id, reason) {
   if (!can('canVoidPayment')) return toast('You do not have permission to reverse payments.', 'error');
   const p = state.payments.find(x => x.id === id);
   if (!p || p.void) return;
-  if (ONLINE_EDITION && !(reason || '').trim()) return toast('Give a reason for the reversal.', 'error');
+  if (!(reason || '').trim()) return toast('Write why the payment is being reversed. The payment was not reversed.', 'error');
   if (needsConnection('Reversing a payment')) return;
   p.void = true; p.voidReason = (reason || '').trim(); p.voidedBy = currentSession.displayName; p.voidedAt = nowISO();
   recomputePaid();
@@ -283,8 +324,9 @@ async function voidPayment(id, reason) {
     return toast('The payment was NOT reversed. ' + saved.error, 'error');
   }
   renderAll();
-  AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)} · ${p.voidReason}`);
-  toast('Payment reversed.', 'warn');
+  const s = state.students.find(x => x.id === p.studentId);
+  AUTH.audit('PAYMENT_VOID', `${p.id} · ${fmtMoney(p.amount)}${s ? ' · ' + s.name : ''} · ${p.voidReason}`);
+  toast(`Payment reversed: ${fmtMoney(p.amount)}${s ? ' is back on what ' + s.name + ' owes' : ''}.`, 'warn');
 }
 
 async function deleteStudent(id) {
@@ -324,28 +366,10 @@ async function resetAll() {
   toast('All data cleared.', 'success');
 }
 
-function addConduct(f) {
-  if (!can('canLogConduct')) return toast('You do not have permission to log conduct.', 'error');
-  const s = state.students.find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a student first.', 'error');
-  const entry = { id: 'CON' + uid().slice(0, 5), studentId: f.studentId, date: todayISO(), type: f.type, severity: f.severity, description: (f.description || '').trim(), reportedBy: (f.reportedBy || '').trim() };
-  state.conduct.push(entry);
-  saveState(); renderAll();
-  toast('Conduct entry saved for ' + s.name + '.', 'success');
-  if (f.notifyGuardian) smsConduct(entry.id);
-}
-async function deleteConduct(id) {
-  if (!can('canDeleteConduct')) return toast('You do not have permission.', 'error');
-  if (!await confirmDialog({ title: 'Delete entry', message: 'Delete this conduct entry?', confirmLabel: 'Delete', danger: true })) return;
-  state.conduct = state.conduct.filter(c => c.id !== id);
-  saveState(); renderAll();
-  toast('Conduct entry removed.', 'success');
-}
-
 function addProgram(f) {
   if (!can('canAddProgram')) return toast('You do not have permission.', 'error');
   if (!f.name || !f.sport) return toast('Program name and sport are required.', 'error');
-  state.programs.push({ id: 'PRG' + uid().slice(0, 5), name: f.name.trim(), sport: f.sport.trim(), coach: (f.coach || 'To be assigned').trim(), days: f.days || [], requirements: (f.requirements || '').split('\n').map(x => x.trim()).filter(Boolean) });
+  state.programs.push({ id: newId('PRG'), name: f.name.trim(), sport: f.sport.trim(), coach: (f.coach || 'To be assigned').trim(), days: f.days || [], requirements: (f.requirements || '').split('\n').map(x => x.trim()).filter(Boolean) });
   saveState(); renderAll();
   toast('Program added: ' + f.name.trim() + '.', 'success');
 }
@@ -374,21 +398,40 @@ function saveAttendance(programId, date, records) {
   if (!can('canMarkAttendance')) return toast('You do not have permission.', 'error');
   if (!programId || !date) return toast('Choose a program and date.', 'error');
   state.attendance = state.attendance.filter(a => !(a.programId === programId && a.date === date));
-  state.attendance.push({ id: 'ATT' + uid().slice(0, 5), programId, date, records });
+  state.attendance.push({ id: newId('ATT'), programId, date, records });
   saveState(); renderAll();
-  toast('Attendance saved for ' + date + '.', 'success');
+  const missed = records.filter(r => !r.present).map(r => (state.students.find(s => s.id === r.studentId) || {}).name).filter(Boolean);
+  toast(`Session saved for ${fmtDay(date)}: ${records.length - missed.length} came${missed.length ? ', missed: ' + missed.join(', ') : ', nobody missed'}.`, 'success');
 }
 
+/* Change a learner's bursary. This term's bill is rebuilt; online the change
+   waits for the school database, and is undone on screen if it is refused. */
 async function setBursary(studentId) {
   if (!can('canAwardBursary')) return toast('You do not have permission.', 'error');
   const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const val = await promptDialog({ title: 'Award bursary', label: `Bursary percentage for ${s.name} (0–100)`, value: String(s.bursaryPct || 0), type: 'number' });
-  if (val === null) return;
-  s.bursaryPct = Math.max(0, Math.min(100, Number(val) || 0));
+  const pct = await bursaryDialog(s);
+  if (pct === null) return;
+  const old = Number(s.bursaryPct) || 0;
+  if (pct === old) return toast(`${s.name} already has ${pct ? pct + '%' : 'no bursary'}. Nothing changed.`, 'info');
+  if (needsConnection('Changing a bursary')) return;
+  const t = getCurrentTerm();
+  const inv = t && findInvoice(s.id, t.id);
+  const before = inv ? JSON.parse(JSON.stringify(inv)) : null;
+  s.bursaryPct = pct;
   refreshCurrentInvoice(s);
-  saveState(); renderAll();
-  AUTH.audit('BURSARY_AWARD', `${s.name} (${s.id}) → ${s.bursaryPct}%`);
-  toast(`Bursary set to ${s.bursaryPct}% for ${s.name}.`, 'success');
+  const saved = await persistNow();
+  if (!saved.ok && !saved.offline) {
+    s.bursaryPct = old;
+    const now = t && findInvoice(s.id, t.id);
+    if (now && before) { Object.keys(now).forEach(k => delete now[k]); Object.assign(now, before); }
+    else if (now) state.invoices = state.invoices.filter(i => i !== now);
+    saveState(); renderAll();
+    return toast('The bursary was NOT changed. ' + saved.error, 'error');
+  }
+  renderAll();
+  AUTH.audit('BURSARY_AWARD', `${s.name} (${s.id}) ${old}% → ${pct}%`);
+  if (!saved.ok) return toast(`Connection lost while saving the bursary for ${s.name}. It is kept and will be saved automatically when the connection returns.`, 'warn');
+  toast(`${s.name}: ${pct ? pct + '% bursary' : 'bursary removed'}. This term's bill is now ${fmtMoney(studentAccount(s).currentBilled)}.`, 'success');
 }
 
 /* ── Messaging ─────────────────────────────────────────────────────────── */
@@ -412,60 +455,86 @@ function whatsappBalance(studentId) {
     : `Dear Parent/Guardian of *${s.name}* (${s.class}), thank you for clearing the school fees. — ${schoolName()}`;
   window.open('https://wa.me/' + phone.replace('+', '') + '?text=' + encodeURIComponent(body), '_blank');
 }
-function smsConduct(conductId) {
-  const c = state.conduct.find(x => x.id === conductId); if (!c) return;
-  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
-  const phone = normalizePhone(s.guardian);
-  if (!phone) return toast('No valid guardian phone number on file.', 'error');
-  const opener = c.severity === 'Positive' ? `Commendation for ${s.name}:` : `Conduct notice regarding ${s.name}:`;
-  const body = `${opener} "${c.description}" — ${c.reportedBy || 'school staff'}. ${schoolName()}`;
-  window.open('sms:' + phone + '?body=' + encodeURIComponent(body), '_blank');
-}
-/* Fee reminders: real SMS through the school's account in the online
-   edition; elsewhere (or when SMS is not set up) a tap-to-SMS list. */
+/* Fee reminders for the class chosen under Who owes (or every class): real
+   SMS through the school's account in the online edition; elsewhere (or when
+   SMS is not set up) a tap-to-SMS list. */
 function openBulkSms() {
-  if (ONLINE_EDITION) return SMS.openRun('fees', {}, 'Fee reminders by SMS', openFeeReminderLinks);
-  openFeeReminderLinks();
+  const cls = (el('oweClass') || {}).value || '';
+  if (ONLINE_EDITION) return SMS.openRun('fees', cls ? { class: cls } : {}, 'Fee reminders by SMS' + (cls ? ' — ' + cls : ''), () => openFeeReminderLinks(cls));
+  openFeeReminderLinks(cls);
 }
-function openFeeReminderLinks() {
-  const debtors = state.students.map(s => ({ s, bal: studentBalance(s) })).filter(x => x.bal > 0).sort((a, b) => b.bal - a.bal);
+function openFeeReminderLinks(cls = '') {
+  const debtors = state.students.filter(s => !cls || s.class === cls).map(s => ({ s, bal: studentBalance(s) })).filter(x => x.bal > 0).sort((a, b) => b.bal - a.bal);
   const total = debtors.reduce((a, x) => a + x.bal, 0);
+  const where = cls ? ' in ' + cls : '';
   const body = !debtors.length
-    ? `<div class="banner banner-success">${icon('check')} All fees are cleared — no reminders needed.</div>`
-    : `<p class="card-desc" style="margin-bottom:12px">Outstanding across ${debtors.length} student${debtors.length > 1 ? 's' : ''}: <strong style="color:var(--danger)">${fmtMoney(total)}</strong></p>
+    ? `<div class="banner banner-success">${icon('check')} Nobody${escapeHtml(where)} owes fees: no reminders needed.</div>`
+    : `<p class="card-desc" style="margin-bottom:12px">${debtors.length} learner${debtors.length > 1 ? 's' : ''}${escapeHtml(where)} owe <strong style="color:var(--danger)">${fmtMoney(total)}</strong>. Tap SMS or WhatsApp to send each guardian a reminder from this phone.</p>
        <div class="scroll-box">${debtors.map(({ s, bal }) => `
          <div class="roster-item">
-           <div><div style="font-weight:600">${escapeHtml(s.name)}</div>
-           <div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.guardian)} · <span style="color:var(--danger);font-weight:600">${fmtMoney(bal)}</span></div></div>
+           <div><div style="font-weight:600">${learnerLink(s.id, s.name, 'fees')}</div>
+           <div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.guardian)} · <span style="color:var(--danger);font-weight:600">owes ${fmtMoney(bal)}</span></div></div>
            <div style="display:flex;gap:6px">
-             <button class="btn btn-outline btn-xs" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 14)} SMS</button>
+             <button class="btn btn-outline btn-xs" data-act="smsBalance" data-id="${escapeHtml(s.id)}">SMS</button>
              <button class="btn btn-outline btn-xs" data-act="waBalance" data-id="${escapeHtml(s.id)}">WhatsApp</button>
            </div>
          </div>`).join('')}</div>`;
-  openModal({ title: 'Fee reminders', bodyHtml: body, footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>` });
+  openModal({ title: 'Fee reminders' + escapeHtml(cls ? ' — ' + cls : ''), bodyHtml: body, footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>` });
 }
 
 /* ── Backup / restore ──────────────────────────────────────────────────── */
 function exportLedger() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  if (!can('canExport')) return toast('You do not have permission to back up.', 'error');
+  const savedAt = nowISO();
+  // Offline, the staff accounts and "who did what" live on this device too, so
+  // they go in the file (passwords only as salted hashes).
+  const records = !ONLINE_EDITION && AUTH.backupRecords ? AUTH.backupRecords() : null;
+  const file = Object.assign({}, state, { _backup: { app: 'School Portal', school: schoolName(), savedAt, learners: state.students.length, ...(records || {}) } });
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'school-backup-' + todayISO() + '.json';
+  a.download = `${schoolName().replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'school'}-backup-${todayISO()}.json`;
   a.click(); URL.revokeObjectURL(a.href);
   try { localStorage.setItem('ksa_last_backup', todayISO()); } catch (_) {}
+  AUTH.audit('BACKUP_EXPORT', `${state.students.length} learners${records ? ` · ${records.users.length} staff accounts` : ''}`);
   updateBackupBanner();
-  toast('Backup exported.', 'success');
+  toast(`Backup downloaded: ${state.students.length} learners${records ? `, ${records.users.length} staff accounts` : ''}. Keep the file somewhere safe.`, 'success');
 }
 function importLedger(file) {
   const reader = new FileReader();
   reader.onload = async e => {
     let data;
-    try { data = JSON.parse(e.target.result); } catch (_) { return toast('That file is not valid JSON.', 'error'); }
-    if (!data || !Array.isArray(data.students)) return toast('That file is not a valid backup.', 'error');
-    const ok = await confirmDialog({ title: 'Restore backup', message: 'This replaces all current data on this device with the contents of the backup file. Continue?', confirmLabel: 'Restore', danger: true });
-    if (!ok) return;
-    state = migrate(data); recomputePaid(); recomputeGrades(); saveState(); applySettings(); renderAll();
-    toast('Backup restored.', 'success');
+    try { data = JSON.parse(e.target.result); } catch (_) { return toast('That file is not a backup from this app (it could not be read).', 'error'); }
+    if (!data || !Array.isArray(data.students)) return toast('That file is not a backup from this app.', 'error');
+    const info = data._backup || {};
+    delete data._backup;
+    const staff = Array.isArray(info.users) ? info.users.length : 0;
+    const restored = await new Promise(resolve => {
+      openModal({
+        title: 'Restore from a backup',
+        bodyHtml: `<div class="lp-rows">
+            <div class="lp-row"><div class="lp-label">School</div><div>${escapeHtml(info.school || (data.settings && data.settings.schoolName) || 'not named')}</div></div>
+            <div class="lp-row"><div class="lp-label">Saved</div><div>${info.savedAt ? escapeHtml(fmtWhen(info.savedAt)) : 'not recorded (an older backup)'}</div></div>
+            <div class="lp-row"><div class="lp-label">In the file</div><div>${data.students.length} learners · ${(data.payments || []).length} payments · ${(data.registers || []).length} registers${staff ? ` · ${staff} staff accounts` : ''}</div></div>
+          </div>
+          ${staff ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="restoreStaff"> Also bring back the ${staff} staff accounts and "who did what". Everyone then signs in with the password they had when this backup was made.</label>` : ''}
+          <p style="margin:12px 0 0;color:var(--danger);font-weight:600">Everything on this device is replaced by what is in the file. Anything entered since the backup is lost.</p>`,
+        footHtml: '<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn btn-danger-solid" id="mdOk">Restore</button>',
+        onOpen(root) {
+          const done = v => { modalResolver = null; el('modalHost').innerHTML = ''; resolve(v); };
+          root.querySelector('#mdCancel').addEventListener('click', () => done(null));
+          root.querySelector('#mdOk').addEventListener('click', () => { const box = root.querySelector('#restoreStaff'); done({ staff: !!(box && box.checked) }); });
+        },
+      });
+      modalResolver = () => resolve(null);
+    });
+    if (!restored) return;
+    state = migrate(data); recomputePaid(); recomputeGrades(); saveState(); applySettings();
+    if (restored.staff && AUTH.restoreRecords) AUTH.restoreRecords({ users: info.users, audit: info.audit });
+    const form = el('settingsForm'); if (form) delete form.dataset.dirty;
+    renderAll();
+    AUTH.audit('BACKUP_RESTORE', `${info.savedAt ? fmtWhen(info.savedAt) : 'undated backup'} · ${state.students.length} learners${restored.staff ? ` · ${staff} staff accounts` : ''}`);
+    toast(`Backup restored: ${state.students.length} learners${restored.staff ? ` and ${staff} staff accounts` : ''}.`, 'success');
   };
   reader.readAsText(file);
 }
@@ -474,6 +543,10 @@ function importLedger(file) {
    Rendering
    ========================================================================= */
 function renderAll() {
+  acctCache = new Map();
+  try { renderAllNow(); } finally { acctCache = null; }
+}
+function renderAllNow() {
   const guard = (fn) => { try { fn(); } catch (err) { console.error(err); } };
   guard(updateMetrics);
   guard(renderStudentTable);
@@ -482,12 +555,12 @@ function renderAll() {
   guard(renderSportFilter);
   guard(renderSportOptions);
   guard(renderPerformanceTable);
-  guard(renderAcademicTable);
-  guard(renderSubjectList);
   guard(renderAttendanceProgramSelect);
   guard(renderAttendanceRoster);
   guard(renderAttendanceTable);
+  guard(renderSessionList);
   guard(renderBursaryTable);
+  guard(renderConductForm);
   guard(renderConductTable);
   guard(renderStatisticalReports);
   guard(renderStudentSelects);
@@ -495,7 +568,7 @@ function renderAll() {
   guard(renderSquadsGrid);
   guard(renderAthleteProfiles);
   guard(renderNotices);
-  guard(renderWhatsNew);
+  guard(renderTodaysJobs);
   if (can('canManageUsers')) { guard(renderUsersList); guard(renderAuditLog); }
   if (can('canManageSettings')) guard(renderSettingsForm);
   MODULES.forEach(m => { if (m.render) guard(m.render); });
@@ -517,18 +590,18 @@ function updateMetrics() {
     const f = financeSnapshot();
     cards = [
       { label: 'Learners', value: s.length },
-      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
-      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'from earlier terms' },
+      { label: 'Paid this term', value: fmtMoney(f.paidNow), cls: 'is-success', money: true, sub: `${f.rate}% of this term's bills` },
+      { label: 'Owed', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'From earlier terms', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'part of what is owed' },
       { label: 'Fully paid', value: cleared, cls: 'is-info' },
     ];
   } else if (role === 'bursary') {
     const f = financeSnapshot();
     cards = [
       { label: 'Learners', value: s.length },
-      { label: 'Collected this term', value: fmtMoney(f.collectedThisTerm), cls: 'is-success', money: true, sub: f.rate + '% of this term billed' },
-      { label: 'Outstanding', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
-      { label: 'Arrears b/f', value: fmtMoney(f.arrears), cls: 'is-gold', money: true },
+      { label: 'Paid this term', value: fmtMoney(f.paidNow), cls: 'is-success', money: true, sub: `${f.rate}% of this term's bills` },
+      { label: 'Owed', value: fmtMoney(outstanding), cls: 'is-danger', money: true, sub: f.debtors + ' learners owe' },
+      { label: 'From earlier terms', value: fmtMoney(f.arrears), cls: 'is-gold', money: true, sub: 'part of what is owed' },
       { label: 'Fully paid', value: cleared, cls: 'is-info' },
     ];
   } else if (role === 'teacher') {
@@ -567,109 +640,130 @@ function updateMetrics() {
     </div>`).join('');
 }
 
+/* Students: one row per child that fits a phone. One money figure (what is
+   owed in all, as on the learner page), sorted by class then name. */
+const DIR_PAGE = 50;
+function studentSearchMatch(s, words, digits) {
+  const hay = `${s.name} ${s.id} ${s.class} ${s.stream || ''}`.toLowerCase();
+  if (words.length && words.every(w => hay.includes(w))) return true;
+  // A guardian's phone, typed any way (0772…, +256 772…, 772 123…).
+  return digits.length >= 6 && [s.guardian, s.guardian2].some(g => (g || '').replace(/\D/g, '').includes(digits.length > 9 ? digits.slice(-9) : digits));
+}
 function renderStudentTable() {
   const body = el('studentTableBody'); if (!body) return;
-  const q = (el('searchInput').value || '').toLowerCase();
-  const levelF = el('levelFilter').value || '';
-  const list = state.students.filter(s =>
-    (!q || s.name.toLowerCase().includes(q) || s.class.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) &&
-    (!levelF || s.level === levelF)
-  );
-  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  fillSelect('dirClass', '<option value="">All classes</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const raw = (el('searchInput').value || '').trim().toLowerCase();
+  const words = raw.split(/\s+/).filter(Boolean), digits = raw.replace(/\D/g, '');
+  const money = hasTab('payments');   // a teacher's list shows no fees
+  const showWrap = el('dirShow') && el('dirShow').parentElement; if (showWrap) showWrap.style.display = money ? '' : 'none';
+  const title = document.querySelector('#panel-directory [data-sub="list"] .card-title');
+  if (title) title.textContent = AUTH.currentUserClasses() ? 'My classes' : 'All students';
+  const cls = el('dirClass').value, show = money ? el('dirShow').value : '';
+  const order = c => { const i = CLASS_OPTIONS.indexOf(c); return i < 0 ? 999 : i; };
+  const inClass = visibleStudents().filter(s => (!cls || s.class === cls) && (!raw || studentSearchMatch(s, words, digits)))
+    .map(s => ({ s, owes: money ? studentAccount(s).balance : 0 }));
+  const owing = inClass.filter(x => x.owes > 0).length;
+  const list = inClass.filter(x => !show || (show === 'owe' ? x.owes > 0 : x.owes <= 0))
+    .sort((a, b) => order(a.s.class) - order(b.s.class) || (a.s.stream || '').localeCompare(b.s.stream || '') || a.s.name.localeCompare(b.s.name));
+  const pages = Math.max(1, Math.ceil(list.length / DIR_PAGE));
   if (studentPage > pages) studentPage = pages;
-  const slice = list.slice((studentPage - 1) * PAGE_SIZE, studentPage * PAGE_SIZE);
+  const slice = list.slice((studentPage - 1) * DIR_PAGE, studentPage * DIR_PAGE);
 
-  if (!list.length) {
-    body.innerHTML = '<tr><td colspan="11" class="empty">No students match your filters.</td></tr>';
-  } else {
-    body.innerHTML = slice.map(s => {
-      const acct = studentAccount(s), fee = effectiveFee(s), bal = acct.balance, paid = studentPaid(s);
-      const status = bal <= 0 ? '<span class="badge badge-success">Cleared</span>'
-        : acct.arrears > 0 ? `<span class="badge badge-danger">${fmtMoney(bal)}</span>`
-        : (paid > 0 ? `<span class="badge badge-warn">${fmtMoney(bal)}</span>` : `<span class="badge badge-danger">${fmtMoney(bal)}</span>`);
-      const sport = s.sport ? `${escapeHtml(s.sport)} ${skillBadge(s.skillLevel)}` : '<span class="t-muted">—</span>';
-      const gender = s.gender === 'Female' ? '<span style="color:#be185d">Female</span>' : s.gender === 'Male' ? '<span style="color:#1d4ed8">Male</span>' : '<span class="t-muted">—</span>';
-      const board = s.boardingStatus === 'Boarding' ? '<span class="badge badge-purple">Boarding</span>' : s.boardingStatus === 'Weekly' ? '<span class="badge badge-info">Weekly</span>' : '<span class="badge badge-neutral">Day</span>';
-      const bursaryTag = (s.bursaryPct > 0 ? `<div class="card-desc" style="color:var(--warn)">−${s.bursaryPct}% bursary</div>` : '') + (acct.arrears > 0 ? `<div class="card-desc" style="color:var(--danger)">+${fmtMoney(acct.arrears)} arrears</div>` : '');
-      const senTag = s.senFlag ? `<div class="card-desc" style="color:#6d28d9">SEN: ${escapeHtml(s.senFlag)}</div>` : '';
-      const editBtn = can('canEditStudents') ? `<button class="btn-icon" title="Edit" data-act="editStudent" data-id="${escapeHtml(s.id)}">${icon('edit', 15)}</button>` : '';
-      const delBtn = can('canDeleteStudents') ? `<button class="btn-icon" title="Remove" data-act="deleteStudent" data-id="${escapeHtml(s.id)}">${icon('trash', 15)}</button>` : '';
-      return `<tr>
-        <td class="t-id">${escapeHtml(s.id)}${s.unebIndexNo ? '<div class="card-desc" style="color:var(--info)">' + escapeHtml(s.unebIndexNo) + '</div>' : ''}</td>
-        <td style="font-weight:600">${escapeHtml(s.name)}${senTag}</td>
-        <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.combination ? '<div class="card-desc">' + escapeHtml(s.combination) + '</div>' : ''}</td>
-        <td>${gender}</td>
-        <td>${board}</td>
-        <td>${escapeHtml(s.guardian)}${s.guardian2 ? `<div class="card-desc">${escapeHtml(s.guardian2)}</div>` : ''}</td>
-        <td>${sport}</td>
-        <td class="t-num">${fmtMoney(fee)}${bursaryTag}</td>
-        <td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(paid)}</td>
-        <td>${status}</td>
-        <td><div class="row-actions">
-          <button class="btn-icon" title="Report card" data-act="reportCard" data-id="${escapeHtml(s.id)}">${icon('file', 15)}</button>
-          <button class="btn-icon" title="Fee receipt" data-act="feeReceipt" data-id="${escapeHtml(s.id)}">${icon('printer', 15)}</button>
-          <button class="btn-icon" title="SMS guardian" data-act="smsBalance" data-id="${escapeHtml(s.id)}">${icon('message', 15)}</button>
-          ${editBtn}${delBtn}
-        </div></td>
-      </tr>`;
-    }).join('');
+  const sum = el('dirSummary');
+  if (sum) {
+    sum.style.display = inClass.length ? '' : 'none';
+    sum.innerHTML = `<strong>${inClass.length}</strong> learner${inClass.length === 1 ? '' : 's'}${cls ? ' in ' + escapeHtml(cls) : ''}${raw ? ' matching your search' : ''}`
+      + (!money ? '' : ' · ' + (owing ? `<button type="button" class="link-btn t-bad" data-act="dirShowOwe">${owing} owe fees</button>` : '<span class="t-ok">nobody owes fees</span>')
+        + ` · ${inClass.length - owing} paid up`);
   }
+  const tel = g => { const n = normalizePhone(g); return n ? `<a href="tel:${escapeHtml(n)}">${escapeHtml(g)}</a>` : escapeHtml(g || '—'); };
+  body.innerHTML = slice.length ? slice.map(({ s, owes }) => {
+    const editBtn = can('canEditStudents') ? `<button class="btn btn-outline btn-xs" type="button" data-act="editStudent" data-id="${escapeHtml(s.id)}">Edit</button>` : '';
+    const delBtn = can('canDeleteStudents') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteStudent" data-id="${escapeHtml(s.id)}" aria-label="Remove ${escapeHtml(s.name)}">Remove</button>` : '';
+    return `<div class="dir-row">
+      <div class="dir-main">
+        <div style="font-weight:600">${learnerLink(s.id, s.name)}${s.senFlag ? ` <span class="badge badge-purple">${escapeHtml(s.senFlag)}</span>` : ''}</div>
+        <div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''} · ${escapeHtml(s.id)}${s.boardingStatus && s.boardingStatus !== 'Day' ? ' · ' + escapeHtml(s.boardingStatus === 'Weekly' ? 'Weekly boarder' : 'Boarder') : ''}</div>
+        <div class="card-desc">Guardian ${tel(s.guardian)}${s.guardian2 ? ' · ' + tel(s.guardian2) : ''}</div>
+      </div>
+      <div class="dir-side">
+        ${money ? `<div class="dir-owes ${owes > 0 ? 't-bad' : 't-ok'}">${owes > 0 ? 'Owes ' + fmtMoney(owes) : 'Paid up'}</div>` : '<div></div>'}
+        <div class="row-actions"><button class="btn btn-primary btn-xs" type="button" data-act="learner" data-id="${escapeHtml(s.id)}">Open</button>${editBtn}${delBtn}</div>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.students.length ? 'No learners match. Clear the search or choose All classes.' : 'No learners yet. Use Admit a student, or Import from Excel.'}</div>`;
   const pager = el('studentPager');
   if (pager) {
-    pager.innerHTML = list.length ? `
-      <span>Showing ${(studentPage - 1) * PAGE_SIZE + 1}–${Math.min(studentPage * PAGE_SIZE, list.length)} of ${list.length}</span>
+    pager.innerHTML = list.length > DIR_PAGE ? `
+      <span>Showing ${(studentPage - 1) * DIR_PAGE + 1}–${Math.min(studentPage * DIR_PAGE, list.length)} of ${list.length}</span>
       <span class="pager-btns">
-        <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="prev" ${studentPage <= 1 ? 'disabled' : ''}>${icon('left', 14)} Prev</button>
+        <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="prev" ${studentPage <= 1 ? 'disabled' : ''}>${icon('left', 14)} Previous</button>
         <button class="btn btn-outline btn-xs" data-act="studentPage" data-page="next" ${studentPage >= pages ? 'disabled' : ''}>Next ${icon('right', 14)}</button>
       </span>` : '';
   }
 }
 
-function renderPaymentsTable() {
-  const body = el('paymentsTableBody');
-  const recent = el('recentPaymentsBody');
-  const sorted = [...state.payments].sort((a, b) => (b.ts || b.date).localeCompare(a.ts || a.date));
-  if (body) {
-    body.innerHTML = sorted.length ? sorted.map(p => {
-      const s = state.students.find(x => x.id === p.studentId);
-      const voidCol = `<button class="btn-icon" title="Print receipt" data-act="paymentReceipt" data-id="${escapeHtml(p.id)}">${icon('printer', 15)}</button>` + (can('canVoidPayment') && !p.void ? ` <button class="btn btn-danger btn-xs" data-act="voidPayment" data-id="${escapeHtml(p.id)}">Reverse</button>` : '');
-      return `<tr style="${p.void ? 'opacity:0.55' : ''}">
-        <td class="t-muted">${p.date}</td>
-        <td class="t-id">${escapeHtml(p.studentId)}</td>
-        <td style="font-weight:600">${s ? escapeHtml(s.name) : '<em class="t-muted">(removed)</em>'}${p.void ? ' <span class="badge badge-danger">Reversed</span>' : ''}</td>
-        <td>${escapeHtml(p.method || 'Cash')}${p.reference ? '<div class="card-desc">Ref: ' + escapeHtml(p.reference) + '</div>' : ''}</td>
-        <td class="card-desc">${escapeHtml(p.recordedByName || '—')}</td>
-        <td class="t-num" style="color:var(--success);font-weight:600;${p.void ? 'text-decoration:line-through' : ''}">${fmtMoney(p.amount)}</td>
-        <td class="t-num">${voidCol}</td>
-      </tr>`;
-    }).join('') : '<tr><td colspan="7" class="empty">No payments recorded yet.</td></tr>';
-  }
-  if (recent) {
-    const live = sorted.filter(p => !p.void).slice(0, 6);
-    recent.innerHTML = live.length ? live.map(p => {
-      const s = state.students.find(x => x.id === p.studentId);
-      return `<tr><td class="t-muted">${p.date}</td><td>${s ? escapeHtml(s.name) : '—'}</td><td class="t-num" style="color:var(--success);font-weight:600">${fmtMoney(p.amount)}</td></tr>`;
-    }).join('') : '<tr><td colspan="3" class="empty">No payments yet.</td></tr>';
-  }
+/* A programme's athletes: its own list, or, until the coach edits it, the
+   learners whose primary sport is the programme's sport. */
+function programAthletes(p) {
+  if (Array.isArray(p.athleteIds)) return p.athleteIds.map(id => state.students.find(s => s.id === id)).filter(Boolean);
+  return state.students.filter(s => (s.sport || '').toLowerCase() === (p.sport || '').toLowerCase() && s.sport);
 }
-
 function renderPrograms() {
   const grid = el('programsGrid'); if (!grid) return;
   if (!state.programs.length) { grid.innerHTML = '<div class="empty">No programs yet.</div>'; return; }
   grid.innerHTML = state.programs.map(p => {
-    const enrolled = state.students.filter(s => (s.sport || '').toLowerCase() === (p.sport || '').toLowerCase()).length;
+    const athletes = programAthletes(p).sort((a, b) => a.name.localeCompare(b.name));
     const days = (p.days || []).map(d => `<span class="badge badge-info">${escapeHtml(d)}</span>`).join(' ') || '<span class="t-muted" style="font-size:12px">No schedule</span>';
     const reqs = (p.requirements || []).length ? '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--muted)">' + p.requirements.map(r => `<li>${escapeHtml(r)}</li>`).join('') + '</ul>' : '<p class="card-desc" style="margin-top:6px">No requirements listed</p>';
-    const del = can('canAddProgram') ? `<button class="btn-icon" title="Remove" data-act="deleteProgram" data-id="${escapeHtml(p.id)}">${icon('trash', 15)}</button>` : '';
+    const del = can('canAddProgram') ? `<button class="btn-icon" title="Remove this programme" aria-label="Remove ${escapeHtml(p.name)}" data-act="deleteProgram" data-id="${escapeHtml(p.id)}">${icon('trash', 15)}</button>` : '';
+    const names = athletes.slice(0, 8).map(s => learnerLink(s.id, s.name)).join(', ') + (athletes.length > 8 ? ` <span class="card-desc">+ ${athletes.length - 8} more</span>` : '');
+    const edit = can('canAddProgram') ? `<button class="btn btn-outline btn-xs" type="button" data-act="programAthletes" data-id="${escapeHtml(p.id)}" style="margin-top:8px">Add or remove athletes</button>` : '';
     return `<div class="tile">
       <div style="display:flex;justify-content:space-between;gap:8px">
         <div><div style="font-weight:700">${escapeHtml(p.name)}</div><div class="card-desc">${escapeHtml(p.sport)} · Coach ${escapeHtml(p.coach)}</div></div>${del}
       </div>
       <div class="pill-list" style="margin-top:9px">${days}</div>
+      <div class="form-label" style="margin-top:11px;margin-bottom:2px">Athletes (${athletes.length})</div>
+      <div style="font-size:13px;line-height:1.7">${athletes.length ? names : '<span class="card-desc">No athletes yet.</span>'}</div>${edit}
       <div class="form-label" style="margin-top:11px;margin-bottom:2px">Requirements</div>${reqs}
-      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);margin-top:11px;padding-top:9px;font-size:12.5px"><span class="t-muted">Enrolled</span><span style="font-weight:700;color:var(--brand)">${enrolled}</span></div>
     </div>`;
   }).join('');
+}
+/* Tick the learners in a programme. Saving makes the programme's own list. */
+function openProgramAthletes(programId) {
+  if (!can('canAddProgram')) return toast('You do not have permission.', 'error');
+  const p = state.programs.find(x => x.id === programId); if (!p) return;
+  const inProg = new Set(programAthletes(p).map(s => s.id));
+  const learners = [...state.students].sort((a, b) => (CLASS_OPTIONS.indexOf(a.class) - CLASS_OPTIONS.indexOf(b.class)) || a.name.localeCompare(b.name));
+  const classes = [...new Set(learners.map(s => s.class))];
+  openModal({
+    title: 'Athletes in ' + escapeHtml(p.name), wide: true,
+    bodyHtml: `<p class="card-desc" style="margin:0 0 10px">Tick every learner who trains in ${escapeHtml(p.name)}. A learner can be in more than one programme.</p>
+      <div class="form-row" style="margin-bottom:10px"><div><label class="form-label" for="paClass">Class</label><select class="input" id="paClass"><option value="">All classes</option>${classes.map(c => `<option>${escapeHtml(c)}</option>`).join('')}</select></div>
+        <div><label class="form-label" for="paSearch">Search</label><input class="input" id="paSearch" type="search" placeholder="Name"></div></div>
+      <div class="reg-summary" id="paCount"></div>
+      <div class="scroll-box" id="paList" style="max-height:380px">${learners.map(s => `<label class="roster-item pa-row" data-class="${escapeHtml(s.class)}" data-name="${escapeHtml(s.name.toLowerCase())}" style="cursor:pointer">
+        <div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}${s.sport ? ' · ' + escapeHtml(s.sport) : ''}</div></div>
+        <input type="checkbox" class="pa-tick" value="${escapeHtml(s.id)}" ${inProg.has(s.id) ? 'checked' : ''} aria-label="${escapeHtml(s.name)} trains in ${escapeHtml(p.name)}"></label>`).join('')}</div>`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="paSave">Save athletes</button>',
+    onOpen(root) {
+      const count = () => { root.querySelector('#paCount').textContent = `${root.querySelectorAll('.pa-tick:checked').length} athletes ticked`; };
+      const filter = () => {
+        const c = root.querySelector('#paClass').value, q = root.querySelector('#paSearch').value.trim().toLowerCase();
+        root.querySelectorAll('.pa-row').forEach(r => { r.style.display = (!c || r.dataset.class === c) && (!q || r.dataset.name.includes(q)) ? '' : 'none'; });
+      };
+      root.querySelector('#paClass').addEventListener('change', filter);
+      root.querySelector('#paSearch').addEventListener('input', filter);
+      root.querySelector('#paList').addEventListener('change', count);
+      count();
+      root.querySelector('#paSave').addEventListener('click', () => {
+        p.athleteIds = [...root.querySelectorAll('.pa-tick:checked')].map(x => x.value);
+        saveState(); renderAll(); closeModal();
+        toast(`${p.name} now has ${p.athleteIds.length} athlete${p.athleteIds.length === 1 ? '' : 's'}.`, 'success');
+      });
+    },
+  });
 }
 
 function renderPerformanceTable() {
@@ -680,7 +774,7 @@ function renderPerformanceTable() {
     const notes = s.performanceNotes || [];
     const latest = notes[notes.length - 1];
     return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
+      <td style="font-weight:600">${learnerLink(s.id, s.name)}</td>
       <td>${escapeHtml(s.class)}</td>
       <td>${escapeHtml(s.sport)}</td>
       <td>${skillBadge(s.skillLevel)}</td>
@@ -694,40 +788,86 @@ function renderPerformanceTable() {
 function renderAttendanceProgramSelect() {
   const sel = el('attendanceProgram'); if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">Select a program…</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.sport)})</option>`).join('');
+  sel.innerHTML = '<option value="">Choose a programme…</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.sport)})</option>`).join('');
   if (cur) sel.value = cur;
+  const f = el('sessProgram');
+  if (f) { const c = f.value; f.innerHTML = '<option value="">All programmes</option>' + state.programs.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join(''); if (c) f.value = c; }
+  if (el('attendanceDate') && !el('attendanceDate').value) el('attendanceDate').value = todayISO();
 }
+/* Training attendance: the same tap-a-name list as the class register. */
 function renderAttendanceRoster() {
   const roster = el('attendanceRoster'); if (!roster) return;
   const programId = el('attendanceProgram').value;
-  const date = el('attendanceDate').value;
-  if (!programId) { roster.innerHTML = '<div class="empty">Select a program to load enrolled athletes.</div>'; return; }
+  const date = el('attendanceDate').value || todayISO();
+  if (!programId) { roster.innerHTML = '<div class="empty">Choose a programme to list its athletes.</div>'; renderTrainingSummary(); return; }
   const program = state.programs.find(p => p.id === programId);
-  const athletes = state.students.filter(s => (s.sport || '').toLowerCase() === (program.sport || '').toLowerCase());
-  if (!athletes.length) { roster.innerHTML = '<div class="empty">No athletes enrolled for this sport.</div>'; return; }
+  const athletes = program ? programAthletes(program).sort((a, b) => a.name.localeCompare(b.name)) : [];
+  if (!athletes.length) { roster.innerHTML = '<div class="empty">No athletes in this programme yet. Add them under Sports → Programmes.</div>'; renderTrainingSummary(); return; }
   const existing = state.attendance.find(a => a.programId === programId && a.date === date);
   const presentMap = {};
   if (existing) (existing.records || []).forEach(r => { presentMap[r.studentId] = r.present; });
   roster.innerHTML = athletes.map(s => {
-    const present = presentMap[s.id] !== false;
-    return `<label class="roster-item" style="cursor:pointer">
-      <div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.level)}</div></div>
-      <span class="check"><span class="att-state" data-for="${escapeHtml(s.id)}" style="font-size:12px;font-weight:600;color:${present ? 'var(--success)' : 'var(--faint)'}">${present ? 'Present' : 'Absent'}</span>
-      <input type="checkbox" class="att-toggle" data-student="${escapeHtml(s.id)}" ${present ? 'checked' : ''}></span>
-    </label>`;
+    const st = presentMap[s.id] === true ? 'P' : presentMap[s.id] === false ? 'A' : '';
+    return `<div class="roster-item reg-row${st ? '' : ' is-unmarked'}" data-student="${escapeHtml(s.id)}" data-status="${st}">
+      <div class="reg-name"><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}<span class="reg-unmarked"> · Not marked</span></div></div>
+      <div class="seg seg-words" role="radiogroup" aria-label="Training attendance for ${escapeHtml(s.name)}">${[['P', 'Present'], ['A', 'Absent']].map(([k, label]) => `<button type="button" role="radio" aria-checked="${k === st}" class="${k === st ? 'on-' + k : ''}" data-set-att="${k}">${label}</button>`).join('')}</div>
+    </div>`;
   }).join('');
+  const note = el('trainingNote');
+  if (note) note.textContent = existing ? 'This session was saved before. Change anyone and press Save session to update it.' : 'Tap Present or Absent for every athlete, then press Save session. Nobody is counted present until you mark them.';
+  renderTrainingSummary();
 }
+function renderTrainingSummary() {
+  const box = el('trainSummary'); if (!box) return;
+  const rows = [...document.querySelectorAll('#attendanceRoster .reg-row')];
+  if (!rows.length) { box.style.display = 'none'; return; }
+  const nameOf = r => escapeHtml((state.students.find(s => s.id === r.dataset.student) || {}).name || '');
+  const missed = rows.filter(r => r.dataset.status === 'A').map(nameOf);
+  const unmarked = rows.filter(r => !r.dataset.status).map(nameOf);
+  const present = rows.filter(r => r.dataset.status === 'P').length;
+  box.style.display = '';
+  box.innerHTML = `<strong>${rows.length}</strong> athlete${rows.length === 1 ? '' : 's'}`
+    + (unmarked.length ? ` · <span class="t-warn">${unmarked.length} not marked yet: ${unmarked.join(', ')}</span>` : '')
+    + ` · <span class="t-ok">${present} present</span>`
+    + (missed.length ? ` · <span class="t-bad">${missed.length} missed: ${missed.join(', ')}</span>` : '');
+}
+function setAttendanceRow(row, st) {
+  row.dataset.status = st;
+  row.classList.remove('is-unmarked', 'needs-mark');
+  row.querySelectorAll('[data-set-att]').forEach(b => { const on = b.dataset.setAtt === st; b.className = on ? 'on-' + st : ''; b.setAttribute('aria-checked', on); });
+  renderTrainingSummary();
+}
+/* Sessions: every training session, with the names of who missed it. */
+function renderSessionList() {
+  const box = el('sessionList'); if (!box) return;
+  const f = el('sessProgram') ? el('sessProgram').value : '';
+  const list = state.attendance.filter(a => !f || a.programId === f).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  box.innerHTML = list.length ? list.map(a => {
+    const p = state.programs.find(x => x.id === a.programId) || { name: 'Programme removed' };
+    const recs = a.records || [];
+    const missed = recs.filter(r => !r.present).map(r => state.students.find(s => s.id === r.studentId)).filter(Boolean);
+    const change = can('canMarkAttendance') && p.id ? `<button class="btn btn-outline btn-xs" type="button" data-act="openSession" data-id="${escapeHtml(a.programId)}" data-date="${escapeHtml(a.date)}">Change</button>` : '';
+    return `<div class="abs-item"><div class="abs-head"><div><strong>${escapeHtml(fmtDay(a.date))}</strong> · <strong>${escapeHtml(p.name)}</strong> · <span class="card-desc">${recs.length - missed.length} of ${recs.length} came</span></div>${change}</div>
+      <div class="abs-names">${missed.length ? `<span class="abs-label t-bad">Missed:</span> ${missed.map(s => learnerLink(s.id, s.name)).join(', ')}` : '<span class="t-ok">Everyone came.</span>'}</div></div>`;
+  }).join('') : '<div class="empty">No training sessions recorded yet.</div>';
+}
+/* Who attends training: each athlete's sessions, rate and the dates missed. */
 function renderAttendanceTable() {
   const body = el('attendanceTableBody'); if (!body) return;
-  const athletes = state.students.filter(s => s.sport);
-  if (!athletes.length || !state.attendance.length) { body.innerHTML = '<tr><td colspan="5" class="empty">No sessions recorded yet.</td></tr>'; return; }
+  // Athletes with at least one session recorded.
+  const ids = new Set();
+  state.attendance.forEach(a => (a.records || []).forEach(r => ids.add(r.studentId)));
+  const athletes = state.students.filter(s => ids.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!athletes.length || !state.attendance.length) { body.innerHTML = '<tr><td colspan="6" class="empty">No sessions recorded yet.</td></tr>'; return; }
   body.innerHTML = athletes.map(s => {
     const att = studentAttendance(s.id);
+    const missed = state.attendance.filter(a => (a.records || []).some(r => r.studentId === s.id && !r.present)).map(a => a.date).sort().reverse();
     const color = att.rate >= 75 ? 'var(--success)' : att.rate >= 50 ? 'var(--warn)' : 'var(--danger)';
-    return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.sport)}</td><td class="t-center">${att.total}</td><td class="t-center">${att.present}</td><td class="t-center" style="font-weight:700;color:${color}">${att.rate}%</td></tr>`;
+    const progs = state.programs.filter(p => programAthletes(p).some(x => x.id === s.id)).map(p => p.name).join(', ') || s.sport || '—';
+    return `<tr><td style="font-weight:600">${learnerLink(s.id, s.name)}</td><td>${escapeHtml(progs)}</td><td class="t-center">${att.total}</td><td class="t-center">${att.present}</td><td class="t-center" style="font-weight:700;color:${color}">${att.total ? att.rate + '%' : '—'}</td>
+      <td>${missed.length ? `<span class="t-bad">${missed.slice(0, 4).map(d => escapeHtml(fmtDay(d, false))).join(', ')}</span>${missed.length > 4 ? ` <span class="card-desc">+ ${missed.length - 4} more</span>` : ''}` : '<span class="t-ok">None</span>'}</td></tr>`;
   }).join('');
 }
-
 function renderBursaryTable() {
   const body = el('bursaryTableBody'); if (!body) return;
   const athletes = state.students.filter(s => s.sport);
@@ -738,7 +878,7 @@ function renderBursaryTable() {
     const badge = eligible ? '<span class="badge badge-success">Eligible</span>' : '<span class="badge badge-neutral">Below threshold</span>';
     const action = can('canAwardBursary') ? `<button class="btn btn-gold btn-xs" data-act="setBursary" data-id="${escapeHtml(s.id)}">Award</button>` : (s.bursaryPct > 0 ? `<span style="color:var(--warn);font-weight:700">${s.bursaryPct}%</span>` : '—');
     return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
+      <td style="font-weight:600">${learnerLink(s.id, s.name)}</td>
       <td class="card-desc">${escapeHtml(s.class)} · ${escapeHtml(s.level)}</td>
       <td>${escapeHtml(s.sport)} ${skillBadge(s.skillLevel)}</td>
       <td class="t-center">${att.rate}% <span class="card-desc">(${att.present}/${att.total})</span></td>
@@ -750,55 +890,237 @@ function renderBursaryTable() {
   }).join('');
 }
 
-function renderConductTable() {
-  const body = el('conductTableBody'); if (!body) return;
-  const filter = el('conductFilter').value;
-  const list = [...state.conduct].filter(c => !filter || c.severity === filter).sort((a, b) => b.date.localeCompare(a.date));
-  if (!list.length) { body.innerHTML = '<tr><td colspan="8" class="empty">No conduct entries.</td></tr>'; return; }
-  const sev = { Positive: 'badge-success', Minor: 'badge-info', Major: 'badge-warn', Severe: 'badge-danger' };
-  body.innerHTML = list.map(c => {
-    const s = state.students.find(x => x.id === c.studentId);
-    const del = can('canDeleteConduct') ? `<button class="btn-icon" title="Delete" data-act="deleteConduct" data-id="${escapeHtml(c.id)}">${icon('trash', 15)}</button>` : '';
-    const sms = s ? `<button class="btn-icon" title="SMS guardian" data-act="smsConduct" data-id="${escapeHtml(c.id)}">${icon('message', 15)}</button>` : '';
-    return `<tr>
-      <td class="t-muted">${c.date}</td>
-      <td style="font-weight:600">${s ? escapeHtml(s.name) : '<em class="t-muted">(removed)</em>'}</td>
-      <td>${s ? escapeHtml(s.class) : '—'}</td>
-      <td>${escapeHtml(c.type)}</td>
-      <td><span class="badge ${sev[c.severity] || 'badge-neutral'}">${escapeHtml(c.severity)}</span></td>
-      <td style="max-width:240px">${escapeHtml(c.description)}</td>
-      <td class="t-muted">${escapeHtml(c.reportedBy)}</td>
-      <td><div class="row-actions">${sms}${del}</div></td>
-    </tr>`;
-  }).join('');
+/* ── Discipline ────────────────────────────────────────────────────────── */
+/* What happened sets how serious it is, so a detention can never be stored
+   or texted as a commendation. Older entries keep their type, and their
+   group comes from the type too. */
+const CONDUCT_TYPES = {
+  'Commendation':    { group: 'good',    severity: 'Positive', label: 'Commendation',    said: 'received a commendation' },
+  'Verbal Warning':  { group: 'concern', severity: 'Minor',    label: 'Verbal warning',  said: 'was given a verbal warning' },
+  'Counselling':     { group: 'concern', severity: 'Minor',    label: 'Counselling',     said: 'was referred for counselling' },
+  'Written Warning': { group: 'serious', severity: 'Major',    label: 'Written warning', said: 'was given a written warning' },
+  'Detention':       { group: 'serious', severity: 'Major',    label: 'Detention',       said: 'was given a detention' },
+  'Suspension':      { group: 'serious', severity: 'Severe',   label: 'Suspension',      said: 'was suspended' },
+};
+const CONDUCT_GROUPS = { good: ['Good', 'badge-success'], concern: ['A concern', 'badge-warn'], serious: ['Serious', 'badge-danger'] };
+function conductKind(c) {
+  const t = CONDUCT_TYPES[c.type];
+  if (t) return t;
+  const group = c.severity === 'Positive' ? 'good' : ['Major', 'Severe'].includes(c.severity) ? 'serious' : 'concern';
+  return { group, severity: c.severity || 'Minor', label: c.type || 'Conduct entry', said: `had a conduct entry (${String(c.type || 'other').toLowerCase()})` };
+}
+/* The message to the guardian: the date, what happened and what the child did. */
+function conductMessage(c, s, whatsapp = false) {
+  const k = conductKind(c);
+  const name = whatsapp ? `*${s.name}*` : s.name;
+  const close = k.group === 'good' ? 'Well done!' : 'Please contact the school if you would like to talk about it.';
+  return `Dear parent/guardian, on ${fmtDay(c.date)} ${name} (${s.class}) ${k.said}${c.description ? `: "${c.description}"` : ''}. ${close} — ${c.reportedBy || 'School staff'}, ${schoolName()}`;
+}
+function conductPhone(s, to) { return normalizePhone(to === '2' ? s.guardian2 : s.guardian); }
+function sendConduct(conductId, to = '1', whatsapp = false) {
+  const c = state.conduct.find(x => x.id === conductId); if (!c) return;
+  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
+  const phone = conductPhone(s, to);
+  if (!phone) return toast(`There is no valid ${to === '2' ? 'second guardian' : 'guardian'} number for ${s.name}.`, 'error');
+  const text = conductMessage(c, s, whatsapp);
+  window.open(whatsapp ? 'https://wa.me/' + phone.replace('+', '') + '?text=' + encodeURIComponent(text) : 'sms:' + phone + '?body=' + encodeURIComponent(text), '_blank');
 }
 
+/* Returns the saved entry, or null when it was refused (the form keeps what was typed). */
+function addConduct(f) {
+  const no = msg => { toast(msg, 'error'); return null; };
+  if (!can('canLogConduct')) return no('You do not have permission to log conduct.');
+  const s = state.students.find(x => x.id === f.studentId);
+  if (!s) return no('Choose the learner first.');
+  const kind = CONDUCT_TYPES[f.type];
+  if (!kind) return no('Choose what happened.');
+  const description = (f.description || '').trim();
+  if (!description) return no('Write what the child did.');
+  const date = f.date || todayISO();
+  if (date > todayISO()) return no('The date cannot be in the future.');
+  const entry = { id: newId('CON'), studentId: s.id, date, type: f.type, severity: kind.severity, description, reportedBy: (f.reportedBy || '').trim() || currentSession.displayName };
+  state.conduct.push(entry);
+  saveState(); renderAll();
+  AUTH.audit('CONDUCT_ADD', `${kind.label} · ${s.name} (${s.id}) · ${fmtDay(date)}`);
+  toast(`${kind.label} saved for ${s.name}.`, 'success');
+  return entry;
+}
+async function deleteConduct(id) {
+  if (!can('canDeleteConduct')) return toast('You do not have permission.', 'error');
+  const c = state.conduct.find(x => x.id === id); if (!c) return;
+  const s = state.students.find(x => x.id === c.studentId);
+  const k = conductKind(c);
+  const who = s ? s.name : 'this learner';
+  if (!await confirmDialog({ title: 'Delete a conduct entry', message: `Delete the ${k.label.toLowerCase()} for ${who} on ${fmtDay(c.date)}? It is removed from ${who}'s record.`, confirmLabel: 'Delete entry', danger: true })) return;
+  state.conduct = state.conduct.filter(x => x.id !== id);
+  saveState(); renderAll();
+  AUTH.audit('CONDUCT_DELETE', `${k.label} · ${who}${s ? ' (' + s.id + ')' : ''} · ${fmtDay(c.date)}`);
+  toast('Conduct entry deleted.', 'success');
+}
+/* After saving: the message for the guardian, ready to send. */
+function showConductDone(c) {
+  const box = el('conductDone'); if (!box || !c) return;
+  const s = state.students.find(x => x.id === c.studentId); if (!s) return;
+  const k = conductKind(c);
+  const send = (to, label) => `<button class="btn btn-outline btn-sm" type="button" data-act="smsConduct" data-id="${escapeHtml(c.id)}" data-to="${to}">SMS ${label}</button><button class="btn btn-outline btn-sm" type="button" data-act="waConduct" data-id="${escapeHtml(c.id)}" data-to="${to}">WhatsApp ${label}</button>`;
+  box.className = 'tile pay-done';
+  box.style.display = '';
+  box.innerHTML = `<div class="pay-done-title">${icon('check', 18)} Saved: ${escapeHtml(k.label.toLowerCase())} for ${escapeHtml(s.name)}</div>
+    <div class="form-label" style="margin:10px 0 4px">Message for the guardian</div>
+    <div class="tile" style="background:#fff;font-size:13.5px;white-space:pre-wrap" id="conductMsg">${escapeHtml(conductMessage(c, s))}</div>
+    <div class="toolbar" style="margin-top:10px">${conductPhone(s, '1') ? send('1', 'guardian') : '<span class="card-desc">No valid guardian number on file.</span>'}${s.guardian2 && conductPhone(s, '2') ? send('2', 'second guardian') : ''}</div>
+    <div class="toolbar" style="margin-top:8px"><button class="btn btn-ghost btn-sm" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="discipline">Open ${escapeHtml(s.name)}</button><button class="btn btn-ghost btn-sm" type="button" data-act="conductAnother">Log another</button></div>`;
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
+}
+/* The form: class first, then the child; today's date and the signed-in person by default. */
+function renderConductForm() {
+  if (!el('conductStudent')) return;
+  const classes = classesWithLearners();
+  fillSelect('conductClass', '<option value="">All classes</option>' + classes.map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+  const cls = el('conductClass').value;
+  const list = state.students.filter(s => !cls || s.class === cls).sort((a, b) => a.name.localeCompare(b.name));
+  fillSelect('conductStudent', `<option value="">${list.length ? 'Choose a learner…' : 'No learners in this class'}</option>` + list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(classAndStream(s))}</option>`).join(''));
+  const d = el('conductDate'); if (d) { d.max = todayISO(); if (!d.value) d.value = todayISO(); }
+  const by = el('conductBy'); if (by && !by.value && currentSession) by.value = currentSession.displayName || '';
+  fillSelect('conductClassFilter', '<option value="">All classes</option>' + classes.map(c => `<option>${escapeHtml(c)}</option>`).join(''));
+}
+/* Choose a learner on the form (e.g. "Log a conduct entry" on their learner page). */
+function chooseConductLearner(id) {
+  const s = state.students.find(x => x.id === id); if (!s) return;
+  const sel = el('conductClass');
+  if (sel) sel.value = [...sel.options].some(o => o.value === s.class) ? s.class : '';
+  renderConductForm();
+  el('conductStudent').value = id;
+}
+function conductInTerm(c, t) { return inTermWindow(c.date, t); }
+function renderConductTable() {
+  const body = el('conductTableBody'); if (!body) return;
+  const cls = (el('conductClassFilter') || {}).value || '';
+  const group = (el('conductFilter') || {}).value || '';
+  const period = (el('conductPeriod') || {}).value || 'term';
+  const t = getCurrentTerm();
+  const byId = new Map(state.students.map(s => [s.id, s]));
+  const inView = state.conduct.filter(c => {
+    const s = byId.get(c.studentId);
+    return (!cls || (s && s.class === cls)) && (period === 'all' || conductInTerm(c, t));
+  });
+  const list = inView.filter(c => !group || conductKind(c).group === group)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+  const sum = el('conductSummary');
+  if (sum) {
+    const n = { good: 0, concern: 0, serious: 0 };
+    inView.forEach(c => { n[conductKind(c).group]++; });
+    const counts = {};
+    inView.filter(c => conductKind(c).group !== 'good').forEach(c => { counts[c.studentId] = (counts[c.studentId] || 0) + 1; });
+    const most = Object.entries(counts).filter(([, k]) => k > 1).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([id, k]) => { const s = byId.get(id); return s ? `${learnerLink(s.id, s.name, 'discipline')} (${k})` : ''; }).filter(Boolean);
+    const where = `${period === 'all' ? 'All terms' : escapeHtml(termLabel(t))}${cls ? ' · ' + escapeHtml(cls) : ''}`;
+    sum.innerHTML = inView.length
+      ? `${where}: <strong>${inView.length}</strong> entr${inView.length === 1 ? 'y' : 'ies'} — <span class="t-ok">${n.good} good</span> · <span class="t-warn">${n.concern} concern${n.concern === 1 ? '' : 's'}</span> · <span class="t-bad">${n.serious} serious</span>${most.length ? `<br>More than one concern: ${most.join(', ')}` : ''}`
+      : `${where}: no entries.`;
+  }
+  body.innerHTML = list.length ? list.map(c => {
+    const s = byId.get(c.studentId);
+    const k = conductKind(c);
+    const [glabel, gbadge] = CONDUCT_GROUPS[k.group];
+    const send = s ? `<button class="btn btn-outline btn-xs" type="button" data-act="smsConduct" data-id="${escapeHtml(c.id)}">SMS</button><button class="btn btn-outline btn-xs" type="button" data-act="waConduct" data-id="${escapeHtml(c.id)}">WhatsApp</button>` : '';
+    const del = can('canDeleteConduct') ? `<button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteConduct" data-id="${escapeHtml(c.id)}" aria-label="Delete the entry for ${escapeHtml(s ? s.name : 'this learner')}">Delete</button>` : '';
+    return `<div class="dir-row">
+      <div class="dir-main">
+        <div style="font-weight:600">${s ? learnerLink(s.id, s.name, 'discipline') + ` <span class="card-desc">· ${escapeHtml(classAndStream(s))}</span>` : '<em class="t-muted">Learner removed</em>'}</div>
+        <div style="margin-top:3px"><span class="badge ${gbadge}" title="${escapeHtml(glabel)}">${escapeHtml(k.label)}</span> <span class="card-desc">${escapeHtml(fmtDay(c.date))}${c.reportedBy ? ' · reported by ' + escapeHtml(c.reportedBy) : ''}</span></div>
+        ${c.description ? `<div style="margin-top:4px;font-size:13.5px">${escapeHtml(c.description)}</div>` : ''}
+      </div>
+      <div class="dir-side"><div class="row-actions">${send}${del}</div></div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.conduct.length ? 'No entries match. Choose All classes, Good and bad, or All terms.' : 'No conduct entries yet.'}</div>`;
+}
+
+/* ── Reports: every number opens the children behind it ────────────────── */
+/* The columns of the class grid. Each count is a button (data-act="reportList")
+   that lists those children by name. */
+function sportsAthleteIds() { return new Set((state.programs || []).flatMap(p => programAthletes(p).map(s => s.id))); }
+function reportColumns() {
+  const inSport = sportsAthleteIds();
+  return [
+    ['all', 'Learners', () => true],
+    ['boys', 'Boys', s => s.gender === 'Male'],
+    ['girls', 'Girls', s => s.gender === 'Female'],
+    ['nogender', 'Gender not set', s => s.gender !== 'Male' && s.gender !== 'Female'],
+    ['day', 'Day', s => (s.boardingStatus || 'Day') === 'Day'],
+    ['boarding', 'Boarders', s => s.boardingStatus === 'Boarding'],
+    ['weekly', 'Weekly boarders', s => s.boardingStatus === 'Weekly'],
+    ['sen', 'Special needs', s => !!s.senFlag],
+    ...(hasTab('payments') ? [['owe', 'Owe fees', s => studentAccount(s).balance > 0]] : []),
+    ['sport', 'In sports', s => inSport.has(s.id)],
+  ];
+}
+/* Who a report button stands for: a class or level (or the whole school), and a column. */
+function reportLearners(d) {
+  const col = reportColumns().find(c => c[0] === (d.key || 'all'));
+  if (!col) return { title: '', list: [] };
+  let list = state.students.filter(col[2]);
+  let where = 'whole school';
+  if (d.cls) { list = list.filter(s => s.class === d.cls); where = d.cls; }
+  if (d.level) { list = list.filter(s => s.level === d.level); where = d.level; }
+  if (d.unknownClass) { list = list.filter(s => !CLASS_OPTIONS.includes(s.class)); where = 'a class the app does not recognise'; }
+  if (d.sen) { list = list.filter(s => s.senFlag === d.sen); where = d.sen; }
+  if (d.prog) {
+    const p = state.programs.find(x => x.id === d.prog);
+    const ids = new Set(p ? programAthletes(p).map(s => s.id) : []);
+    list = list.filter(s => ids.has(s.id)); where = p ? p.name : 'programme';
+  }
+  return { title: `${col[1]} · ${where}`, list };
+}
+/* A list of children by name (each opens their page), sorted by class then name. */
+function showLearnerList(title, learners) {
+  const list = [...learners].sort((a, b) => classRank(a.class) - classRank(b.class) || a.name.localeCompare(b.name));
+  openModal({
+    title: `${escapeHtml(title)} (${list.length})`,
+    bodyHtml: list.length ? `<div class="scroll-box" style="max-height:60vh">${list.map(s => `<div class="roster-item"><div>${learnerLink(s.id, s.name)} <span class="card-desc">· ${escapeHtml(classAndStream(s))}${s.gender ? ' · ' + escapeHtml(s.gender) : ''}</span></div></div>`).join('')}</div>`
+      : '<p class="card-desc">Nobody.</p>',
+    footHtml: '<button class="btn btn-primary" data-modal-close>Close</button>',
+  });
+}
+const reportBtn = (n, attrs) => n ? `<button type="button" class="link-btn" data-act="reportList" ${attrs}>${n}</button>` : '<span class="t-muted">0</span>';
+const attr = (k, v) => `data-${k}="${escapeHtml(v)}"`;
+
+/* Problems that make the figures wrong, with the children's names. */
+function reportWarningsHtml() {
+  const unknown = state.students.filter(s => !CLASS_OPTIONS.includes(s.class));
+  const nogender = state.students.filter(s => s.gender !== 'Male' && s.gender !== 'Female');
+  const parts = [];
+  if (unknown.length) parts.push(`<strong>${reportBtn(unknown.length, attr('unknown-class', '1'))}</strong> learner${unknown.length === 1 ? ' has' : 's have'} a class the app does not recognise (for example "${escapeHtml(unknown[0].class || 'blank')}"). Edit them and choose a class from the list.`);
+  if (nogender.length) parts.push(`<strong>${reportBtn(nogender.length, attr('key', 'nogender'))}</strong> learner${nogender.length === 1 ? ' has' : 's have'} no gender set. Edit them so they are counted as boys or girls.`);
+  return parts.length ? `${icon('alert')}<div>${parts.join('<br>')}</div>` : '';
+}
 function renderStatisticalReports() {
+  const s = state.students;
+  const cols = reportColumns();
+  const warn = reportWarningsHtml();
+  ['reportWarnings', 'emisWarnings'].forEach(id => { const w = el(id); if (w) { w.innerHTML = warn; w.style.display = warn ? '' : 'none'; } });
+
   const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
   if (el('levelStats')) el('levelStats').innerHTML = levels.map(l => {
-    const cnt = state.students.filter(s => s.level === l).length;
-    const col = state.students.filter(s => s.level === l).reduce((a, s) => a + studentPaid(s), 0);
-    return `<div class="stat is-info"><div class="stat-label">${l}</div><div class="stat-value">${cnt}</div><div class="stat-sub" style="color:var(--success)">${fmtMoney(col)}</div></div>`;
+    const n = s.filter(x => x.level === l).length;
+    return n || l !== 'Other' ? `<div class="stat is-info"><div class="stat-label">${l}</div><div class="stat-value">${reportBtn(n, attr('level', l))}</div></div>` : '';
   }).join('');
 
-  const classMap = {};
-  state.students.forEach(s => { (classMap[s.class] = classMap[s.class] || []).push(s); });
-  const rows = Object.keys(classMap).sort();
-  if (el('classStatsBody')) el('classStatsBody').innerHTML = rows.length ? rows.map(k => {
-    const list = classMap[k];
-    const avgScores = list.map(s => studentAcademicSummary(s).avg).filter(v => v > 0);
-    const avg = avgScores.length ? Math.round(avgScores.reduce((a, b) => a + b, 0) / avgScores.length) : 0;
-    const cleared = list.filter(s => studentBalance(s) <= 0).length;
-    const outstanding = list.reduce((a, s) => a + studentBalance(s), 0);
-    return `<tr><td style="font-weight:600">${escapeHtml(k)}</td><td>${escapeHtml(list[0].level)}</td><td class="t-center">${list.length}</td><td class="t-center">${avg ? avg + '%' : '—'}</td><td class="t-center" style="color:var(--success)">${cleared}/${list.length}</td><td class="t-num" style="color:var(--danger)">${fmtMoney(outstanding)}</td><td class="t-center" style="color:var(--brand)">${list.filter(s => s.sport).length}</td></tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">No data.</td></tr>';
+  const box = el('classStatsBody');
+  if (box) {
+    const classes = classesWithLearners();
+    const cell = (list, c, extra) => `<td>${reportBtn(list.filter(c[2]).length, attr('key', c[0]) + ' ' + extra)}</td>`;
+    box.innerHTML = classes.length ? `<div class="ts-wrap"><table class="ts rp-grid"><thead><tr><th class="ts-name">Class</th>${cols.map(c => `<th>${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>
+      ${classes.map(k => { const list = s.filter(x => x.class === k); return `<tr><td class="ts-name">${escapeHtml(k)}${CLASS_OPTIONS.includes(k) ? '' : ' <span class="t-warn" title="Not a class the app recognises">?</span>'}</td>${cols.map(c => cell(list, c, attr('cls', k))).join('')}</tr>`; }).join('')}
+      </tbody><tfoot><tr><td class="ts-name">Whole school</td>${cols.map(c => cell(s, c, '')).join('')}</tr></tfoot></table></div>`
+      : '<p class="card-desc">No learners yet.</p>';
+  }
 
-  const sportCounts = {};
-  state.students.forEach(s => { if (s.sport) sportCounts[s.sport] = (sportCounts[s.sport] || 0) + 1; });
-  const entries = Object.entries(sportCounts).sort((a, b) => b[1] - a[1]);
-  const sm = Math.max(1, ...entries.map(e => e[1]));
-  if (el('sportStats')) el('sportStats').innerHTML = entries.length ? entries.map(([sport, n]) => `
-    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600">${escapeHtml(sport)}</span><span>${n}</span></div><div class="bar"><span class="gold" style="width:${(n / sm) * 100}%"></span></div></div>`).join('') : '<p class="card-desc">No sports data.</p>';
+  const progs = (state.programs || []).map(p => ({ p, n: programAthletes(p).length })).sort((a, b) => b.n - a.n || a.p.name.localeCompare(b.p.name));
+  const most = Math.max(1, ...progs.map(x => x.n));
+  if (el('sportStats')) el('sportStats').innerHTML = progs.length ? progs.map(({ p, n }) => `
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600">${escapeHtml(p.name)} <span class="card-desc">· ${escapeHtml(p.sport)}</span></span><span>${reportBtn(n, attr('key', 'all') + ' ' + attr('prog', p.id))} athlete${n === 1 ? '' : 's'}</span></div><div class="bar"><span class="gold" style="width:${(n / most) * 100}%"></span></div></div>`).join('')
+    : '<p class="card-desc">No sports programmes yet.</p>';
 
   renderGenderBoardingSenStats();
   renderEMISPreview();
@@ -806,54 +1128,65 @@ function renderStatisticalReports() {
 
 function statBars(target, data) {
   const totalN = Math.max(1, data.reduce((a, d) => a + d[1], 0));
-  target.innerHTML = data.map(([l, n, col]) => `
-    <div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600;color:${col}">${l}</span><span>${n} (${Math.round(n / totalN * 100)}%)</span></div><div class="bar"><span style="background:${col};width:${Math.round(n / totalN * 100)}%"></span></div></div>`).join('');
+  target.innerHTML = data.map(([l, n, col, key]) => `
+    <div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span style="font-weight:600;color:${col}">${l}</span><span>${reportBtn(n, attr('key', key))} (${Math.round(n / totalN * 100)}%)</span></div><div class="bar"><span style="background:${col};width:${Math.round(n / totalN * 100)}%"></span></div></div>`).join('');
 }
 function renderGenderBoardingSenStats() {
   const s = state.students;
-  if (el('genderStats')) statBars(el('genderStats'), [['Male', s.filter(x => x.gender === 'Male').length, '#1d4ed8'], ['Female', s.filter(x => x.gender === 'Female').length, '#be185d'], ['Not set', s.filter(x => !x.gender).length, '#94a3b8']]);
-  if (el('boardingStats')) statBars(el('boardingStats'), [['Day scholar', s.filter(x => (x.boardingStatus || 'Day') === 'Day').length, '#0b5d3b'], ['Boarding', s.filter(x => x.boardingStatus === 'Boarding').length, '#6d28d9'], ['Weekly', s.filter(x => x.boardingStatus === 'Weekly').length, '#1d4ed8']]);
+  const cols = Object.fromEntries(reportColumns().map(c => [c[0], c[2]]));
+  const count = k => s.filter(cols[k]).length;
+  if (el('genderStats')) statBars(el('genderStats'), [['Boys', count('boys'), '#1d4ed8', 'boys'], ['Girls', count('girls'), '#be185d', 'girls'], ['Not set', count('nogender'), '#94a3b8', 'nogender']]);
+  if (el('boardingStats')) statBars(el('boardingStats'), [['Day', count('day'), '#0b5d3b', 'day'], ['Boarders', count('boarding'), '#6d28d9', 'boarding'], ['Weekly boarders', count('weekly'), '#1d4ed8', 'weekly']]);
   const senEl = el('senStats');
   if (senEl) {
     const withSEN = s.filter(x => x.senFlag);
-    if (!withSEN.length) senEl.innerHTML = '<p class="card-desc">No special-needs learners recorded.</p>';
+    if (!withSEN.length) senEl.innerHTML = '<p class="card-desc">No learners with special needs recorded.</p>';
     else {
       const types = {}; withSEN.forEach(x => { types[x.senFlag] = (types[x.senFlag] || 0) + 1; });
-      senEl.innerHTML = `<div style="font-weight:700;margin-bottom:8px">${withSEN.length} SEN learner${withSEN.length > 1 ? 's' : ''}</div>` + Object.entries(types).map(([t, n]) => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)"><span>${escapeHtml(t)}</span><span style="font-weight:700">${n}</span></div>`).join('');
+      senEl.innerHTML = `<div style="font-weight:700;margin-bottom:8px">${reportBtn(withSEN.length, attr('key', 'sen'))} learner${withSEN.length > 1 ? 's' : ''} with special needs</div>`
+        + Object.entries(types).sort((a, b) => b[1] - a[1]).map(([t, n]) => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)"><span>${escapeHtml(t)}</span><span style="font-weight:700">${reportBtn(n, attr('key', 'sen') + ' ' + attr('sen', t))}</span></div>`).join('');
     }
   }
 }
 
+/* EMIS: learners per class by gender, day/boarding and special needs, with
+   totals. No money: fees stay in the Fees downloads. */
+const EMIS_COLUMNS = [
+  ['Boys', s => s.gender === 'Male'], ['Girls', s => s.gender === 'Female'], ['Total', () => true],
+  ['Day', s => (s.boardingStatus || 'Day') === 'Day'], ['Boarders', s => s.boardingStatus === 'Boarding'], ['Weekly boarders', s => s.boardingStatus === 'Weekly'],
+  ['Special needs', s => !!s.senFlag],
+];
+function emisRows() {
+  const classes = classesWithLearners();
+  const row = list => EMIS_COLUMNS.map(([, f]) => list.filter(f).length);
+  return { classes, rows: classes.map(c => [c, ...row(state.students.filter(s => s.class === c))]), total: ['Total', ...row(state.students)] };
+}
 function renderEMISPreview() {
   const card = el('emisCard'); if (!card) return;
   card.style.display = can('canViewEMIS') ? '' : 'none';
   if (!can('canViewEMIS')) return;
-  const el2 = el('emisPreview'); if (!el2) return;
-  const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
+  const box = el('emisPreview'); if (!box) return;
   const ct = getCurrentTerm();
-  el2.innerHTML = `<p class="card-desc" style="margin-bottom:10px">Term: <strong>${ct ? escapeHtml(ct.year + ' ' + ct.term) : 'Not set — open one under Fees → Terms &amp; fee structures'}</strong></p>
-    <div class="table-wrap"><table><thead><tr><th>Level</th><th class="t-center">Total</th><th class="t-center">Male</th><th class="t-center">Female</th><th class="t-center">Boarding</th><th class="t-center">Day</th><th class="t-center">SEN</th><th class="t-center">Cleared</th></tr></thead><tbody>
-    ${levels.map(lvl => { const list = state.students.filter(s => s.level === lvl); return `<tr><td style="font-weight:600">${lvl}</td><td class="t-center">${list.length}</td><td class="t-center">${list.filter(s => s.gender === 'Male').length}</td><td class="t-center">${list.filter(s => s.gender === 'Female').length}</td><td class="t-center">${list.filter(s => s.boardingStatus === 'Boarding').length}</td><td class="t-center">${list.filter(s => (s.boardingStatus || 'Day') === 'Day').length}</td><td class="t-center">${list.filter(s => s.senFlag).length}</td><td class="t-center" style="color:var(--success)">${list.filter(s => studentBalance(s) <= 0).length}</td></tr>`; }).join('')}
-    </tbody></table></div>`;
+  const { rows, total } = emisRows();
+  box.innerHTML = `<p class="card-desc" style="margin-bottom:10px">${ct ? escapeHtml(termLabel(ct)) : 'No term open: open one under Fees → Terms & fee structures'} · ${state.students.length} learners</p>
+    ${rows.length ? `<div class="ts-wrap"><table class="ts rp-grid"><thead><tr><th class="ts-name">Class</th>${EMIS_COLUMNS.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>
+      ${rows.map(r => `<tr><td class="ts-name">${escapeHtml(r[0])}</td>${r.slice(1).map(n => `<td>${n}</td>`).join('')}</tr>`).join('')}
+    </tbody><tfoot><tr><td class="ts-name">Total</td>${total.slice(1).map(n => `<td>${n}</td>`).join('')}</tr></tfoot></table></div>` : '<p class="card-desc">No learners yet.</p>'}`;
 }
 function exportEMIS() {
-  if (!can('canViewEMIS')) return;
+  if (!can('canViewEMIS')) return toast('You do not have permission.', 'error');
   const ct = getCurrentTerm();
-  const termLabel = ct ? `${ct.year}_${ct.term.replace(/ /g, '_')}` : 'Term_Unknown';
-  const levels = ['Pre-Primary', 'Primary', 'O Level', 'A Level', 'Other'];
-  const rows = [
-    ['EMIS Report — ' + schoolName()],
-    [`Term: ${ct ? ct.year + ' ' + ct.term : 'Not set'} | Generated: ${todayISO()}`], [],
-    ['Level', 'Total Enrolment', 'Male', 'Female', 'Boarding', 'Day', 'Weekly', 'SEN', 'Cleared Fees', 'Outstanding (' + currency() + ')'],
-  ];
-  const addRow = (label, list) => rows.push([label, list.length, list.filter(s => s.gender === 'Male').length, list.filter(s => s.gender === 'Female').length, list.filter(s => s.boardingStatus === 'Boarding').length, list.filter(s => (s.boardingStatus || 'Day') === 'Day').length, list.filter(s => s.boardingStatus === 'Weekly').length, list.filter(s => s.senFlag).length, list.filter(s => studentBalance(s) <= 0).length, list.reduce((a, s) => a + studentBalance(s), 0)]);
-  levels.forEach(lvl => addRow(lvl, state.students.filter(s => s.level === lvl)));
-  addRow('TOTAL', state.students);
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `EMIS_Report_${termLabel}.csv`; a.click(); URL.revokeObjectURL(a.href);
-  toast('EMIS report exported.', 'success');
+  const { rows, total } = emisRows();
+  downloadCSV(`EMIS-${schoolName().replace(/[^A-Za-z0-9]+/g, '-')}-${ct ? termLabel(ct).replace(/\s+/g, '-') : 'no-term'}.csv`, [
+    [`EMIS figures — ${schoolName()}`],
+    [`${ct ? termLabel(ct) : 'No term open'} · downloaded ${fmtDay(todayISO())}`],
+    [],
+    ['Class', ...EMIS_COLUMNS.map(c => c[0])],
+    ...rows,
+    total,
+  ]);
+  AUTH.audit('EMIS_EXPORT', ct ? termLabel(ct) : '');
+  toast('EMIS figures downloaded.', 'success');
 }
 
 /* ── Select / datalist population ──────────────────────────────────────── */
@@ -871,10 +1204,6 @@ function renderSportOptions() {
   sel.innerHTML = '<option value="">— None —</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   if (cur) sel.value = cur;
 }
-function renderSubjectList() {
-  const dl = el('subjectList'); if (!dl) return;
-  dl.innerHTML = Array.from(new Set([...PRIMARY_SUBJECTS, ...O_LEVEL_SUBJECTS, ...A_LEVEL_SUBJECTS])).sort().map(s => `<option value="${escapeHtml(s)}"></option>`).join('');
-}
 function renderStudentSelects() {
   const fill = (id, label) => {
     const sel = el(id); if (!sel) return;
@@ -882,21 +1211,8 @@ function renderStudentSelects() {
     sel.innerHTML = '<option value="">Choose a student…</option>' + state.students.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.class)}${label(s)}</option>`).join('');
     if (cur) sel.value = cur;
   };
-  fill('paymentStudent', s => ` (Balance ${fmtMoney(studentBalance(s))})`);
   fill('perfStudent', s => s.sport ? ' · ' + s.sport : '');
-  fill('conductStudent', s => ' · ' + s.class);
-  updateBalancePreview();
 }
-function updateBalancePreview() {
-  const sel = el('paymentStudent'); const box = el('balancePreview');
-  if (!sel || !box) return;
-  const s = state.students.find(x => x.id === sel.value);
-  if (!s) { box.style.display = 'none'; return; }
-  const a = studentAccount(s);
-  box.style.display = 'block';
-  box.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${escapeHtml(s.class)}<br>This term ${fmtMoney(a.currentBilled)}${s.bursaryPct > 0 ? ` <span style="color:var(--warn)">(−${s.bursaryPct}% bursary)</span>` : ''}${a.arrears ? ` · <span style="color:var(--danger)">Arrears ${fmtMoney(a.arrears)}</span>` : ''}<br>Paid ${fmtMoney(a.paid)} · <span style="font-weight:700;color:${a.balance <= 0 ? 'var(--success)' : 'var(--danger)'}">Balance ${fmtMoney(a.balance)}</span>`;
-}
-
 /* ── Detail modals ─────────────────────────────────────────────────────── */
 function openNotes(studentId) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
@@ -914,43 +1230,47 @@ function openNotes(studentId) {
   });
 }
 /* ── Student edit modal ────────────────────────────────────────────────── */
-function openStudentEdit(studentId) {
+function openStudentEdit(studentId, back) {
   const s = state.students.find(x => x.id === studentId); if (!s) return;
   const opt = (list, val) => list.map(o => `<option ${o === val ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
+  const sports = Array.from(new Set([...SPORT_OPTIONS, ...state.programs.map(p => p.sport), s.sport].filter(Boolean))).sort();
+  const sen = ['Visual Impairment', 'Hearing Impairment', 'Physical Disability', 'Learning Difficulty', 'Other'];
+  if (s.senFlag && !sen.includes(s.senFlag)) sen.push(s.senFlag);
   openModal({
-    title: 'Edit student — ' + escapeHtml(s.name),
+    title: 'Edit ' + escapeHtml(s.name),
     wide: true,
-    bodyHtml: `<form id="editStudentForm" class="form-grid">
-      <div class="form-row">
-        <div><label class="form-label">Full name</label><input class="input" name="name" value="${escapeHtml(s.name)}" required></div>
-        <div><label class="form-label">Class</label><select class="input" name="class"><option value="">—</option>${opt(CLASS_OPTIONS, s.class)}</select></div>
-      </div>
-      <div class="form-row">
+    bodyHtml: `<p class="card-desc" style="margin:-6px 0 12px">Admission no. ${escapeHtml(s.id)} (it cannot be changed). Change what you need, then press Save changes.</p>
+    <form id="editStudentForm" class="form-grid">
+      <fieldset class="fs-group"><legend>The child</legend><div class="form-row">
+        <div><label class="form-label">Full name *</label><input class="input" name="name" value="${escapeHtml(s.name)}" required></div>
+        <div><label class="form-label">Gender</label><select class="input" name="gender"><option value="">—</option>${opt(['Male', 'Female'], s.gender)}</select></div>
+        <div><label class="form-label">Special needs</label><select class="input" name="senFlag"><option value="">None</option>${opt(sen, s.senFlag)}</select></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Class</legend><div class="form-row">
+        <div><label class="form-label">Class</label><select class="input" name="class">${opt(CLASS_OPTIONS, s.class)}</select></div>
         <div><label class="form-label">Stream <span class="opt">(optional)</span></label><input class="input" name="stream" value="${escapeHtml(s.stream || '')}" placeholder="e.g. East"></div>
-        <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination)}"></div>
-        <div><label class="form-label">Guardian contact</label><input class="input" name="guardian" value="${escapeHtml(s.guardian)}"></div>
-        <div><label class="form-label">Second guardian <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" value="${escapeHtml(s.guardian2 || '')}"></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">Termly tuition (${currency()})</label><input class="input" type="number" min="0" step="1000" name="fee" value="${s.fee}"></div>
-        <div><label class="form-label">Gender</label><select class="input" name="gender"><option value="">—</option><option ${s.gender === 'Male' ? 'selected' : ''}>Male</option><option ${s.gender === 'Female' ? 'selected' : ''}>Female</option></select></div>
-        <div><label class="form-label">Boarding</label><select class="input" name="boardingStatus"><option ${(s.boardingStatus || 'Day') === 'Day' ? 'selected' : ''} value="Day">Day scholar</option><option ${s.boardingStatus === 'Boarding' ? 'selected' : ''} value="Boarding">Boarding</option><option ${s.boardingStatus === 'Weekly' ? 'selected' : ''} value="Weekly">Weekly boarder</option></select></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">UNEB index no. <span class="opt">(S.4/S.6)</span></label><input class="input" name="unebIndexNo" value="${escapeHtml(s.unebIndexNo)}"></div>
-        <div><label class="form-label">Special needs</label><input class="input" name="senFlag" value="${escapeHtml(s.senFlag)}" placeholder="None"></div>
-      </div>
-      <div class="form-row">
-        <div><label class="form-label">Primary sport</label><input class="input" name="sport" value="${escapeHtml(s.sport)}"></div>
+        <div><label class="form-label">Day or boarding</label><select class="input" name="boardingStatus"><option ${(s.boardingStatus || 'Day') === 'Day' ? 'selected' : ''} value="Day">Day scholar</option><option ${s.boardingStatus === 'Boarding' ? 'selected' : ''} value="Boarding">Boarding</option><option ${s.boardingStatus === 'Weekly' ? 'selected' : ''} value="Weekly">Weekly boarder</option></select></div>
+      </div><div class="form-row">
+        <div><label class="form-label">Subjects / combination</label><input class="input" name="combination" value="${escapeHtml(s.combination || '')}"></div>
+        <div><label class="form-label">UNEB index <span class="opt">(S.4 and S.6)</span></label><input class="input" name="unebIndexNo" value="${escapeHtml(s.unebIndexNo || '')}"></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Guardians</legend><div class="form-row">
+        <div><label class="form-label">Guardian's phone *</label><input class="input" name="guardian" type="tel" value="${escapeHtml(s.guardian || '')}" required></div>
+        <div><label class="form-label">Second guardian's phone <span class="opt">(optional)</span></label><input class="input" name="guardian2" type="tel" value="${escapeHtml(s.guardian2 || '')}"></div>
+      </div></fieldset>
+      <fieldset class="fs-group"><legend>Fees and sport</legend><div class="form-row">
+        <div><label class="form-label">Termly fees (${currency()}) <span class="opt">(used when no fee structure covers the class)</span></label><input class="input" type="number" min="0" step="1000" name="fee" value="${s.fee}"></div>
+        <div><label class="form-label">Main sport</label><select class="input" name="sport"><option value="">— None —</option>${opt(sports, s.sport)}</select></div>
         <div><label class="form-label">Skill level</label><select class="input" name="skillLevel"><option value="">—</option>${opt(['Beginner', 'Intermediate', 'Advanced', 'Elite'], s.skillLevel)}</select></div>
-      </div>
+      </div></fieldset>
     </form>`,
-    footHtml: `<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="editStudentSave">${icon('save', 15)} Save changes</button>`,
+    footHtml: (back ? `<button class="btn btn-ghost" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="details">Back to ${escapeHtml(s.name)}</button>` : '<button class="btn btn-ghost" data-modal-close>Cancel</button>')
+      + `<button class="btn btn-primary" id="editStudentSave">${icon('save', 15)} Save changes</button>`,
     onOpen(root) {
       root.querySelector('#editStudentSave').addEventListener('click', () => {
         const fd = new FormData(root.querySelector('#editStudentForm'));
-        updateStudent(studentId, Object.fromEntries(fd.entries()));
-        closeModal();
+        if (!updateStudent(studentId, Object.fromEntries(fd.entries()))) return;   // refused: keep what was typed
+        if (back) openLearner(studentId, 'details'); else closeModal();
       });
     },
   });
@@ -985,7 +1305,7 @@ function openCompetitionForm() {
 function submitCompetition(f) {
   if (!can('canManageCompetitions')) return toast('You do not have permission.', 'error');
   if (!f.eventName || !f.sport) return toast('Event name and sport are required.', 'error');
-  state.competitions.push({ id: 'CMP' + uid().slice(0, 5), ...f });
+  state.competitions.push({ id: newId('CMP'), ...f });
   saveState(); renderAll(); closeModal();
   toast('Competition result logged.', 'success');
 }
@@ -1025,7 +1345,7 @@ function openSquadForm() {
         const members = [...form.querySelectorAll('[name="members"]:checked')].map(c => c.value);
         if (!name || !sport) return toast('Name and sport are required.', 'error');
         if (!members.length) return toast('Select at least one member.', 'error');
-        state.squads.push({ id: 'SQD' + uid().slice(0, 5), name, sport, members, createdAt: todayISO() });
+        state.squads.push({ id: newId('SQD'), name, sport, members, createdAt: todayISO() });
         saveState(); renderAll(); closeModal(); toast('Squad created.', 'success');
       });
     },
@@ -1068,44 +1388,130 @@ function renderAthleteProfiles() {
   if (apf) { const sports = [...new Set(state.students.filter(s => s.sport).map(s => s.sport))].sort(); const cur = apf.value; apf.innerHTML = '<option value="">All Sports</option>' + sports.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join(''); apf.value = cur; }
   const athletes = state.students.filter(s => s.sport && (!filter || (s.sport || '').toLowerCase() === filter));
   const ic = { Fit: 'badge-success', 'Minor Knock': 'badge-warn', Injured: 'badge-danger', Recovering: 'badge-warn' };
-  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${escapeHtml(s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
+  body.innerHTML = athletes.length ? athletes.map(s => { const p = s.athleteProfile || {}; const inj = p.injuryStatus || 'Fit'; return `<tr><td style="font-weight:600">${learnerLink(s.id, s.name)}</td><td>${escapeHtml(s.class)}</td><td>${escapeHtml(s.sport)}</td><td>${escapeHtml(p.position || '—')}</td><td>${p.height ? escapeHtml(p.height) + 'cm' : '—'}</td><td>${p.weight ? escapeHtml(p.weight) + 'kg' : '—'}</td><td style="color:var(--brand);font-weight:600">${escapeHtml(p.personalBest || '—')}</td><td><span class="badge ${ic[inj] || 'badge-neutral'}">${escapeHtml(inj)}</span></td><td>${can('canLogPerformance') ? `<button class="btn btn-outline btn-xs" data-act="athleteProfile" data-id="${escapeHtml(s.id)}">Edit details</button>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No athlete profiles.</td></tr>';
 }
 
 /* ── Notices ───────────────────────────────────────────────────────────── */
+const NOTICES_KEPT = 200;
+/* Who may change a notice: the director, the administrator, or whoever posted it. */
+function canChangeNotice(n) {
+  if (!can('canPostNotice') || !currentSession) return false;
+  if (['exec', 'admin'].includes(currentSession.role)) return true;
+  return n.postedById ? n.postedById === currentSession.userId : n.postedBy === currentSession.displayName;
+}
 function postNotice(f) {
-  if (!can('canPostNotice')) return toast('You do not have permission.', 'error');
-  if (!f.title || !f.title.trim()) return toast('Notice title is required.', 'error');
+  if (!can('canPostNotice')) { toast('You do not have permission.', 'error'); return false; }
+  if (!f.title || !f.title.trim()) { toast('Give the notice a title.', 'error'); return false; }
   // Online, a notice can also be shown to parents in their portal.
   const audience = ONLINE_EDITION && f.audience === 'all' ? 'all' : 'staff';
-  const notice = { id: 'NTC' + uid().slice(0, 5), title: f.title.trim(), body: (f.body || '').trim(), category: f.category, postedBy: currentSession.displayName, postedAt: nowISO(), audience };
+  const notice = { id: newId('NTC'), title: f.title.trim(), body: (f.body || '').trim(), category: f.category || 'General', postedBy: currentSession.displayName, postedById: currentSession.userId, postedAt: nowISO(), audience };
   state.notices.unshift(notice);
-  if (state.notices.length > 50) state.notices = state.notices.slice(0, 50);
+  if (state.notices.length > NOTICES_KEPT) state.notices = state.notices.slice(0, NOTICES_KEPT);
   saveState(); renderAll();
+  AUTH.audit('NOTICE_POST', `${notice.title}${audience === 'all' ? ' · staff and parents' : ''}`);
   toast('Notice posted.', 'success');
   if (ONLINE_EDITION && f.sms && can('canBroadcastSms')) {
     const text = (notice.title + (notice.body ? ': ' + notice.body : '')).slice(0, 380);
     SMS.openRun('broadcast', { message: text }, 'Send this notice by SMS');
   }
+  return true;
 }
-async function deleteNotice(id) { if (!await confirmDialog({ title: 'Delete notice', message: 'Delete this notice?', confirmLabel: 'Delete', danger: true })) return; state.notices = state.notices.filter(n => n.id !== id); saveState(); renderAll(); }
+async function deleteNotice(id) {
+  const n = state.notices.find(x => x.id === id); if (!n) return;
+  if (!canChangeNotice(n)) return toast('Only the person who posted this notice, the director or the administrator can delete it.', 'error');
+  if (!await confirmDialog({ title: 'Delete a notice', message: `Delete the notice "${n.title}"${n.postedBy ? ` posted by ${n.postedBy}` : ''}? Nobody will see it again${ONLINE_EDITION && n.audience === 'all' ? ', parents included' : ''}.`, confirmLabel: 'Delete notice', danger: true })) return;
+  state.notices = state.notices.filter(x => x.id !== id);
+  saveState(); renderAll();
+  AUTH.audit('NOTICE_DELETE', n.title);
+  toast('Notice deleted.', 'success');
+}
+/* Edit the words, the kind and (online) who sees it. It is never sent by SMS again. */
+function editNotice(id) {
+  const n = state.notices.find(x => x.id === id); if (!n) return;
+  if (!canChangeNotice(n)) return toast('Only the person who posted this notice, the director or the administrator can change it.', 'error');
+  const cats = ['General', 'Academic', 'Finance', 'Sports', 'Discipline', 'Urgent'];
+  openModal({
+    title: 'Edit notice',
+    bodyHtml: `<form id="noticeEditForm" class="form-grid">
+      <div><label class="form-label" for="neTitle">Title *</label><input class="input" id="neTitle" name="title" required value="${escapeHtml(n.title)}"></div>
+      <div class="form-row">
+        <div><label class="form-label" for="neCategory">Kind of notice</label><select class="input" id="neCategory" name="category">${cats.map(c => `<option${c === n.category ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
+        ${ONLINE_EDITION ? `<div><label class="form-label" for="neAudience">Who can see this</label><select class="input" id="neAudience" name="audience"><option value="staff"${n.audience !== 'all' ? ' selected' : ''}>Staff only</option><option value="all"${n.audience === 'all' ? ' selected' : ''}>Staff and parents</option></select></div>` : ''}
+      </div>
+      <div><label class="form-label" for="neBody">Details</label><textarea class="input" id="neBody" name="body" rows="4">${escapeHtml(n.body || '')}</textarea></div>
+      <p class="card-desc" style="margin:0">Saving changes the notice on the board. It is not sent by SMS again.</p>
+    </form>`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Cancel</button><button class="btn btn-primary" id="neSave">Save notice</button>',
+    onOpen(root) {
+      root.querySelector('#neSave').addEventListener('click', () => {
+        const f = Object.fromEntries(new FormData(root.querySelector('#noticeEditForm')).entries());
+        if (!(f.title || '').trim()) return toast('Give the notice a title.', 'error');
+        n.title = f.title.trim(); n.body = (f.body || '').trim(); n.category = f.category || 'General';
+        if (ONLINE_EDITION) n.audience = f.audience === 'all' ? 'all' : 'staff';
+        closeModal(); saveState(); renderAll();
+        AUTH.audit('NOTICE_EDIT', n.title);
+        toast('Notice saved.', 'success');
+      });
+    },
+  });
+}
 function renderNotices() {
   const grid = el('noticesGrid'); if (!grid) return;
   const formCard = el('noticeFormCard');
   if (formCard) formCard.style.display = can('canPostNotice') ? '' : 'none';
-  grid.innerHTML = state.notices.length ? state.notices.map(n => `<div class="notice-item cat-${escapeHtml(n.category)}"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? new Date(n.postedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>${ONLINE_EDITION && n.audience === 'all' ? '<span class="badge badge-info">Parents can see this</span>' : ''}</div><div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}<div class="card-desc" style="margin-top:6px">Posted by ${escapeHtml(n.postedBy)}</div></div>${can('canPostNotice') ? `<button class="btn-icon" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" title="Delete">${icon('trash', 15)}</button>` : ''}</div></div>`).join('') : '<div class="empty">No notices posted yet.</div>';
+  const note = el('noticesNote');
+  if (note) note.textContent = ONLINE_EDITION
+    ? 'Staff see every notice. Parents see only the notices marked "Staff and parents", in the parent portal.'
+    : 'Notices are seen by everyone who signs in to this app on this device.';
+  const cat = (el('noticeFilter') || {}).value || '';
+  const list = state.notices.filter(n => !cat || n.category === cat);
+  grid.innerHTML = list.length ? list.map(n => {
+    const mine = canChangeNotice(n);
+    return `<div class="notice-item cat-${escapeHtml(n.category)}">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="badge badge-neutral">${escapeHtml(n.category)}</span><span class="card-desc">${n.postedAt ? escapeHtml(fmtDay(n.postedAt.slice(0, 10))) : ''}</span>${ONLINE_EDITION && n.audience === 'all' ? '<span class="badge badge-info">Parents can see this</span>' : ''}</div>
+      <div style="font-weight:700">${escapeHtml(n.title)}</div>${n.body ? `<div class="card-desc" style="white-space:pre-wrap;margin-top:4px">${escapeHtml(n.body)}</div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px"><span class="card-desc">Posted by ${escapeHtml(n.postedBy || '—')}</span>
+        ${mine ? `<div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="editNotice" data-id="${escapeHtml(n.id)}">Edit</button><button class="btn btn-ghost btn-xs t-bad" type="button" data-act="deleteNotice" data-id="${escapeHtml(n.id)}" aria-label="Delete the notice ${escapeHtml(n.title)}">Delete</button></div>` : ''}</div>
+    </div>`;
+  }).join('') : `<div class="empty">${state.notices.length ? 'No notices of this kind.' : 'No notices posted yet.'}</div>`;
 }
 
-/* ── User management & audit ───────────────────────────────────────────── */
+/* ── Staff accounts and "who did what" ─────────────────────────────────── */
+const ROLE_NAMES = { exec: 'Executive Director', admin: 'Administrator', bursary: 'Bursary Officer', coach: 'Head of Sports', teacher: 'Teacher' };
+const ROLE_COLOURS = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
 function renderUsersList() {
   const box = el('usersList'); if (!box) return;
   const users = AUTH.getUsers();
-  const colors = { exec: '#0b5d3b', admin: '#1d4ed8', bursary: '#15803d', coach: '#b45309', teacher: '#0e7490' };
-  const labels = { exec: 'Executive', admin: 'Administrator', bursary: 'Bursary', coach: 'Sports', teacher: 'Teacher' };
+  const note = el('staffNote');
+  if (note) note.textContent = ONLINE_EDITION
+    ? 'Everyone who can sign in to this school. Add someone with their email address; they then open the portal, choose "First time here?" and use that email to set their own password.'
+    : 'Everyone who can sign in to this app on this device only. Give each new person a first password; they must change it the first time they sign in.';
+  const avatar = u => `<div class="avatar" style="background:${ROLE_COLOURS[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div>`;
+  const role = u => `<span style="color:${ROLE_COLOURS[u.role] || '#64748b'};font-weight:600">${escapeHtml(ROLE_NAMES[u.role] || u.role)}</span>`;
+  const classes = u => u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : '';
+  const me = u => u.id === currentSession.userId;
   if (ONLINE_EDITION) {
-    box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || escapeHtml(u.role)}</span></div>${u.role === 'teacher' ? `<div class="card-desc">Classes: ${escapeHtml((u.assignedClasses || []).join(', ') || 'none yet')}</div>` : ''}</div><div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited — not joined yet</span>' : (u.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-neutral">Access off</span>')}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No staff yet. Add someone below.</p>';
+    box.innerHTML = users.length ? users.map(u => `<div class="user-card">${avatar(u)}<div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}${me(u) ? ' <span class="card-desc">(you)</span>' : ''}</div><div class="card-desc">${escapeHtml(u.username)} · ${role(u)}</div>${classes(u)}</div>
+      <div class="row-actions">${u.pending ? '<span class="badge badge-warn">Invited, not joined yet</span>' : (u.active ? '<span class="badge badge-success">Can sign in</span>' : '<span class="badge badge-neutral">Access off</span>')}
+        <button class="btn btn-outline btn-xs" type="button" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button>${u.pending ? '' : `<button class="btn btn-outline btn-xs" type="button" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Send reset link</button>`}${me(u) ? '' : `<button class="btn btn-danger btn-xs" type="button" data-act="deleteUser" data-id="${escapeHtml(u.id)}">${u.pending ? 'Cancel invitation' : 'Remove'}</button>`}</div></div>`).join('')
+      : '<p class="card-desc">No staff yet. Press Add a staff member.</p>';
     return;
   }
-  box.innerHTML = users.length ? users.map(u => `<div class="user-card"><div class="avatar" style="background:${colors[u.role] || '#64748b'}">${escapeHtml((u.displayName || '?').slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="card-desc">@${escapeHtml(u.username)} · <span style="color:${colors[u.role] || '#64748b'};font-weight:600">${labels[u.role] || u.role}</span></div><div class="card-desc">Last sign-in: ${u.lastLogin ? u.lastLogin.slice(0, 16).replace('T', ' ') : 'Never'}${u.role === 'teacher' ? ' · Classes: ' + escapeHtml((u.assignedClasses || []).join(', ') || 'none yet') : ''}</div></div><div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Password reset</span>' : '<span class="badge badge-success">Active</span>'}<button class="btn btn-outline btn-xs" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${u.id !== currentSession.userId ? `<button class="btn btn-danger btn-xs" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>` : '<span class="card-desc">(you)</span>'}</div></div>`).join('') : '<p class="card-desc">No user accounts found.</p>';
+  box.innerHTML = users.length ? users.map(u => `<div class="user-card">${avatar(u)}<div style="flex:1;min-width:0"><div style="font-weight:700">${escapeHtml(u.displayName)}${me(u) ? ' <span class="card-desc">(you)</span>' : ''}</div><div class="card-desc">${escapeHtml(u.username)} · ${role(u)}</div>
+      <div class="card-desc">Last signed in: ${u.lastLogin ? escapeHtml(fmtWhen(u.lastLogin)) : 'never'}</div>${classes(u)}</div>
+      <div class="row-actions">${u.mustChangePassword ? '<span class="badge badge-warn">Must choose a new password</span>' : '<span class="badge badge-success">Can sign in</span>'}
+        <button class="btn btn-outline btn-xs" type="button" data-act="editUser" data-id="${escapeHtml(u.id)}">Edit</button><button class="btn btn-outline btn-xs" type="button" data-act="resetUserPwd" data-id="${escapeHtml(u.id)}">Reset password</button>${me(u) ? '' : `<button class="btn btn-danger btn-xs" type="button" data-act="deleteUser" data-id="${escapeHtml(u.id)}">Delete</button>`}</div></div>`).join('')
+    : '<p class="card-desc">No user accounts found.</p>';
+}
+/* The form's title and password box say whether it is adding or editing. */
+function setStaffFormMode(u) {
+  const title = el('staffFormTitle'); if (title) title.textContent = u ? `Editing ${u.displayName}` : 'Add a staff member';
+  const pl = el('editPasswordLabel'); if (pl) pl.innerHTML = u ? 'New password <span class="opt">(leave empty to keep the present one)</span>' : 'First password *';
+}
+function openStaffForm() {
+  clearUserEditForm();
+  const box = el('staffFormBox'); if (box) box.open = true;
+  el('editDisplayName').focus();
 }
 function loadUserForEdit(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
@@ -1113,15 +1519,17 @@ function loadUserForEdit(userId) {
   if (ONLINE_EDITION) el('editUsername').readOnly = true;   // an account's email cannot be changed here
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = (u.assignedClasses || []).includes(cb.value); });
   toggleAssignedClasses();
-  el('userEditForm').closest('details').open = true;
-  el('editUsername').focus();
+  setStaffFormMode(u);
+  el('staffFormBox').open = true;
+  el('editDisplayName').focus();
 }
 function clearUserEditForm() {
   ['editUserId', 'editUsername', 'editDisplayName', 'editPassword'].forEach(id => el(id).value = '');
   el('editUsername').readOnly = false;
-  el('editRole').value = 'admin';
+  el('editRole').value = '';
   document.querySelectorAll('#editAssignedClasses input').forEach(cb => { cb.checked = false; });
   toggleAssignedClasses();
+  setStaffFormMode(null);
 }
 /* Teachers are limited to the classes ticked here. */
 function renderAssignedClassOptions() {
@@ -1141,22 +1549,27 @@ async function handleUserEditSubmit(e) {
   const displayName = el('editDisplayName').value.trim();
   const role = el('editRole').value;
   const password = el('editPassword').value;
-  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Email address and name are required.' : 'Username and display name are required.', 'error');
+  if (!username || !displayName) return toast(ONLINE_EDITION ? 'Type their name and email address.' : 'Type their name and a username.', 'error');
+  if (!ROLE_NAMES[role]) return toast('Choose the role: what this person does decides what they can see.', 'error');
   const data = { username, displayName, role };
   data.assignedClasses = role === 'teacher' ? [...document.querySelectorAll('#editAssignedClasses input:checked')].map(cb => cb.value) : [];
   if (role === 'teacher' && !data.assignedClasses.length) return toast('Tick at least one class for this teacher.', 'error');
+  // Offline, a new account without a password could never sign in.
+  if (!ONLINE_EDITION && !id && !password) return toast('Give the new account a first password. They will choose their own when they first sign in.', 'error');
   if (id) data.id = id;
   if (password) {
     const check = AUTH.validatePasswordStrength(password);
     if (!check.ok) return toast(check.error, 'error');
     const h = await AUTH.hashPassword(password);
-    data.salt = h.salt; data.passwordHash = h.hash; data.iterations = h.iterations; data.mustChangePassword = false;
+    // The director knows this password, so the person must choose their own at sign-in.
+    data.salt = h.salt; data.passwordHash = h.hash; data.iterations = h.iterations; data.mustChangePassword = true;
   }
   const res = await AUTH.upsertUser(data);
   if (!res.ok) return toast(res.error, 'error');
   if (ONLINE_EDITION && res.invited) toast(`${displayName} is invited. Ask them to open the portal, choose "First time here?" and use ${username}.`, 'success');
-  else toast(id ? 'User updated.' : 'User created.', 'success');
-  clearUserEditForm(); renderUsersList(); renderAuditLog();
+  else toast(id ? `${displayName}'s account is saved.` : `${displayName} can now sign in as ${username}${ONLINE_EDITION ? '' : ' with the first password you gave'}.`, 'success');
+  clearUserEditForm(); el('staffFormBox').open = false;
+  renderUsersList(); renderAuditLog();
 }
 async function resetUserPwd(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
@@ -1167,31 +1580,74 @@ async function resetUserPwd(userId) {
     renderAuditLog();
     return toast(`Reset link sent to ${u.username}.`, 'success');
   }
-  const pwd = await promptDialog({ title: 'Reset password', label: `Temporary password for ${u.displayName} (min 8 chars, letters + numbers)`, type: 'text' });
+  const pwd = await promptDialog({ title: 'Reset password', message: `${u.displayName} will sign in with this password once, then choose their own.`, label: 'Temporary password (at least 8 characters, letters and numbers)', type: 'text', okLabel: 'Reset password' });
   if (!pwd) return;
   const res = await AUTH.adminResetPassword(userId, pwd);
   if (!res.ok) return toast(res.error, 'error');
-  toast('Password reset. The user must change it at next sign-in.', 'success');
+  toast(`Password reset. ${u.displayName} must choose a new one at the next sign-in.`, 'success');
   renderUsersList(); renderAuditLog();
 }
 async function confirmDeleteUser(userId) {
   const u = AUTH.getUsers().find(x => x.id === userId); if (!u) return;
   const msg = ONLINE_EDITION
     ? (u.pending ? `Cancel the invitation for ${u.displayName}?` : `Remove ${u.displayName} from the school? They will no longer be able to sign in to it.`)
-    : `Delete the account for ${u.displayName}? This cannot be undone.`;
+    : `Delete the account for ${u.displayName} (${u.username})? They will no longer be able to sign in. This cannot be undone.`;
   if (!await confirmDialog({ title: ONLINE_EDITION ? 'Remove staff member' : 'Delete account', message: msg, confirmLabel: ONLINE_EDITION ? (u.pending ? 'Cancel invitation' : 'Remove') : 'Delete account', danger: true })) return;
   const res = await AUTH.deleteUser(userId);
   if (!res.ok) return toast(res.error, 'error');
-  toast(ONLINE_EDITION ? 'Done.' : 'Account deleted.', 'success'); renderUsersList(); renderAuditLog();
+  toast(ONLINE_EDITION ? 'Done.' : `${u.displayName}'s account is deleted.`, 'success'); renderUsersList(); renderAuditLog();
 }
+
+/* "Who did what": each event in plain words, in Kampala time. */
+const AUDIT_WORDS = {
+  PAYMENT_RECORD: ['money', 'Recorded a payment'], PAYMENT_VOID: ['money', 'Reversed a payment'],
+  BURSARY_AWARD: ['money', 'Changed a bursary'], TERM_OPEN: ['money', 'Opened a term and billed learners'], TERM_REBILL: ['money', 'Applied the fee structures'],
+  STUDENT_REGISTER: ['learners', 'Admitted a learner'], STUDENT_EDIT: ['learners', "Changed a learner's details"], STUDENT_DELETE: ['learners', 'Removed a learner'],
+  STUDENT_IMPORT: ['learners', 'Imported learners from Excel'], CONDUCT_ADD: ['learners', 'Logged a conduct entry'], CONDUCT_DELETE: ['learners', 'Deleted a conduct entry'],
+  NOTICE_POST: ['learners', 'Posted a notice'], NOTICE_EDIT: ['learners', 'Changed a notice'], NOTICE_DELETE: ['learners', 'Deleted a notice'],
+  RESULTS_PUBLISH: ['learners', 'Published results to parents'], EMIS_EXPORT: ['learners', 'Downloaded the EMIS figures'],
+  USER_UPSERT: ['staff', 'Added or changed a staff account'], USER_INVITE: ['staff', 'Invited a staff member'], USER_UPDATE: ['staff', 'Changed a staff account'],
+  USER_DELETE: ['staff', 'Deleted a staff account'], USER_REMOVE: ['staff', 'Removed a staff member'], ADMIN_PWD_RESET: ['staff', "Reset someone's password"],
+  PASSWORD_RESET_LINK: ['staff', 'Sent a password-reset link'], SETTINGS_UPDATE: ['staff', 'Changed the school settings'], LOGO_UPDATE: ['staff', 'Changed the school logo'],
+  LOGO_REMOVE: ['staff', 'Removed the school logo'], SMS_SETTINGS: ['staff', 'Changed the SMS account'], BACKUP_EXPORT: ['staff', 'Downloaded a backup'],
+  BACKUP_RESTORE: ['staff', 'Restored a backup'], SNAPSHOT_RESTORE: ['staff', 'Went back to a daily copy'], DATA_RESET: ['staff', 'Erased all data'],
+  IMPORT_FINISH: ['staff', 'Brought in the offline backup'],
+  LOGIN: ['signin', 'Signed in'], LOGOUT: ['signin', 'Signed out'], LOGIN_FAILED: ['signin', 'Failed to sign in'], PASSWORD_CHANGE: ['signin', 'Changed their own password'],
+};
+function auditWords(action) { return AUDIT_WORDS[action] || ['staff', String(action || '').replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase())]; }
+/* The detail, with "Name (admission no.)" of a learner as a link to their page. */
+function auditDetailHtml(detail) {
+  return String(detail || '').split(' · ').map(part => {
+    const m = /^(.*\S) \(([^)]+)\)(.*)$/.exec(part);
+    const s = m && state.students.find(x => x.id === m[2]);
+    return s ? `${learnerLink(s.id, m[1])} (${escapeHtml(m[2])})${escapeHtml(m[3])}` : escapeHtml(part.replace(/^role=/, 'as ').replace(/^target=/, ''));
+  }).join(' · ');
+}
+let auditLimit = 100;
 function renderAuditLog() {
   const box = el('auditLogBody'); if (!box) return;
-  const log = AUTH.getAuditLog().slice(0, 60);
-  box.innerHTML = log.length ? log.map(e => `<div class="audit-row"><span class="audit-ts">${e.ts.slice(0, 16).replace('T', ' ')}</span><span class="audit-user">${escapeHtml(e.username)}</span><span class="audit-tag">${escapeHtml(e.action)}</span><span class="card-desc">${escapeHtml(e.detail)}</span></div>`).join('') : '<p class="card-desc">No events logged yet.</p>';
+  const kind = (el('auditFilter') || {}).value || '';
+  const all = AUTH.getAuditLog().filter(e => !kind || auditWords(e.action)[0] === kind);
+  box.innerHTML = all.length ? all.slice(0, auditLimit).map(e => `<div class="audit-row"><span class="audit-ts">${escapeHtml(fmtWhen(e.ts))}</span><span class="audit-user">${escapeHtml(e.username)}</span>
+    <span class="audit-what" title="${escapeHtml(e.action)}">${escapeHtml(auditWords(e.action)[1])}</span>${e.detail ? `<span class="card-desc">${auditDetailHtml(e.detail)}</span>` : ''}</div>`).join('')
+    : `<p class="card-desc">${kind ? 'Nothing of this kind yet.' : 'Nothing recorded yet.'}</p>`;
+  const pager = el('auditPager');
+  if (pager) pager.innerHTML = all.length > auditLimit ? `<span>Showing ${auditLimit} of ${all.length}</span><span class="pager-btns"><button class="btn btn-outline btn-xs" type="button" data-act="auditMore">Show ${Math.min(100, all.length - auditLimit)} more</button></span>` : '';
 }
+
+/* Online, opening Staff & who did what fetches the latest from the school database. */
+MODULES.push({
+  name: 'admin',
+  onSub(tab, sub) {
+    if (!ONLINE_EDITION || tab !== 'admin' || sub !== 'staff' || !can('canManageUsers') || !AUTH.refreshStaff) return;
+    AUTH.refreshStaff().then(() => { renderUsersList(); renderAuditLog(); }, () => {});
+  },
+});
 
 /* ── Settings (white-label) ────────────────────────────────────────────── */
 function renderSettingsForm() {
+  const form = el('settingsForm');
+  if (form && form.dataset.dirty) return;   // keep what is being typed (e.g. while a logo uploads)
   const st = state.settings;
   const set = (id, v) => { const e = el(id); if (e) e.value = v || ''; };
   set('setSchoolName', st.schoolName); set('setMotto', st.motto); set('setAddress', st.address);
@@ -1199,8 +1655,13 @@ function renderSettingsForm() {
   if (el('setGrading')) el('setGrading').value = st.gradingMode;
   if (el('setCurrency')) el('setCurrency').value = st.currency;
 }
-function saveSettings(f) {
+async function saveSettings(f) {
   if (!can('canManageSettings')) return toast('You do not have permission.', 'error');
+  const newMode = f.gradingMode || 'legacy';
+  if (newMode !== gradingMode()) {
+    const n = state.students.filter(s => s.level === 'O Level').reduce((a, s) => a + (s.academics || []).length, 0);
+    if (n && !await confirmDialog({ title: 'Change the O-Level grading', message: `Every O-Level mark already entered (${n}) will be graded again the new way, and report cards will show the new grades. The scores themselves do not change.`, confirmLabel: 'Change the grading' })) return;
+  }
   state.settings = Object.assign({}, state.settings, {
     schoolName: (f.schoolName || '').trim() || 'School Portal',
     motto: (f.motto || '').trim(), address: (f.address || '').trim(),
@@ -1209,6 +1670,7 @@ function saveSettings(f) {
     brandPreset: f.brandPreset || state.settings.brandPreset || 'green',
   });
   recomputeGrades();
+  const form = el('settingsForm'); if (form) delete form.dataset.dirty;
   saveState(); applySettings(); renderAll();
   AUTH.audit('SETTINGS_UPDATE', state.settings.schoolName);
   toast('School settings saved.', 'success');
@@ -1227,24 +1689,42 @@ function applySettings() {
 /* Ten modules. The ids are historical ("register" is Attendance, "payments" is
    Fees, "conduct" is Discipline); only what people read changed. */
 const TAB_LABELS = {
-  overview: 'Dashboard', directory: 'Students', register: 'Attendance', academics: 'Academics', payments: 'Fees',
+  overview: 'Dashboard', directory: 'Students', academics: 'Academics', payments: 'Fees',
   sports: 'Sports', conduct: 'Discipline', reports: 'Reports', noticeboard: 'Notices', admin: 'Administration',
 };
 /* Sub-tabs inside a module: [id, label, permission needed]. Cards in
    index.html carry data-sub="<id>"; anything without data-sub always shows. */
 const SUB_TABS = {
-  directory: [['list', 'All students'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
-  register: [['daily', 'Daily register'], ['recent', 'Recent registers']],
-  academics: [['marks', 'Enter marks'], ['marksheet', 'Mark sheet', 'canAddAcademic'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
+  // Attendance lives under Students: the register, who was absent and the term sheet.
+  directory: [['list', 'All students'], ['daily', 'Take register', 'canMarkRegister'], ['recent', 'Who was absent', 'canMarkRegister'], ['sheet', 'Term sheet', 'canMarkRegister'], ['admit', 'Admit a student', 'canRegisterStudent'], ['import', 'Import from Excel', 'canRegisterStudent']],
+  academics: [['marks', 'Enter marks', 'canAddAcademic'], ['results', 'Class results'], ['comments', 'Comments', 'canAddAcademic'], ['reportcards', 'Report cards'], ['grading', 'Grading scales', 'canManageSettings']],
   payments: [['record', 'Record payment'], ['dashboard', 'Fees dashboard'], ['terms', 'Terms & fee structures', 'canManageTerms'], ['bursaries', 'Bursaries', 'canAwardBursary']],
   sports: [['programmes', 'Programmes'], ['training', 'Training attendance'], ['competitions', 'Competitions & squads'], ['athletes', 'Athletes'], ['candidates', 'Bursary candidates']],
   reports: [['statistics', 'Statistics'], ['emis', 'EMIS', 'canViewEMIS']],
-  admin: [['staff', 'Staff accounts', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['sms', 'SMS', 'canViewSmsLog', 'online'], ['data', 'Data & backup']],
+  admin: [['staff', 'Staff & who did what', 'canManageUsers'], ['profile', 'School profile & logo', 'canManageSettings'], ['sms', 'SMS', 'canViewSmsLog', 'online'], ['data', 'Backup & restore']],
 };
 let currentTab = null;
 const lastSub = {};
 /* A fourth entry 'online' marks a sub-tab that exists only in the online edition. */
-function allowedSubs(tab) { return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION)); }
+function allowedSubs(tab) {
+  return (SUB_TABS[tab] || []).filter(([, , perm, edition]) => (!perm || can(perm)) && (edition !== 'online' || ONLINE_EDITION))
+    // A teacher's list is their own classes.
+    .map(x => x[0] === 'list' && tab === 'directory' && AUTH.currentUserClasses() ? ['list', 'My classes', ...x.slice(2)] : x);
+}
+/* The phone menu: every module, and the account buttons, in words. */
+function openMenu() {
+  const tabs = [...document.querySelectorAll('#navBar .nav-tab')].map(b => b.dataset.tab);
+  const acts = [['exportBtn', 'Back up now'], ['importLabel', 'Restore from a backup'], ['changePwdBtn', 'Change my password'], ['logoutBtn', 'Sign out']]
+    .filter(([id]) => el(id) && el(id).style.display !== 'none');
+  const who = currentSession ? `${currentSession.displayName} · ${(ROLE_PERMISSIONS[currentSession.role] || {}).label || currentSession.role}` : '';
+  openModal({
+    title: 'Menu',
+    bodyHtml: `<div class="menu-grid">${tabs.map(t => `<button type="button" class="menu-item" data-act="menuGo" data-tab="${escapeHtml(t)}"${t === currentTab ? ' aria-current="page"' : ''}>${icon(t, 20)}<span>${escapeHtml(TAB_LABELS[t] || t)}</span></button>`).join('')}</div>
+      <div class="menu-acts">${acts.map(([id, label]) => `<button type="button" class="btn btn-outline btn-block" data-act="menuDo" data-target="${id}">${escapeHtml(label)}</button>`).join('')}</div>
+      ${who ? `<p class="card-desc" style="margin-top:12px">Signed in as ${escapeHtml(who)}</p>` : ''}`,
+    footHtml: '<button class="btn btn-ghost" data-modal-close>Close</button>',
+  });
+}
 function buildNav(tabs) {
   const nav = el('navBar');
   nav.innerHTML = tabs.map(t => `<button class="nav-tab" data-tab="${t}">${icon(t, 16)}<span>${TAB_LABELS[t] || t}</span></button>`).join('');
@@ -1252,11 +1732,15 @@ function buildNav(tabs) {
 function switchTab(tab, sub) {
   if (!hasTab(tab)) { toast('You do not have access to that section.', 'error'); return; }
   currentTab = tab;
+  const mod = el('currentModule'); if (mod) mod.textContent = TAB_LABELS[tab] || '';
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = el('panel-' + tab);
   if (panel) panel.classList.add('active');
   showSub(tab, sub);
+  // On a narrow screen the strip scrolls: keep the open module in view.
+  const active = document.querySelector(`.nav-tab[data-tab="${tab}"]`);
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   // The KPI strip belongs on each role's home module; elsewhere it is clutter.
   const metrics = el('metricsRow');
   if (metrics) metrics.classList.toggle('hidden', tab !== AUTH.getDefaultTab());
@@ -1281,39 +1765,37 @@ function showSub(tab, sub) {
   MODULES.forEach(m => { if (m.onSub) { try { m.onSub(tab, chosen); } catch (err) { console.error(err); } } });
 }
 
-/* ── What's new (dashboard) ────────────────────────────────────────────── */
-/* Points directors at the capabilities added in this release. Hiding it is
-   remembered on this device only. */
-const WHATS_NEW_RELEASE = '2026-11';
-const WHATS_NEW_KEY = 'ksa_whatsnew_hidden';
-const WHATS_NEW = [
-  ['register/daily', 'Attendance', 'Daily class register', 'Mark every class present, absent, late or excused in a minute, then message the guardians of absent learners.'],
-  ['academics/marksheet', 'Academics', 'Class mark sheet', "Enter a whole class's marks for one subject on one screen."],
-  ['academics/reportcards', 'Academics', 'Report cards', 'Positions, teacher and head-teacher comments, and Uganda grading from PLE to A Level. Print a whole class at once.'],
-  ['payments/terms', 'Fees', 'Terms & fee structures', 'Open a term and every learner is billed from the fee structure. Unpaid balances carry forward as arrears.'],
-  ['payments/dashboard', 'Fees', 'Fees dashboard', 'Collection rate, arrears, top defaulters and fees by class, with one-tap reminders to guardians.'],
-  ['payments/bursaries', 'Fees', 'Bursaries for any learner', 'Needs-based, staff, academic or sports bursaries. The bill adjusts itself.'],
-  ['directory/import', 'Students', 'Import from Excel', 'Bring your learners in from a spreadsheet instead of typing them one by one.'],
-  ['admin/staff', 'Administration', 'Staff accounts', 'Teachers, the bursar and the head of sports each sign in separately and see only their part.'],
-  ['admin/profile', 'Administration', 'Your badge and colours', 'Your logo and school colours on receipts, report cards and the sign-in screen.'],
-  ['admin/sms', 'Administration', 'SMS to parents', "Fee reminders, absence alerts and notices by SMS through your school's own Africa's Talking account."],,
+/* ── Today's jobs (dashboard) ──────────────────────────────────────────── */
+/* The everyday tasks this person can do, one tap each:
+   [where it goes ('module/sub-tab' or 'act:action'), label, hint, allowed?] */
+const TODAYS_JOBS = [
+  ['directory/daily', "Take today's register", 'Mark every child present, absent, late or excused', () => can('canMarkRegister')],
+  ['act:absentToday', 'Who is absent today', 'Their names, class by class', () => can('canMarkRegister')],
+  ['academics/marks', 'Enter marks', 'A whole class, one subject at a time', () => can('canAddAcademic')],
+  ['academics/reportcards', 'Report cards', 'View or print, one child or the class', () => hasTab('academics')],
+  ['payments/record', 'Record a payment', 'Then print the receipt', () => can('canRecordPayment')],
+  ['payments/dashboard', 'Who owes fees', 'Class by class, with reminders', () => hasTab('payments')],
+  ['sports/training', 'Mark training', 'Every athlete present or absent', () => can('canMarkAttendance')],
+  ['directory/list', 'Find a child', 'By name, class or guardian number', () => hasTab('directory')],
+  ['directory/admit', 'Admit a student', 'Name, class and guardian numbers', () => can('canRegisterStudent')],
+  ['conduct', 'Log a discipline case', 'Or a commendation, with the message to the guardian', () => can('canLogConduct')],
+  ['noticeboard', 'Post a notice', 'For staff' + (ONLINE_EDITION ? ', or staff and parents' : ''), () => can('canPostNotice')],
+  ['act:backupNow', 'Back up now', 'Download a copy of everything on this device', () => !ONLINE_EDITION && can('canExport')],
 ];
-function whatsNewHidden() {
-  try { return localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_RELEASE; } catch (_) { return false; }
-}
-function renderWhatsNew() {
-  const card = el('whatsNewCard'), list = el('whatsNewList');
+function renderTodaysJobs() {
+  const card = el('jobsCard'), list = el('jobsList');
   if (!card || !list) return;
-  const items = WHATS_NEW.filter(([to]) => { const [tab, sub] = to.split('/'); return hasTab(tab) && allowedSubs(tab).some(s => s[0] === sub); });
-  card.style.display = items.length && !whatsNewHidden() ? '' : 'none';
-  list.innerHTML = items.map(([to, where, title, desc]) => `<div class="wn-item">
-      <div class="wn-where">${escapeHtml(where)}</div><div class="wn-title">${escapeHtml(title)}</div><div class="wn-desc">${escapeHtml(desc)}</div>
-      <button class="btn btn-outline btn-xs" type="button" data-act="goto" data-to="${escapeHtml(to)}">Open ${icon('right', 13)}</button>
-    </div>`).join('');
-}
-function hideWhatsNew() {
-  try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_RELEASE); } catch (_) {}
-  const card = el('whatsNewCard'); if (card) card.style.display = 'none';
+  const jobs = TODAYS_JOBS.filter(([to, , , ok]) => {
+    if (!ok()) return false;
+    if (to.startsWith('act:')) return true;
+    const [tab, sub] = to.split('/');
+    return hasTab(tab) && (!sub || allowedSubs(tab).some(x => x[0] === sub));
+  });
+  card.style.display = jobs.length ? '' : 'none';
+  list.innerHTML = jobs.map(([to, label, hint]) => {
+    const go = to.startsWith('act:') ? `data-act="${escapeHtml(to.slice(4))}"` : `data-act="goto" data-to="${escapeHtml(to)}"`;
+    return `<button class="job" type="button" ${go}><span class="job-label">${escapeHtml(label)}</span><span class="job-hint">${escapeHtml(hint)}</span></button>`;
+  }).join('');
 }
 
 /* =========================================================================
@@ -1324,13 +1806,38 @@ Object.assign(ACTIONS, {
   feeReceipt: d => printFeeReceipt(d.id),
   smsBalance: d => smsBalance(d.id),
   waBalance: d => whatsappBalance(d.id),
-  smsConduct: d => smsConduct(d.id),
-  editStudent: d => openStudentEdit(d.id),
+  smsConduct: d => sendConduct(d.id, d.to || '1'),
+  waConduct: d => sendConduct(d.id, d.to || '1', true),
+  conductAnother: () => { const b = el('conductDone'); if (b) b.style.display = 'none'; const sel = el('conductStudent'); if (sel) sel.focus(); },
+  editNotice: d => editNotice(d.id),
+  reportList: d => { const r = reportLearners(d); if (r.title) showLearnerList(r.title, r.list); },
+  editStudent: d => openStudentEdit(d.id, d.back === '1'),
+  dirShowOwe: () => { el('dirShow').value = 'owe'; studentPage = 1; renderStudentTable(); },
+  admitAnother: () => { el('admitDone').style.display = 'none'; const n = document.querySelector('#registerForm input[name="name"]'); if (n) n.focus(); },
   deleteStudent: d => deleteStudent(d.id),
   notes: d => openNotes(d.id),
-  academic: d => openAcademic(d.id),
-  voidPayment: async d => { const r = await promptDialog({ title: 'Reverse payment', label: 'Reason for reversal', type: 'text' }); if (r !== null) voidPayment(d.id, r); },
+  voidPayment: async d => {
+    const p = state.payments.find(x => x.id === d.id); if (!p || p.void) return;
+    const s = state.students.find(x => x.id === p.studentId);
+    const who = s ? s.name : p.studentId;
+    const r = await promptDialog({
+      title: 'Reverse a payment',
+      message: `Reverse ${fmtMoney(p.amount)} paid for ${who} on ${fmtDay(p.date)} (receipt no. ${p.id})? The receipt stops being valid and the amount goes back onto what ${who} owes. The payment stays in the list, crossed out, with your reason.`,
+      label: 'Why is it being reversed?', okLabel: 'Reverse payment', danger: true,
+    });
+    if (r !== null) voidPayment(d.id, r);
+  },
   deleteProgram: d => deleteProgram(d.id),
+  programAthletes: d => openProgramAthletes(d.id),
+  menuGo: d => { closeModal(); switchTab(d.tab); },
+  menuDo: d => { closeModal(); if (d.target === 'importLabel') el('importInput').click(); else if (el(d.target)) el(d.target).click(); },
+  // From Sessions: open that session on the list above, ready to change.
+  openSession: d => {
+    switchTab('sports', 'training');
+    el('attendanceProgram').value = d.id;
+    el('attendanceDate').value = d.date;
+    renderAttendanceRoster();
+  },
   deleteConduct: d => deleteConduct(d.id),
   setBursary: d => setBursary(d.id),
   setActiveTerm: d => setActiveTerm(d.id),
@@ -1341,11 +1848,12 @@ Object.assign(ACTIONS, {
   athleteProfile: d => openAthleteProfile(d.id),
   deleteNotice: d => deleteNotice(d.id),
   editUser: d => loadUserForEdit(d.id),
+  auditMore: () => { auditLimit += 100; renderAuditLog(); },
+  backupNow: () => exportLedger(),
   resetUserPwd: d => resetUserPwd(d.id),
   deleteUser: d => confirmDeleteUser(d.id),
   studentPage: d => { studentPage = d.page === 'next' ? studentPage + 1 : Math.max(1, studentPage - 1); renderStudentTable(); },
   goto: d => { const [tab, sub] = String(d.to || '').split('/'); switchTab(tab, sub); },
-  dismissWhatsNew: () => hideWhatsNew(),
 });
 function handleDelegatedClick(e) {
   const modalClose = e.target.closest('[data-modal-close]');
@@ -1362,24 +1870,49 @@ function setupBindings() {
   // initApp runs on every sign-in; bind listeners only once or forms submit twice.
   if (bindingsReady) return;
   bindingsReady = true;
-  bind('registerForm', (f, form) => { registerStudent(f); form.reset(); });
-  bind('paymentForm', (f, form) => { recordPayment(f); form.reset(); el('balancePreview').style.display = 'none'; });
+  bind('registerForm', async (f, form) => { const s = await registerStudent(f); if (s) { form.reset(); showAdmitDone(s); } });
+  let paying = false;   // one tap, one payment: the button is off until the answer is back
+  bind('paymentForm', async (f, form) => {
+    if (paying) return;
+    paying = true;
+    const btn = form.querySelector('button[type="submit"]'); if (btn) btn.disabled = true;
+    try {
+      const r = await recordPayment(f);
+      if (!r) return;   // refused: keep what was typed
+      const cls = el('payClass').value;
+      form.reset();
+      el('payClass').value = cls;
+      renderPayStudentOptions();
+      showPayDone(r);
+    } finally { paying = false; if (btn) btn.disabled = false; }
+  });
   bind('programForm', (f, form) => { f.days = new FormData(form).getAll('days'); addProgram(f); form.reset(); });
   bind('performanceForm', (f, form) => { logPerformance(f); form.reset(); });
-  bind('conductForm', (f, form) => { f.notifyGuardian = form.notifyGuardian.checked; addConduct(f); form.reset(); });
-  bind('noticeForm', (f, form) => { postNotice(f); form.reset(); });
+  bind('conductForm', (f, form) => {
+    const c = addConduct(f);
+    if (!c) return;   // refused: keep what was typed
+    const cls = el('conductClass').value;
+    form.reset();
+    el('conductClass').value = cls;
+    renderConductForm();
+    showConductDone(c);
+  });
+  bind('noticeForm', (f, form) => { if (postNotice(f)) form.reset(); });
   bind('settingsForm', (f) => { saveSettings(f); });
 
   const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
   on('searchInput', 'input', () => { studentPage = 1; renderStudentTable(); });
-  on('levelFilter', 'change', () => { studentPage = 1; renderStudentTable(); });
+  ['dirClass', 'dirShow'].forEach(id => on(id, 'change', () => { studentPage = 1; renderStudentTable(); }));
+  on('registerForm', 'input', () => { const d = el('admitDone'); if (d) d.style.display = 'none'; });
   on('sportFilter', 'change', renderPerformanceTable);
-  on('conductFilter', 'change', renderConductTable);
+  ['conductFilter', 'conductClassFilter', 'conductPeriod'].forEach(id => on(id, 'change', renderConductTable));
+  on('conductClass', 'change', () => { el('conductStudent').value = ''; renderConductForm(); });
+  on('conductForm', 'input', () => { const d = el('conductDone'); if (d) d.style.display = 'none'; });
+  on('noticeFilter', 'change', renderNotices);
   on('compSportFilter', 'change', renderCompetitionsTable);
   on('compSeasonFilter', 'change', renderCompetitionsTable);
   on('athleteProfileFilter', 'change', renderAthleteProfiles);
   on('bulkSmsBtn', 'click', openBulkSms);
-  on('paymentStudent', 'change', updateBalancePreview);
   on('attendanceProgram', 'change', renderAttendanceRoster);
   on('attendanceDate', 'change', renderAttendanceRoster);
   on('addCompetitionBtn', 'click', openCompetitionForm);
@@ -1389,19 +1922,18 @@ function setupBindings() {
   on('saveAttendanceBtn', 'click', () => {
     const programId = el('attendanceProgram').value;
     const date = el('attendanceDate').value || todayISO();
-    if (!programId) return toast('Choose a program first.', 'error');
-    const boxes = document.querySelectorAll('#attendanceRoster .att-toggle');
-    if (!boxes.length) return toast('No athletes to mark.', 'error');
-    saveAttendance(programId, date, Array.from(boxes).map(cb => ({ studentId: cb.dataset.student, present: cb.checked })));
+    if (!programId) return toast('Choose a programme first.', 'error');
+    if (date > todayISO()) return toast('You cannot mark a session for a future date.', 'error');
+    const rows = document.querySelectorAll('#attendanceRoster .reg-row');
+    if (!rows.length) return toast('No athletes to mark.', 'error');
+    if (refuseUnmarked([...rows], 'athlete')) return;
+    saveAttendance(programId, date, Array.from(rows).map(r => ({ studentId: r.dataset.student, present: r.dataset.status !== 'A' })));
   });
-
-  // Live present/absent labels in the roster.
-  const roster = el('attendanceRoster');
-  if (roster) roster.addEventListener('change', e => {
-    if (!e.target.classList.contains('att-toggle')) return;
-    const lbl = roster.querySelector(`.att-state[data-for="${CSS.escape(e.target.dataset.student)}"]`);
-    if (lbl) { lbl.textContent = e.target.checked ? 'Present' : 'Absent'; lbl.style.color = e.target.checked ? 'var(--success)' : 'var(--faint)'; }
+  on('attendanceRoster', 'click', e => {
+    const b = e.target.closest('[data-set-att]'); if (!b) return;
+    setAttendanceRow(b.closest('.reg-row'), b.dataset.setAtt);
   });
+  on('sessProgram', 'change', renderSessionList);
 
   // Export / import (header + admin)
   ['exportBtn', 'adminExportBtn'].forEach(id => on(id, 'click', exportLedger));
@@ -1409,7 +1941,11 @@ function setupBindings() {
   on('resetBtn', 'click', resetAll);
 
   const uef = el('userEditForm'); if (uef) uef.addEventListener('submit', handleUserEditSubmit);
-  on('clearUserBtn', 'click', clearUserEditForm);
+  on('clearUserBtn', 'click', () => { clearUserEditForm(); el('staffFormBox').open = false; });
+  on('addStaffBtn', 'click', openStaffForm);
+  on('auditFilter', 'change', () => { auditLimit = 100; renderAuditLog(); });
+  on('settingsForm', 'input', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });
+  on('settingsForm', 'change', e => { if (e.target.id !== 'logoInput') el('settingsForm').dataset.dirty = '1'; });
 
   // Class → combination hint
   const cls = el('classSelect'), combo = el('combinationInput');
@@ -1464,13 +2000,17 @@ function startSessionTimer() { if (sessionTimer) clearInterval(sessionTimer); se
 
 function updateBackupBanner() {
   const banner = el('backupBanner'); if (!banner) return;
-  if (ONLINE_EDITION) { banner.style.display = 'none'; return; }
   let last = null;
   try { last = localStorage.getItem('ksa_last_backup'); } catch (_) {}
-  if (!can('canExport')) { banner.style.display = 'none'; return; }
+  const line = el('lastBackupLine');
+  if (line) {
+    line.style.display = ONLINE_EDITION ? 'none' : '';
+    line.textContent = last ? `Last backup on this device: ${fmtDay(last)} (${daysAgo(last)}).` : 'No backup has been made on this device yet.';
+  }
+  if (ONLINE_EDITION || !can('canExport')) { banner.style.display = 'none'; return; }
   const stale = !last || (Date.now() - new Date(last).getTime()) > 7 * 86400000;
   banner.style.display = stale && state.students.length ? 'flex' : 'none';
-  if (stale) banner.querySelector('span').textContent = last ? `Last backup: ${last}. Export a fresh backup to stay safe.` : 'No backup yet — export one to protect your data.';
+  if (stale) banner.querySelector('span').textContent = last ? `The last backup was ${daysAgo(last)} (${fmtDay(last)}). Make a fresh one so nothing is lost if this computer breaks.` : 'No backup yet. Make one so nothing is lost if this computer breaks.';
 }
 
 /* =========================================================================
@@ -1480,8 +2020,11 @@ async function handleLogin(e) {
   e.preventDefault();
   const btn = el('loginBtn'), err = el('authError');
   btn.disabled = true; btn.textContent = 'Signing in…'; err.style.display = 'none';
-  const res = await AUTH.login(el('loginUsername').value, el('loginPassword').value);
-  btn.disabled = false; btn.textContent = 'Sign in';
+  let res;
+  // Whatever happens, the button comes back: it must never stay on "Signing in…".
+  try { res = await AUTH.login(el('loginUsername').value, el('loginPassword').value); }
+  catch (e) { res = { ok: false, error: 'Signing in failed: ' + ((e && e.message) || 'unknown error') + '. Try again.' }; }
+  finally { btn.disabled = false; btn.textContent = 'Sign in'; }
   if (!res.ok) {
     err.style.display = 'block'; err.textContent = res.error;
     if (res.noSchool && typeof offerNewSchool === 'function') offerNewSchool();
@@ -1574,7 +2117,6 @@ function initApp() {
   show('auditLogCard', can('canManageUsers'));
   show('settingsCard', can('canManageSettings'));
   show('conductFormCard', can('canLogConduct'));
-  show('academicFormCard', can('canAddAcademic'));
   show('perfFormCard', can('canLogPerformance'));
   show('termMgmtCard', can('canManageTerms'));
   show('feeStructCard', can('canManageTerms'));
@@ -1864,6 +2406,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (el('topCrest')) el('topCrest').innerHTML = crestSVG();
   el('loginForm').addEventListener('submit', handleLogin);
   el('changePwdBtn').addEventListener('click', () => openChangePwd(false));
+  el('menuBtn').addEventListener('click', openMenu);
   el('logoutBtn').addEventListener('click', handleLogout);
   if (el('forgotPwdBtn')) el('forgotPwdBtn').addEventListener('click', openForgotPassword);
   if (el('signUpBtn')) el('signUpBtn').addEventListener('click', openSignUp);
@@ -1896,6 +2439,7 @@ document.addEventListener('DOMContentLoaded', () => {
   try { loadState(); applySettings(); applyBranding(); } catch (_) {}
 
   if (ONLINE_EDITION) { startOnline(); return; }
+  applyEditionTexts();   // hide what only the online edition has (e.g. "Who can see this" on notices)
   const session = AUTH.getSession();
   if (session) { currentSession = session; initApp(); }
   else el('authScreen').style.display = 'grid';

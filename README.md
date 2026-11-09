@@ -1,5 +1,5 @@
 # School Management Portal
-### Offline-first school administration for Ugandan schools & academies — v3.5.0
+### Offline-first school administration for Ugandan schools & academies — v3.7.0
 
 A complete, installable school management system that runs entirely in the
 browser and works **fully offline**. Built for the realities of Ugandan
@@ -23,11 +23,16 @@ device.
 - **Know who owes what.** A finance dashboard with this term's collection rate,
   arrears, collections by payment method, fees by class and the top defaulters,
   each one tap away from an SMS or WhatsApp reminder.
-- **Report cards in minutes.** A class mark sheet for each subject, beginning /
-  mid / end-of-term marks, class and stream positions, PLE aggregates and
-  divisions, teacher comments — then print the whole class, one page per learner.
-- **Daily class register.** Present, absent, late or excused, with one-tap
-  messages to the guardians of absent learners.
+- **Report cards in minutes.** Enter a whole class's marks for a subject on one
+  screen (the grade shows as you type), see the class results with positions,
+  PLE aggregates and divisions, write comments, then view or print one child's
+  card or the whole class, one page per learner.
+- **Daily class register, with names.** Tap Present, Absent, Late or Excused for
+  each child; the screen names who is absent as you go. "Who was absent" and a
+  term sheet like the paper register show exactly which child missed which day,
+  and the Dashboard names today's absent children.
+- **One page per learner.** Tap any child's name to see their attendance (with
+  the dates absent), marks and report card, fees, sports and discipline.
 - **Parent portal (online edition).** Parents sign in on their phone with a
   code sent by SMS and see their children's fees and receipts, published report
   cards, attendance and school notices. They see only their own children.
@@ -52,20 +57,20 @@ device.
 
 ## Where things are
 
-Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at a time.
+Nine modules in the top menu (on a phone, under **Menu**). Most have sub-tabs, so each screen shows one job at a time.
+Every name opens that child's page, and every number in Reports opens the children behind it.
 
 | Module | Sub-tabs |
 |--------|----------|
-| **Dashboard** | Fees at a glance, today's class attendance, and what's new |
-| **Students** | All students · Admit a student · Import from Excel |
-| **Attendance** | Daily register (every class, every morning) · Recent registers |
-| **Academics** | Enter marks · Mark sheet · Comments · Report cards · Grading scales |
-| **Fees** | Record payment · Fees dashboard · Terms & fee structures · Bursaries |
+| **Dashboard** | Today's jobs (one tap each), fees at a glance, and today's attendance with the absent children's names |
+| **Students** | All students · Take register · Who was absent · Term sheet · Admit a student · Import from Excel |
+| **Academics** | Enter marks · Class results · Comments · Report cards · Grading scales |
+| **Fees** | Record payment (and the Payments list) · Fees dashboard (and Who owes) · Terms & fee structures · Bursaries |
 | **Sports** | Programmes · Training attendance · Competitions & squads · Athletes · Bursary candidates |
-| **Discipline** | Conduct log, with messages to guardians |
+| **Discipline** | Log a conduct entry, and the conduct log, with messages to guardians |
 | **Reports** | Statistics · EMIS |
 | **Notices** | The school notice board |
-| **Administration** | Staff accounts · School profile & logo · SMS (online) · Data & backup |
+| **Administration** | Staff & who did what · School profile & logo · SMS (online) · Backup & restore |
 
 ---
 
@@ -73,11 +78,11 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 
 | Role | Sees | Can do |
 |------|------|--------|
-| **Executive Director** | All ten modules | Full access, staff accounts, school profile, audit log, data reset |
-| **School Administrator** | All ten modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
+| **Executive Director** | All nine modules | Full access, staff accounts, school profile, "who did what", data reset |
+| **School Administrator** | All nine modules; Sports is view-only apart from adding programmes | Admit and edit students, record payments, open terms and set fees, enter marks, log conduct |
 | **Bursary Officer** | Fees, Reports, Notices | Record and reverse payments, give any learner a bursary, fee reports |
 | **Head of Sports** | Sports, Notices | Programmes, training attendance, competitions, squads, athlete profiles, bursary candidates |
-| **Teacher** | Attendance, Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments, text the guardians of absent learners (online) |
+| **Teacher** | Students (My classes and the register, no fees), Academics, Notices — **assigned classes only** | Call the register, enter marks, write class-teacher comments, text the guardians of absent learners (online) |
 | **Parent** (online) | The parent portal (`parent.html`) | Their own children only: fees, receipts, published report cards, attendance, notices for parents |
 
 ---
@@ -98,24 +103,117 @@ Ten modules in the top menu. Most have sub-tabs, so each screen shows one job at
 5. Add learners under **Students** — one by one with **Admit a student**, or all
    at once with **Import from Excel** (download the template, fill it in Excel,
    save as CSV). Use the opening-balance column for fees owed from before.
-6. Under **Administration → Staff accounts**, create a **Teacher** account for
-   each class teacher and tick their classes.
-7. Take your first **Backup**.
+6. Under **Administration → Staff & who did what**, press **Add a staff member**
+   for each teacher: name, username, role **Teacher**, their classes and a first
+   password (they choose their own when they first sign in).
+7. Press **Back up now** under **Administration → Backup & restore**.
 
 ## Running a term
 
 | When | Where | What |
 |------|-------|------|
 | Start of term | Fees → Terms & fee structures | **Open term** — every learner is billed and unpaid balances become arrears. Fee structures carry over; edit them and press **Apply to learners** if fees changed. |
-| Every morning | Attendance → Daily register | Each class teacher calls the register; message the guardians of absent learners. The Dashboard shows which classes are still to be marked. |
-| Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, and print the receipt. |
-| Weekly | Fees → Fees dashboard | Review the collection rate and top defaulters; send **Fee reminders**. |
-| Test / exam time | Academics → Mark sheet | Enter a subject for the whole class (beginning, mid or end of term). |
-| End of term | Academics → Comments, then Report cards | Write comments, then **Print class** for report cards. |
+| Every morning | Students → Take register | Each class teacher marks every child; message the guardians of absent learners. The Dashboard names the absent children and shows which classes are still to be marked. |
+| Whenever fees come in | Fees → Record payment | Record the payment with its method and Mobile Money / bank reference, then press **Print receipt**. |
+| Weekly | Fees → Fees dashboard | Under **Who owes**, choose a class and send reminders; check the share of this term's bills paid. |
+| Every week | Administration → Backup & restore | **Back up now** (offline edition) and keep the file safe. |
+| Test / exam time | Academics → Enter marks | Enter a subject for the whole class (beginning, mid or end of term). |
+| End of term | Academics → Comments, then Report cards | Write comments, check **Class results**, then view or print each card, or **Print all** for the class. |
+
+## How to: the daily jobs
+
+**Take the register** (class teacher, every morning)
+1. **Students → Take register.** Choose the class (and stream). Every child starts **Not marked**:
+   nobody is counted present until you mark them.
+2. Tap **Present**, **Absent**, **Late** or **Excused** for every child. The line above the list
+   says who is not marked yet and names the absent and late.
+3. Press **Save register**. If anyone is still not marked, nothing is saved: they are named
+   and highlighted. Once saved, the absent children are listed with SMS and WhatsApp buttons
+   for their guardians.
+
+**See which child was absent**
+- **Dashboard:** "Absent today" names them, class by class.
+- **Students → Who was absent:** every register, with names. Pick a class and dates.
+  **Change this register** corrects one.
+- **Students → Term sheet:** the class like the paper register, with ✓ and ✗ per day and
+  each child's totals. Press **Print** for the file.
+- Tap a child's name for their page, which lists the dates they were absent.
+
+**Enter marks** (subject teacher)
+1. **Academics → Enter marks.** Choose the class, the subject and the exam.
+2. Type each child's score. The grade shows as you type, and Enter moves to the next child.
+3. Press **Save marks**.
+
+**Report cards** (end of term)
+1. **Academics → Class results:** check every child's marks, average and position.
+2. **Academics → Comments:** write the comments (or **Suggest for blanks**), then **Save comments**.
+3. **Academics → Report cards:** choose the class and term, and fill in "Printed on every card".
+   - **View** shows one child's card.
+   - **Print** prints it.
+   - **Print all … report cards** prints the class, one page per child.
+
+**Sports training** (head of sports)
+1. Once per programme: **Sports → Programmes → Add or remove athletes**. Tick the learners
+   who train in it.
+2. Each session: **Sports → Training attendance.** Choose the programme, tap **Present** or
+   **Absent** for every athlete, and press **Save session** (it is refused while anyone is not marked).
+3. **Sessions** names who missed each session. **Who attends training** shows each athlete's
+   rate and the dates they missed.
+
+**Record a payment and print the receipt** (bursar)
+1. **Fees → Record payment.** Choose the class, then the child: their bill, what is paid and what
+   they owe are shown.
+2. Type the amount (it is written out in words as you type), how it was paid, the date and the
+   Mobile Money or bank reference.
+3. Press **Record payment**, then **Print receipt**. The same payment typed twice asks first.
+- **Payments** lists every payment: search a name or receipt number; **Receipt** prints it again;
+  **Reverse** cancels one entered by mistake (it needs a reason and stays in the list, crossed out).
+
+**Who owes, and reminders**
+1. **Fees → Fees dashboard → Who owes.** Choose a class: every child who owes is listed, largest
+   first, with SMS and WhatsApp buttons.
+2. **Text all N guardians in S.4** reminds that class only (online by SMS through the school's
+   account; offline as a tap-to-send list). **Fees by class** shows which classes owe most.
+
+**Bursaries:** **Fees → Bursaries**, choose the class and child, press **Change bursary**, type the
+percentage and check the new bill before pressing **Save bursary**.
+
+**Find, admit or correct a learner**
+- **Students → All students:** choose a class, or search a name (any word order) or a guardian's
+  number. "N owe fees" lists those who owe.
+- **Admit a student:** fill in the numbered groups and press **Admit student**; the same name in the
+  same class asks first. **Import from Excel** skips learners already in the school.
+
+**Discipline**
+1. **Discipline.** Choose the class and child, then **what happened**: Good (commendation), A
+   concern (verbal warning, counselling) or Serious (written warning, detention, suspension). How
+   serious it is follows from that.
+2. Set the date, write what the child did, and press **Save entry**.
+3. The message for the guardian is shown, with the date: send it by SMS or WhatsApp.
+- The log filters by class, good/concern/serious and term; the child's page counts their entries.
+
+**Notices:** write the title and details, choose the kind (and, online, whether parents see it),
+press **Post notice**. Whoever posted a notice, the director and the administrator can **Edit** or
+**Delete** it.
+
+**Reports and EMIS**
+- **Reports → Statistics:** classes in school order with boys, girls, day, boarders, special needs,
+  owing and in sports. Tap any number for the names. Warnings name learners with an unknown class
+  or no gender set; fix them before EMIS.
+- **Reports → EMIS:** the figures per class with a total row; **Download EMIS figures (Excel)**.
+
+**Back up and restore** (offline edition)
+- **Administration → Backup & restore → Back up now** downloads `<school>-backup-<date>.json`
+  with every record, the staff accounts and "who did what". Keep it safe and private.
+- **Restore from a backup** shows what is in the file first and asks whether to bring back the
+  staff accounts. **Go back to a daily copy** undoes a mistake from the last 7 days on this device.
+
+**Everything about one child:** tap their name anywhere (Students, registers, results, report
+cards, sports) for their details, attendance, marks, fees, sports and discipline.
 
 > The four seed accounts (`exec`, `admin`, `bursary`, `coach`) exist only to
 > bootstrap the first sign-in. Change every password immediately and create
-> named staff accounts under **Administration → Staff accounts**.
+> named staff accounts under **Administration → Staff & who did what**.
 
 ---
 
@@ -128,8 +226,9 @@ school-portal/
 ├── core.js             Shared helpers: formatting, icons, dialogs, printing (staff app and parent portal)
 ├── app.js              Core: learners, payments, sports, conduct, UI shell
 ├── billing.js          Terms, fee structures, bills, arrears, receipts, finance dashboard
-├── academics.js        Grading scales, marks, positions, comments, report cards
-├── register.js         Daily class register
+├── academics.js        Grading scales, marks, class results, comments, report cards
+├── register.js         Class register, who was absent, term sheet
+├── learner.js          One page per learner: attendance, marks, fees, sports
 ├── tools.js            CSV import/export, logo & colours, daily snapshots
 ├── auth.js             Authentication and roles (PBKDF2 password hashing)
 ├── service-worker.js   Offline cache (network-first for app code)
@@ -251,8 +350,9 @@ browser's `localStorage` on the device where it is used.
 - All output is HTML-escaped and admission numbers are validated, so student
   data cannot inject scripts. A strict Content-Security-Policy blocks any
   external or inline script.
-- Login, password changes, user management, **payments, reversals, bursary
-  awards and student changes** are written to an audit log (Executive only).
+- Sign-ins, password changes, staff changes, **payments, reversals, bursary
+  awards, learner, conduct and notice changes, backups and restores** are
+  written to "who did what" (Executive only), shown in plain words and Kampala time.
 
 **The online edition** keeps each school's records in one shared database,
 where row-level security decides who sees what. A school never sees another
@@ -286,22 +386,24 @@ All data lives under these `localStorage` keys:
 | `kampala_school_portal_state` | Learners, terms, fee structures, bills, payments, marks, registers, sports, conduct, notices, settings |
 | `ksa_users` | Staff accounts (hashed passwords) |
 | `ksa_session` | Current sign-in session (8 hours) |
-| `ksa_audit` | Audit trail (last 500 events) |
+| `ksa_audit` | "Who did what" (last 500 events) |
 
 The app requests **persistent storage** and reminds you to back up if it has
 been more than a week. Recommended routine:
 
 | When | Action |
 |------|--------|
-| Daily in term time | **Backup** from the top bar |
+| Daily in term time | **Back up now** (top bar, Menu on a phone, or Administration → Backup & restore) |
 | Weekly | Copy the backup to Google Drive / a flash disk |
 | Before any reset or restore | Always back up first |
 
-Move data between devices with **Backup** on one device and **Restore** on
-another.
+Move to another device with **Back up now** on one and **Restore from a backup** on
+the other. The file (`<school>-backup-<date>.json`) holds every record, the staff
+accounts (passwords only as salted hashes) and "who did what"; restore shows what is
+in it first and asks whether to bring back the staff accounts. Keep it private.
 
 The portal also keeps an automatic **daily snapshot** for the last 7 days on the
-device (Administration → Data & backup → *Restore a daily snapshot*). It undoes
+device (Administration → Backup & restore → *Go back to a daily copy*). It undoes
 mistakes such as a wrong import, but it does not protect against losing the
 device — keep exporting backups.
 
@@ -370,4 +472,4 @@ the address it prints.
 
 ---
 
-**Version:** 3.5.0 · **License:** MIT — free for any school.
+**Version:** 3.7.0 · **License:** MIT — free for any school.

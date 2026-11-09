@@ -73,6 +73,7 @@ const ICONS = {
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
   left: '<polyline points="15 18 9 12 15 6"/>',
   right: '<polyline points="9 18 15 12 9 6"/>',
+  menu: '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>',
   award: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
   save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
   refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
@@ -96,8 +97,54 @@ function uid() {
   if (crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+/* An id for a new record: the prefix and 12 random hex digits. Marks and
+   registers run to tens of thousands a year, so the 5–6 digits used before
+   would, sooner or later, give two records the same id (and online the
+   second would overwrite the first). Existing ids are kept as they are. */
+function newId(prefix) {
+  const hex = crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '')
+    : Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return prefix + hex.slice(0, 12).toUpperCase();
+}
+/* Uganda is UTC+3 all year (no summer time). Dates and times are shown, and
+   "today" is worked out, in Kampala time, so a register or payment just
+   after midnight is not filed under the day before. */
+const KAMPALA_MS = 3 * 60 * 60 * 1000;
+function todayISO() { return new Date(Date.now() + KAMPALA_MS).toISOString().slice(0, 10); }
+/* A moment (ISO timestamp, stored in UTC) in Kampala time: "Mon 9 Nov 2026, 14:05". */
+function fmtWhen(iso) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return iso || '';
+  const k = new Date(t + KAMPALA_MS).toISOString();
+  return `${fmtDay(k.slice(0, 10))}, ${k.slice(11, 16)}`;
+}
+/* "today", "yesterday" or "3 days ago" for a YYYY-MM-DD date. */
+function daysAgo(iso) {
+  const n = Math.round((Date.parse(todayISO()) - Date.parse(String(iso).slice(0, 10))) / 86400000);
+  return !Number.isFinite(n) ? '' : n <= 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`;
+}
 function nowISO() { return new Date().toISOString(); }
+/* Dates are kept as YYYY-MM-DD (UTC, like todayISO). addDaysISO('2026-11-05', -6)
+   is '2026-10-30'; fmtDay('2026-11-05') is 'Thu 5 Nov 2026' (no year if year=false). */
+function addDaysISO(iso, n) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+/* A learner's name that opens their learner page (learner.js), optionally
+   at one section (e.g. 'fees'). */
+function learnerLink(id, name, section) {
+  return `<button type="button" class="link-btn" data-act="learner" data-id="${escapeHtml(id)}"${section ? ` data-section="${escapeHtml(section)}"` : ''}>${escapeHtml(name)}</button>`;
+}
+/* Classes in school order (Baby Class … S.6); a class the app does not know goes last. */
+function classRank(c) { const i = CLASS_OPTIONS.indexOf(c); return i < 0 ? 999 : i; }
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDay(iso, year = true) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso || '')) return iso || '';
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00Z');
+  return `${DAY_NAMES[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]}${year ? ' ' + d.getUTCFullYear() : ''}`;
+}
 function currency() { return (state.settings && state.settings.currency) || 'UGX'; }
 function fmtMoney(n) { return currency() + ' ' + Number(n || 0).toLocaleString('en-UG'); }
 function escapeHtml(s) {
@@ -213,12 +260,13 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
     modalResolver = () => resolve(false);
   });
 }
-function promptDialog({ title, label, value = '', type = 'text' }) {
+/* message: an optional paragraph above the box (e.g. what is being changed). */
+function promptDialog({ title, label, value = '', type = 'text', message = '', okLabel = 'Save', danger = false }) {
   return new Promise(resolve => {
     openModal({
       title,
-      bodyHtml: `<label class="form-label">${escapeHtml(label)}</label><input class="input" id="mdInput" type="${type}" value="${escapeHtml(value)}">`,
-      footHtml: `<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn btn-primary" id="mdOk">Save</button>`,
+      bodyHtml: `${message ? `<p style="font-size:14px;margin:0 0 12px">${escapeHtml(message)}</p>` : ''}<label class="form-label" for="mdInput">${escapeHtml(label)}</label><input class="input" id="mdInput" type="${type}" value="${escapeHtml(value)}">`,
+      footHtml: `<button class="btn btn-ghost" id="mdCancel">Cancel</button><button class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}" id="mdOk">${escapeHtml(okLabel)}</button>`,
       onOpen(root) {
         const input = root.querySelector('#mdInput');
         root.querySelector('#mdCancel').addEventListener('click', () => { cleanup(); resolve(null); });

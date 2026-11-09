@@ -195,7 +195,7 @@ function visibleClasses() {
   const classes = AUTH.currentUserClasses();
   const present = [...new Set(state.students.map(s => s.class).filter(Boolean))];
   const list = classes ? classes : present;
-  return [...list].sort((a, b) => CLASS_OPTIONS.indexOf(a) - CLASS_OPTIONS.indexOf(b));
+  return [...list].sort((a, b) => classRank(a) - classRank(b) || String(a).localeCompare(String(b)));
 }
 function streamsFor(cls) { return [...new Set(state.students.filter(s => s.class === cls).map(s => s.stream).filter(Boolean))].sort(); }
 function termOptions(selectedId) {
@@ -215,41 +215,92 @@ function saveMark(s, termId, examSet, subject, score) {
   s.academics = s.academics || [];
   const existing = s.academics.find(a => a.termId === termId && (a.examSet || 'EOT') === examSet && a.subject.toLowerCase() === subject.toLowerCase());
   if (existing) { existing.score = score; existing.grade = g.grade; existing.points = g.points; existing.date = todayISO(); }
-  else s.academics.push({ id: 'AC' + uid().slice(0, 6), termId, examSet, term: (termById(termId) || {}).term || '', subject, score, grade: g.grade, points: g.points, date: todayISO() });
+  else s.academics.push({ id: newId('AC'), termId, examSet, term: (termById(termId) || {}).term || '', subject, score, grade: g.grade, points: g.points, date: todayISO() });
   return g;
 }
-function addAcademicScore(f) {
-  if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
-  const s = visibleStudents().find(x => x.id === f.studentId);
-  if (!s) return toast('Choose a learner first.', 'error');
-  const score = Number(f.score);
-  if (f.score === '' || isNaN(score) || score < 0 || score > 100) return toast('Score must be between 0 and 100.', 'error');
-  const subject = (f.subject || '').trim();
-  if (!subject) return toast('Enter a subject.', 'error');
-  const termId = f.termId || (getCurrentTerm() || {}).id;
-  const g = saveMark(s, termId, f.examSet || 'EOT', subject, score);
-  saveState(); renderAll();
-  toast(`Saved: ${subject} ${score}% (${g.grade}).`, 'success');
-}
+/* ── Enter marks: one subject, one exam, the whole class ───────────────── */
+/* The only way to enter marks: choose the class and the subject and every
+   child is listed with a score box; the grade shows as the score is typed. */
+const OTHER_SUBJECT = '__other__';
+let msExtraSubjects = [];          // subjects added with "Another subject…" until marks are saved
+let msDirty = false, msLast = null; // unsaved typing, and the choices it belongs to
 
-/* Whole-class mark sheet: one subject, one exam, every learner in the class. */
+function subjectsFor(cls) {
+  const level = classifyLevel(cls);
+  const base = level === 'Primary' ? PRIMARY_SUBJECTS : level === 'A Level' ? A_LEVEL_SUBJECTS : level === 'O Level' ? O_LEVEL_SUBJECTS : [];
+  const used = visibleStudents().filter(s => s.class === cls).flatMap(s => (s.academics || []).map(a => a.subject));
+  const seen = new Set(), out = [];
+  [...base, ...used.sort(), ...msExtraSubjects].forEach(x => { const k = (x || '').trim(); if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); out.push(k); } });
+  return out;
+}
+const subjectRank = cls => { const list = subjectsFor(cls).map(x => x.toLowerCase()); return x => { const i = list.indexOf(x.toLowerCase()); return i < 0 ? 999 : i; }; };
+const msSubject = () => { const v = el('msSubject') ? el('msSubject').value : ''; return v === OTHER_SUBJECT ? '' : v; };
+const streamOptions = cls => streamsFor(cls).length ? '<option value="">All streams</option>' + streamsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('') : '';
+
 function renderMarkSheet() {
   const box = el('markSheetRoster'); if (!box) return;
   const cls = el('msClass').value, stream = el('msStream').value, termId = el('msTerm').value, set = el('msExam').value;
-  const subject = el('msSubject').value.trim();
-  if (!cls || !subject) { box.innerHTML = '<div class="empty">Choose a class and a subject to load the mark sheet.</div>'; return; }
+  const subject = msSubject();
+  msLast = { cls, stream, termId, set, subject: el('msSubject').value };
+  msDirty = false;
+  if (!cls) { box.innerHTML = '<div class="empty">Choose a class to start.</div>'; msCount(); return; }
+  if (!subject) { box.innerHTML = '<div class="empty">Now choose the subject.</div>'; msCount(); return; }
   const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream)).sort((a, b) => a.name.localeCompare(b.name));
-  if (!learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; return; }
+  if (!learners.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; msCount(); return; }
   box.innerHTML = learners.map(s => {
     const mark = (s.academics || []).find(a => a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subject.toLowerCase());
-    return `<div class="roster-item"><div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.id)}${s.stream ? ' · ' + escapeHtml(s.stream) : ''}</div></div>
-      <input class="input ms-score" type="number" min="0" max="100" style="width:90px" data-student="${escapeHtml(s.id)}" value="${mark ? mark.score : ''}" aria-label="Score for ${escapeHtml(s.name)}"></div>`;
+    return `<div class="roster-item ms-row"><div><div style="font-weight:600">${escapeHtml(s.name)}</div><div class="card-desc">${escapeHtml(s.id)}${s.stream ? ' · ' + escapeHtml(s.stream) : ''}</div></div>
+      <div class="ms-entry"><input class="input ms-score" type="number" inputmode="numeric" min="0" max="100" data-student="${escapeHtml(s.id)}" value="${mark ? mark.score : ''}" aria-label="${escapeHtml(subject)} score for ${escapeHtml(s.name)}"><span class="ms-grade">${mark ? escapeHtml(gradeFor(s.level, mark.score).grade) : ''}</span></div></div>`;
   }).join('');
+  msCount();
+}
+/* "18 of 25 marked" with what is being entered. */
+function msCount() {
+  const box = el('msCounter'); if (!box) return;
+  const inputs = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+  if (!inputs.length) { box.style.display = 'none'; return; }
+  const filled = inputs.filter(i => i.value !== '').length;
+  const exam = (EXAM_SETS.find(x => x.id === el('msExam').value) || {}).label || '';
+  box.style.display = '';
+  box.innerHTML = `<strong>${filled} of ${inputs.length}</strong> marked · ${escapeHtml(msSubject())} · ${escapeHtml(exam)} · ${escapeHtml(termLabel(termById(el('msTerm').value)))}${msDirty ? ' · <span class="t-warn">not saved yet</span>' : ''}`;
+}
+function msScoreTyped(inp) {
+  const s = state.students.find(x => x.id === inp.dataset.student);
+  const badge = inp.parentElement.querySelector('.ms-grade');
+  const v = inp.value;
+  const bad = v !== '' && (isNaN(Number(v)) || Number(v) < 0 || Number(v) > 100);
+  inp.style.borderColor = bad ? 'var(--danger)' : '';
+  if (badge) badge.textContent = v === '' ? '' : bad ? '0–100' : gradeFor(s.level, Number(v)).grade;
+  msDirty = true;
+  msCount();
+}
+/* A choice changed: warn before losing typed marks, then list the class again. */
+async function msChoiceChanged(e) {
+  const id = e.target.id;
+  if (id === 'msSubject' && e.target.value === OTHER_SUBJECT) {
+    const name = ((await promptDialog({ title: 'Another subject', label: 'Name of the subject' })) || '').trim();
+    if (name) {
+      if (!msExtraSubjects.some(x => x.toLowerCase() === name.toLowerCase())) msExtraSubjects.push(name);
+      renderAcademicControls();
+      el('msSubject').value = subjectsFor(el('msClass').value).find(x => x.toLowerCase() === name.toLowerCase()) || '';
+    } else if (msLast) { el('msSubject').value = msLast.subject; return; }
+  }
+  if (msDirty && msLast) {
+    const ok = await confirmDialog({ title: 'Marks not saved yet', message: 'You typed marks that are not saved. Change the list and lose them?', confirmLabel: 'Change and lose them', danger: true });
+    if (!ok) {
+      el('msClass').value = msLast.cls; renderAcademicControls();
+      el('msStream').value = msLast.stream; el('msTerm').value = msLast.termId; el('msExam').value = msLast.set; el('msSubject').value = msLast.subject;
+      return;
+    }
+  }
+  if (id === 'msClass') renderAcademicControls();
+  renderMarkSheet();
 }
 function saveMarkSheet() {
   if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
-  const termId = el('msTerm').value, set = el('msExam').value, subject = el('msSubject').value.trim();
-  if (!subject) return toast('Enter a subject.', 'error');
+  const termId = el('msTerm').value, set = el('msExam').value, subject = msSubject();
+  if (!el('msClass').value) return toast('Choose a class first.', 'error');
+  if (!subject) return toast('Choose the subject first.', 'error');
   let saved = 0, bad = 0;
   document.querySelectorAll('#markSheetRoster .ms-score').forEach(inp => {
     if (inp.value === '') return;
@@ -259,44 +310,53 @@ function saveMarkSheet() {
     if (s) { saveMark(s, termId, set, subject, score); saved++; }
   });
   if (bad) return toast(`${bad} score${bad > 1 ? 's are' : ' is'} not between 0 and 100. Nothing was saved.`, 'error');
+  if (!saved) return toast('Type at least one score first.', 'error');
+  msDirty = false;
   saveState(); renderAll();
+  renderMarkSheet();
   toast(`Saved ${saved} ${subject} mark${saved === 1 ? '' : 's'}.`, 'success');
 }
 
-/* ── Academic table and record modal ───────────────────────────────────── */
-function renderAcademicTable() {
-  const body = el('academicTableBody'); if (!body) return;
-  const levelF = el('academicLevelFilter').value;
-  const termId = (el('academicTermFilter') && el('academicTermFilter').value) || (getCurrentTerm() || {}).id;
-  const list = visibleStudents().filter(s => (!levelF || s.level === levelF) && (s.academics || []).some(a => a.termId === termId));
-  const posCache = {};
-  body.innerHTML = list.length ? list.map(s => {
-    const r = studentTermResult(s, termId);
-    const key = s.class;
-    posCache[key] = posCache[key] || classPositions(termId, s.class);
-    const p = posCache[key][s.id];
-    return `<tr>
-      <td style="font-weight:600">${escapeHtml(s.name)}</td>
-      <td>${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</td>
-      <td class="t-center">${r.count}</td>
-      <td class="t-center">${r.avg}%</td>
-      <td style="font-weight:600;color:var(--brand)">${escapeHtml(r.label)}</td>
-      <td class="t-center">${p ? `${p.pos} / ${p.of}` : '—'}</td>
-      <td><div class="row-actions"><button class="btn btn-outline btn-xs" data-act="academic" data-id="${escapeHtml(s.id)}">View</button><button class="btn-icon" title="Report card" data-act="reportCard" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}">${icon('file', 15)}</button></div></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">No marks recorded for this term yet.</td></tr>';
+/* ── Class results: the class "broad sheet" ─────────────────────────────── */
+function classResultsData(cls, stream, termId) {
+  const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream));
+  const pos = classPositions(termId, cls);
+  const rows = learners.map(s => ({ s, r: studentTermResult(s, termId), p: pos[s.id] }))
+    .sort((a, b) => (a.p ? a.p.pos : 1e9) - (b.p ? b.p.pos : 1e9) || a.s.name.localeCompare(b.s.name));
+  const rank = subjectRank(cls);
+  const subjects = [...new Set(rows.flatMap(x => x.r.results.map(y => y.subject)))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return { cls, stream, termId, rows, subjects };
 }
-function openAcademic(studentId) {
-  const s = state.students.find(x => x.id === studentId); if (!s) return;
-  const blocks = termsWithMarks(s).reverse().map(termId => {
-    const r = studentTermResult(s, termId);
-    const cell = v => v === null ? '<span class="t-muted">—</span>' : v + '%';
-    return `<div class="tile" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:8px"><strong>${escapeHtml(termLabel(termById(termId)))}</strong><span class="badge badge-gold">${escapeHtml(r.label)}</span></div>
-      <table><thead><tr><th>Subject</th><th class="t-center">BOT</th><th class="t-center">MOT</th><th class="t-center">EOT</th><th class="t-center">Final</th><th class="t-center">Grade</th></tr></thead><tbody>
-      ${r.results.map(x => `<tr><td>${escapeHtml(x.subject)}</td><td class="t-center">${cell(x.BOT)}</td><td class="t-center">${cell(x.MOT)}</td><td class="t-center">${cell(x.EOT)}</td><td class="t-center" style="font-weight:600">${x.final}%</td><td class="t-center" style="font-weight:700;color:var(--brand)">${escapeHtml(x.grade)}</td></tr>`).join('')}
-      </tbody></table></div>`;
+function classResultsTable(d, print) {
+  const head = d.subjects.map(sub => `<th class="ts-c">${escapeHtml(sub)}</th>`).join('');
+  const rows = d.rows.map(({ s, r, p }) => {
+    const cells = d.subjects.map(sub => {
+      const y = r.results.find(z => z.subject.toLowerCase() === sub.toLowerCase());
+      return y ? `<td class="ts-c">${y.final}<div class="cr-grade">${escapeHtml(y.grade)}</div></td>` : '<td class="ts-c ts-none">—</td>';
+    }).join('');
+    const name = print ? escapeHtml(s.name) : learnerLink(s.id, s.name);
+    const card = print ? '' : `<td class="ts-c">${r.count ? `<button class="btn btn-outline btn-xs" type="button" data-act="previewReport" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(d.termId)}">Report card</button>` : ''}</td>`;
+    return `<tr><td class="ts-name"><span class="cr-pos">${p ? ordinal(p.pos) : '—'}</span>${name}</td>${cells}<td class="ts-tot">${r.count ? r.avg + '%' : '—'}</td><td class="ts-tot" style="text-align:left">${escapeHtml(r.count ? r.label : 'No marks yet')}</td>${card}</tr>`;
   }).join('');
-  openModal({ title: escapeHtml(s.name) + ' — academic record', wide: true, bodyHtml: blocks || '<p class="empty">No marks yet.</p>', footHtml: `<button class="btn btn-ghost" data-modal-close>Close</button>` });
+  const out = d.rows[0] && d.rows.find(x => x.p) ? d.rows.find(x => x.p).p.of : 0;
+  return `<div class="ts-wrap"><table class="ts"><thead><tr><th class="ts-name">Position · learner</th>${head}<th class="ts-tot">Average</th><th class="ts-tot" style="text-align:left">Result</th>${print ? '' : '<th class="ts-c"></th>'}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="card-desc" style="margin-top:8px">Each subject shows the final mark and its grade. Positions are out of ${out} in ${escapeHtml(d.cls)}${d.stream ? ' (all streams)' : ''}.</p>`;
+}
+function renderClassResults() {
+  const box = el('classResults'); if (!box) return;
+  const cls = el('crClass').value;
+  if (!cls) { box.innerHTML = '<div class="empty">Choose a class to see its results.</div>'; return; }
+  const d = classResultsData(cls, el('crStream').value, el('crTerm').value);
+  if (!d.rows.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; return; }
+  if (!d.subjects.length) { box.innerHTML = `<div class="empty">No marks entered for ${escapeHtml(cls)} in ${escapeHtml(termLabel(termById(d.termId)))} yet. Use Enter marks.</div>`; return; }
+  box.innerHTML = classResultsTable(d, false);
+}
+function printClassResults() {
+  const cls = el('crClass').value;
+  if (!cls) return toast('Choose a class first.', 'error');
+  const d = classResultsData(cls, el('crStream').value, el('crTerm').value);
+  if (!d.subjects.length) return toast('There are no marks to print for this class and term.', 'error');
+  printDoc('<style>@page { size: A4 landscape; margin: 10mm; }</style>' + docHeader(`Class results — ${escapeHtml(cls + (d.stream ? ' ' + d.stream : ''))} — ${escapeHtml(termLabel(termById(d.termId)))}`) + classResultsTable(d, true));
 }
 
 /* ── Report-card comments ──────────────────────────────────────────────── */
@@ -314,11 +374,12 @@ function renderCommentSheet() {
   if (!cls) { box.innerHTML = '<div class="empty">Choose a class to write report-card comments.</div>'; return; }
   const canHead = can('canHeadComment');
   const learners = visibleStudents().filter(s => s.class === cls).sort((a, b) => a.name.localeCompare(b.name));
+  const pos = classPositions(termId, cls);
   box.innerHTML = learners.length ? learners.map(s => {
     const c = (s.comments && s.comments[termId]) || {};
-    const r = studentTermResult(s, termId);
+    const r = studentTermResult(s, termId), p = pos[s.id];
     return `<div class="tile cm-row" data-student="${escapeHtml(s.id)}" style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:8px"><strong>${escapeHtml(s.name)}</strong><span class="card-desc">${r.count ? r.avg + '% · ' + escapeHtml(r.label) : 'No marks this term'}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap"><strong>${escapeHtml(s.name)}</strong><span class="card-desc">${r.count ? r.avg + '% · ' + escapeHtml(r.label) + (p ? ` · ${ordinal(p.pos)} of ${p.of}` : '') : 'No marks this term'}</span></div>
       <div class="form-row">
         <div><label class="form-label">Class teacher</label><textarea class="input cm-class" rows="2" data-suggest="${escapeHtml(r.count ? suggestComment(r.avg) : '')}">${escapeHtml(c.classTeacher || '')}</textarea></div>
         <div><label class="form-label">Head teacher</label><textarea class="input cm-head" rows="2" data-suggest="${escapeHtml(r.count ? suggestComment(r.avg) : '')}" ${canHead ? '' : 'disabled'}>${escapeHtml(c.headTeacher || '')}</textarea></div>
@@ -411,9 +472,26 @@ function openReportCard(studentId, termId) {
   const t = termId || (termsWithMarks(s).pop()) || (getCurrentTerm() || {}).id;
   printDoc(reportCardHtml(s, t, reportOptions()));
 }
+/* One learner's report card on screen, with Print. From a learner's page,
+   "Back" returns to it. */
+function previewReportCard(studentId, termId, back) {
+  const s = state.students.find(x => x.id === studentId); if (!s) return;
+  const t = termId || (termsWithMarks(s).pop()) || (getCurrentTerm() || {}).id;
+  const html = reportCardHtml(s, t, reportOptions());
+  openModal({
+    title: escapeHtml(`${s.name} — ${termLabel(termById(t))}`), wide: true,
+    bodyHtml: `<div class="report-preview">${html}</div>`,
+    footHtml: (back ? `<button class="btn btn-ghost" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="marks">Back to ${escapeHtml(s.name)}</button>` : '<button class="btn btn-ghost" data-modal-close>Close</button>')
+      + '<button class="btn btn-primary" type="button" id="rcPreviewPrint">Print</button>',
+    onOpen(root) { root.querySelector('#rcPreviewPrint').addEventListener('click', () => printDoc(html)); },
+  });
+}
+/* "Printed on every card": what is on the Report cards screen, else what was
+   used for the last class printed. */
 function reportOptions() {
   const o = (state.settings && state.settings.reportOptions) || {};
-  return { nextTermBegins: o.nextTermBegins || '', nextTermFees: Number(o.nextTermFees) || 0 };
+  const begins = el('rcNextBegins') && el('rcNextBegins').value, fees = el('rcNextFees') && el('rcNextFees').value;
+  return { nextTermBegins: begins || o.nextTermBegins || '', nextTermFees: Number(fees || o.nextTermFees) || 0 };
 }
 function printClassReports() {
   const cls = el('rcClass').value, stream = el('rcStream').value, termId = el('rcTerm').value;
@@ -424,6 +502,28 @@ function printClassReports() {
   saveState();
   printDoc(learners.map(s => reportCardHtml(s, termId, reportOptions())).join(''));
   toast(`Prepared ${learners.length} report card${learners.length === 1 ? '' : 's'}.`, 'success');
+}
+/* Report cards: every child in the class, each with View and Print. */
+function renderReportCardList() {
+  const box = el('rcList'); if (!box) return;
+  const btn = el('rcPrintBtn');
+  const cls = el('rcClass').value, stream = el('rcStream').value, termId = el('rcTerm').value;
+  if (!cls) {
+    box.innerHTML = '<div class="empty">Choose a class to list its report cards.</div>';
+    if (btn) { btn.disabled = true; btn.textContent = 'Print all report cards'; }
+    return;
+  }
+  const pos = classPositions(termId, cls);
+  const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream)).sort((a, b) => a.name.localeCompare(b.name));
+  if (btn) { btn.disabled = !learners.length; btn.textContent = `Print all ${learners.length} report card${learners.length === 1 ? '' : 's'} for ${cls}${stream ? ' ' + stream : ''}`; }
+  box.innerHTML = learners.length ? learners.map(s => {
+    const r = studentTermResult(s, termId), p = pos[s.id];
+    const c = (s.comments && s.comments[termId]) || {};
+    const result = r.count ? `${r.avg}% · ${escapeHtml(r.label)}${p ? ` · ${ordinal(p.pos)} of ${p.of}` : ''}` : '<span class="t-warn">No marks yet</span>';
+    const comments = c.classTeacher ? '<span class="t-ok">Comments written</span>' : '<span class="t-warn">No class-teacher comment yet</span>';
+    return `<div class="rc-item"><div><div>${learnerLink(s.id, s.name)}</div><div class="card-desc">${result} · ${comments}</div></div>
+      <div class="row-actions"><button class="btn btn-outline btn-xs" type="button" data-act="previewReport" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}">View</button><button class="btn btn-outline btn-xs" type="button" data-act="reportCard" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}">Print</button></div></div>`;
+  }).join('') : '<div class="empty">No learners in this class.</div>';
 }
 
 /* ── Grading scales editor ─────────────────────────────────────────────── */
@@ -465,29 +565,39 @@ async function resetBands() {
 /* ── Rendering & wiring ────────────────────────────────────────────────── */
 function renderAcademicControls() {
   const classOpts = '<option value="">Choose class…</option>' + visibleClasses().map(c => `<option>${escapeHtml(c)}</option>`).join('');
-  ['msClass', 'cmClass', 'rcClass'].forEach(id => fillSelect(id, classOpts));
+  ['msClass', 'crClass', 'cmClass', 'rcClass'].forEach(id => fillSelect(id, classOpts));
   // When a new term opens, move every term picker to it, so marks are not
   // filed under last term by mistake. Otherwise keep the user's choice.
   const currentId = (getCurrentTerm() || {}).id;
   const termChanged = renderAcademicControls.lastCurrent !== currentId;
   renderAcademicControls.lastCurrent = currentId;
-  ['academicTerm', 'msTerm', 'cmTerm', 'rcTerm', 'academicTermFilter'].forEach(id => {
+  ['msTerm', 'crTerm', 'cmTerm', 'rcTerm'].forEach(id => {
     const sel = el(id); if (!sel) return;
     const cur = sel.value;
     sel.innerHTML = termOptions(!termChanged && cur && termById(cur) ? cur : null);
   });
-  const streamOpts = cls => '<option value="">All streams</option>' + streamsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('');
-  if (el('msStream')) fillSelect('msStream', streamOpts(el('msClass').value));
-  if (el('rcStream')) fillSelect('rcStream', streamOpts(el('rcClass').value));
-  fillSelect('academicStudent', '<option value="">Choose…</option>' + visibleStudents().map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} — ${escapeHtml(s.class)}${s.stream ? ' ' + escapeHtml(s.stream) : ''}</option>`).join(''));
+  // A stream picker only for a class that has streams.
+  [['msStream', 'msClass', 'msStreamWrap'], ['crStream', 'crClass', 'crStreamWrap'], ['rcStream', 'rcClass', 'rcStreamWrap']].forEach(([sid, cid, wid]) => {
+    if (!el(sid)) return;
+    fillSelect(sid, streamOptions(el(cid).value));
+    if (el(wid)) el(wid).style.display = streamsFor(el(cid).value).length ? '' : 'none';
+  });
+  // The subjects of the class being marked, and "Another subject…".
+  if (el('msSubject')) {
+    const cls = el('msClass').value;
+    fillSelect('msSubject', cls
+      ? '<option value="">Choose subject…</option>' + subjectsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('') + `<option value="${OTHER_SUBJECT}">Another subject…</option>`
+      : '<option value="">Choose the class first</option>');
+  }
   const opts = reportOptions();
   if (el('rcNextBegins') && !el('rcNextBegins').value) el('rcNextBegins').value = opts.nextTermBegins;
   if (el('rcNextFees') && !el('rcNextFees').value && opts.nextTermFees) el('rcNextFees').value = opts.nextTermFees;
 }
 
 Object.assign(ACTIONS, {
-  academic: d => openAcademic(d.id),
+  academic: d => openLearner(d.id, 'marks'),
   reportCard: d => openReportCard(d.id, d.term),
+  previewReport: d => previewReportCard(d.id, d.term, d.back === '1'),
 });
 /* ── Publishing results to parents (online edition) ────────────────────── */
 /* Parents see a term's marks, comments and report cards only once it is
@@ -539,24 +649,29 @@ async function unpublishResults() {
 MODULES.push({
   name: 'academics',
   setup() {
-    bind('academicForm', (f, form) => { addAcademicScore(f); form.subject.value = ''; form.score.value = ''; });
     const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
-    on('academicLevelFilter', 'change', renderAcademicTable);
-    on('academicTermFilter', 'change', renderAcademicTable);
-    ['msClass', 'msStream', 'msTerm', 'msExam'].forEach(id => on(id, 'change', () => { if (id === 'msClass') renderAcademicControls(); renderMarkSheet(); }));
-    on('msSubject', 'change', renderMarkSheet);
-    on('msLoadBtn', 'click', renderMarkSheet);
+    // Enter marks: the list follows the choices; Enter moves to the next child.
+    ['msClass', 'msStream', 'msTerm', 'msExam', 'msSubject'].forEach(id => on(id, 'change', msChoiceChanged));
+    on('markSheetRoster', 'input', e => { if (e.target.classList.contains('ms-score')) msScoreTyped(e.target); });
+    on('markSheetRoster', 'keydown', e => {
+      if (e.key !== 'Enter' || !e.target.classList.contains('ms-score')) return;
+      e.preventDefault();
+      const all = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+      const next = all[all.indexOf(e.target) + 1];
+      (next || el('msSaveBtn')).focus();
+    });
     on('msSaveBtn', 'click', saveMarkSheet);
+    ['crClass', 'crStream', 'crTerm'].forEach(id => on(id, 'change', () => { if (id === 'crClass') renderAcademicControls(); renderClassResults(); }));
+    on('crPrintBtn', 'click', printClassResults);
     ['cmClass', 'cmTerm'].forEach(id => on(id, 'change', renderCommentSheet));
     on('cmSuggestBtn', 'click', fillSuggestedComments);
     on('cmSaveBtn', 'click', saveComments);
-    on('rcClass', 'change', renderAcademicControls);
+    ['rcClass', 'rcStream', 'rcTerm'].forEach(id => on(id, 'change', () => { if (id === 'rcClass') renderAcademicControls(); renderReportCardList(); renderPublishBox(); }));
     on('rcPrintBtn', 'click', printClassReports);
-    on('rcTerm', 'change', renderPublishBox);
     on('publishBtn', 'click', publishResults);
     on('unpublishBtn', 'click', unpublishResults);
     on('bandsSaveBtn', 'click', saveBands);
     on('bandsResetBtn', 'click', resetBands);
   },
-  render() { renderAcademicControls(); renderBandsForm(); renderPublishBox(); },
+  render() { renderAcademicControls(); renderClassResults(); renderReportCardList(); renderBandsForm(); renderPublishBox(); },
 });
