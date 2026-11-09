@@ -10,7 +10,7 @@
  * Bump CACHE_VERSION whenever you deploy new files.
  */
 
-const CACHE_VERSION = 'school-portal-v3.8.0';
+const CACHE_VERSION = 'school-portal-v3.9.0';
 const CORE_ASSETS = [
   './',
   './index.html',

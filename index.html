@@ -90,6 +90,11 @@
 
     <!-- DASHBOARD -->
     <section id="panel-overview" class="panel">
+      <div class="card card-pad" id="myWorkCard" style="display:none">
+        <div class="card-title" id="myWorkTitle">My work today</div>
+        <p class="card-desc" id="myWorkDesc"></p>
+        <div id="myWorkBody" style="margin-top:12px"></div>
+      </div>
       <div class="card card-pad" id="jobsCard" style="display:none">
         <div class="card-title">Today's jobs</div>
         <p class="card-desc">The everyday tasks, one tap each.</p>
@@ -101,11 +106,11 @@
             <button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="directory/daily">Open the register</button></div>
           <div id="attTodayBody"></div>
         </div>
-        <div class="card card-pad">
+        <div class="card card-pad" id="levelCard">
           <div class="card-title">Enrolment by level</div>
           <div class="stack" id="levelBreakdown" style="margin-top:12px"></div>
         </div>
-        <div class="card card-pad">
+        <div class="card card-pad" id="recentPayCard">
           <div class="card-title">Recent payments</div>
           <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Date</th><th>Student</th><th class="t-num">Amount</th></tr></thead><tbody id="recentPaymentsBody"></tbody></table></div>
         </div>
@@ -281,6 +286,7 @@
             <div><label class="form-label" for="rcNextFees">Next term fees <span class="opt">(optional)</span></label><input class="input" id="rcNextFees" type="number" min="0" placeholder="From fee structure"></div>
           </div>
         </div>
+        <div class="reg-summary" id="rcWarn" style="display:none" aria-live="polite"></div>
         <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" id="rcPrintBtn" type="button" disabled>Print all report cards</button></div>
         <div id="rcList" style="margin-top:6px"></div>
         <div class="tile" id="publishBox" style="display:none;margin-top:14px">
@@ -578,7 +584,7 @@
           <details class="disclosure" id="staffFormBox">
             <summary id="staffFormTitle">Add a staff member</summary>
             <div class="disclosure-body">
-              <p class="card-desc" id="staffFormHelp" style="margin:0 0 10px">1 Type their name and <span data-edition="offline">a username</span><span data-edition="online" style="display:none">email address</span> · 2 choose the role (for a teacher, tick their classes)<span data-edition="offline"> · 3 give them a first password, which they must change when they first sign in</span> · then press Save account.</p>
+              <p class="card-desc" id="staffFormHelp" style="margin:0 0 10px">1 Type their name and <span data-edition="offline">a username</span><span data-edition="online" style="display:none">email address</span> · 2 choose the role (for a teacher: the class they are class teacher of, and each subject they teach in which class)<span data-edition="offline"> · 3 give them a first password, which they must change when they first sign in</span> · then press Save account.</p>
               <form id="userEditForm" class="form-grid">
                 <input type="hidden" id="editUserId">
                 <div class="form-row">
@@ -589,7 +595,15 @@
                   <div><label class="form-label" for="editRole">Role *</label><select class="input" id="editRole"><option value="">Choose role…</option><option value="exec">Executive Director</option><option value="admin">Administrator</option><option value="bursary">Bursary Officer</option><option value="coach">Head of Sports</option><option value="teacher">Teacher</option></select></div>
                   <div><label class="form-label" for="editPassword" id="editPasswordLabel">First password *</label><input class="input" id="editPassword" type="password" autocomplete="new-password"></div>
                 </div>
-                <div id="assignedClassesWrap" style="display:none"><div class="form-label">Classes this teacher handles</div><div class="pill-list" id="editAssignedClasses"></div></div>
+                <div id="assignedClassesWrap" style="display:none">
+                  <div class="form-row">
+                    <div><label class="form-label" for="editClassTeacher">Class teacher of <span class="opt">(calls this class's roll each morning)</span></label><select class="input" id="editClassTeacher"></select></div>
+                  </div>
+                  <div class="form-label" style="margin-top:12px">Subjects they teach <span class="opt">(they enter marks for these only)</span></div>
+                  <div id="editTeaches" class="stack" style="gap:8px"></div>
+                  <button class="btn btn-outline btn-xs" id="addTeachBtn" type="button" style="margin-top:8px">Add a subject they teach</button>
+                  <div class="form-label" style="margin-top:12px">Other classes they may open <span class="opt">(their class and subject classes are included anyway)</span></div><div class="pill-list" id="editAssignedClasses"></div>
+                </div>
                 <div class="toolbar"><button class="btn btn-primary btn-sm" type="submit">Save account</button><button class="btn btn-ghost btn-sm" id="clearUserBtn" type="button">Cancel</button></div>
               </form>
             </div>

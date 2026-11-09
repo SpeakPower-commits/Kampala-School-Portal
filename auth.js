@@ -103,7 +103,8 @@ const ROLE_PERMISSIONS = {
   },
   teacher: {
     label: 'Teacher', color: '#0e7490', badge: 'Teacher',
-    tabs: ['directory', 'academics', 'noticeboard'],
+    // Home is "My work today": their class register and the subjects they teach.
+    tabs: ['overview', 'directory', 'academics', 'noticeboard'],
     canExport: false, canImport: false, canReset: false, canManageUsers: false,
     canManageSettings: false, canDeleteStudents: false, canEditStudents: false,
     canDeleteConduct: false, canAwardBursary: false, canRecordPayment: false,

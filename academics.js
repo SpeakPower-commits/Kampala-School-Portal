@@ -185,6 +185,84 @@ function classPositions(termId, cls, stream) {
 }
 function ordinal(n) { const v = n % 100; return n + (['th', 'st', 'nd', 'rd'][(v - 20) % 10] || ['th', 'st', 'nd', 'rd'][v] || 'th'); }
 
+/* ── Who teaches what ──────────────────────────────────────────────────── */
+/* Kept in the school settings, so every device (and, online, every member)
+   reads the same: { [username]: { name, classTeacherOf, teaches: [{ subject, class }] } }.
+   The director sets it on each teacher's account. */
+function teachingOf(username) {
+  const t = ((state.settings && state.settings.teaching) || {})[String(username || '').toLowerCase()];
+  return { name: (t && t.name) || '', classTeacherOf: (t && t.classTeacherOf) || '', teaches: (t && Array.isArray(t.teaches)) ? t.teaches : [] };
+}
+function setTeaching(username, rec) {
+  const all = Object.assign({}, (state.settings && state.settings.teaching) || {});
+  const key = String(username || '').toLowerCase();
+  if (rec) all[key] = rec; else delete all[key];
+  state.settings = Object.assign({}, state.settings, { teaching: all });
+}
+function myTeaching() { return currentSession ? teachingOf(currentSession.username) : teachingOf(''); }
+/* The subjects (lower case) the signed-in teacher may type marks for in a
+   class; null means any subject (everyone who is not a teacher, and a teacher
+   whose subjects have not been set yet). */
+function mySubjectsFor(cls) {
+  if (!currentSession || currentSession.role !== 'teacher') return null;
+  const t = myTeaching();
+  if (!t.teaches.length) return null;
+  return t.teaches.filter(x => x.class === cls).map(x => String(x.subject).toLowerCase());
+}
+/* Who teaches a subject in a class (their name), for "marks still missing". */
+function teacherOf(subject, cls) {
+  const all = (state.settings && state.settings.teaching) || {};
+  const hit = Object.values(all).find(t => (t.teaches || []).some(x => x.class === cls && String(x.subject).toLowerCase() === String(subject).toLowerCase()));
+  return hit ? hit.name : '';
+}
+function taughtSubjects(cls) {
+  return Object.values((state.settings && state.settings.teaching) || {}).flatMap(t => (t.teaches || []).filter(x => x.class === cls).map(x => x.subject));
+}
+
+/* ── Marks progress: which papers still have no mark, and whose they are ── */
+/* The subjects a class sits in a term: those a teacher is set to teach there
+   and those with any mark that term, in the class's subject order. */
+function classSheetSubjects(cls, termId) {
+  const marked = visibleStudents().filter(s => s.class === cls).flatMap(s => (s.academics || []).filter(a => a.termId === termId).map(a => a.subject));
+  const seen = new Set(), out = [];
+  [...taughtSubjects(cls), ...marked].forEach(x => { const k = String(x || '').trim(); if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); out.push(k); } });
+  const rank = subjectRank(cls);
+  return out.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+/* One pass over a class's marks for a term. An exam nobody in the class has
+   any mark for yet is "not given yet", so its empty sheets are not "missing". */
+function markIndex(cls, stream, termId) {
+  const all = visibleStudents().filter(s => s.class === cls);
+  const learners = all.filter(s => !stream || s.stream === stream).sort((a, b) => a.name.localeCompare(b.name));
+  const keys = new Set(), started = new Set();
+  all.forEach(s => (s.academics || []).forEach(a => {
+    if (a.termId !== termId) return;
+    const set = a.examSet || 'EOT';
+    started.add(set);
+    keys.add(`${s.id}|${set}|${String(a.subject).toLowerCase()}`);
+  }));
+  const progress = (set, subj) => {
+    const missing = learners.filter(s => !keys.has(`${s.id}|${set}|${String(subj).toLowerCase()}`));
+    return { total: learners.length, done: learners.length - missing.length, missing };
+  };
+  return { learners, started, progress };
+}
+/* Every unfinished mark sheet of a class in a term, in the exams given so far. */
+function missingSheets(cls, stream, termId) {
+  const ix = markIndex(cls, stream, termId);
+  if (!ix.learners.length) return [];
+  const subjects = classSheetSubjects(cls, termId);
+  return EXAM_SETS.filter(e => ix.started.has(e.id)).flatMap(e => subjects.map(subject => {
+    const p = ix.progress(e.id, subject);
+    return p.done < p.total ? Object.assign({ cls, stream, termId, set: e.id, exam: e.label, subject, teacher: teacherOf(subject, cls) }, p) : null;
+  })).filter(Boolean);
+}
+/* "Nakato Sarah, Okello Peter and 4 more", each name opening that child. */
+function namesList(list, max = 8, section = 'marks') {
+  return list.slice(0, max).map(s => learnerLink(s.id, s.name, section)).join(', ') + (list.length > max ? ` and ${list.length - max} more` : '');
+}
+const sheetAttrs = (cls, subject, set, termId) => `data-act="openSheet" data-class="${escapeHtml(cls)}" data-subject="${escapeHtml(subject)}" data-exam="${escapeHtml(set)}" data-term="${escapeHtml(termId || '')}"`;
+
 /* ── Who can see whom ──────────────────────────────────────────────────── */
 /* Teachers only work with their assigned classes; everyone else sees all. */
 function visibleStudents() {
@@ -233,7 +311,7 @@ function subjectsFor(cls) {
   const base = level === 'Primary' ? PRIMARY_SUBJECTS : level === 'A Level' ? A_LEVEL_SUBJECTS : level === 'O Level' ? O_LEVEL_SUBJECTS : [];
   const used = visibleStudents().filter(s => s.class === cls).flatMap(s => (s.academics || []).map(a => a.subject));
   const seen = new Set(), out = [];
-  [...base, ...used.sort(), ...msExtraSubjects].forEach(x => { const k = (x || '').trim(); if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); out.push(k); } });
+  [...base, ...taughtSubjects(cls), ...used.sort(), ...msExtraSubjects].forEach(x => { const k = (x || '').trim(); if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); out.push(k); } });
   return out;
 }
 const subjectRank = cls => { const list = subjectsFor(cls).map(x => x.toLowerCase()); return x => { const i = list.indexOf(x.toLowerCase()); return i < 0 ? 999 : i; }; };
@@ -241,7 +319,8 @@ const msSubject = () => { const v = el('msSubject') ? el('msSubject').value : ''
 const streamOptions = cls => streamsFor(cls).length ? '<option value="">All streams</option>' + streamsFor(cls).map(x => `<option>${escapeHtml(x)}</option>`).join('') : '';
 const round2 = n => Math.round(n * 100) / 100;
 const pctText = n => (Math.round(n * 10) / 10) + '%';
-const msPaperKey = subj => [el('msClass').value, el('msTerm').value, el('msExam').value, String(subj).toLowerCase()].join('|');
+const paperKey = (cls, termId, set, subj) => [cls, termId, set, String(subj).toLowerCase()].join('|');
+const msPaperKey = subj => paperKey(el('msClass').value, el('msTerm').value, el('msExam').value, subj);
 const msOut = subj => msOutOf[msPaperKey(subj)] || 100;
 
 function syncExamButtons() {
@@ -261,21 +340,31 @@ function renderMarkSheet() {
   if (!cls) { box.innerHTML = '<div class="empty">Choose the class: its children and subjects appear here.</div>'; msCount(); return; }
   const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream)).sort((a, b) => a.name.localeCompare(b.name));
   if (!learners.length) { box.innerHTML = `<div class="empty">No children in ${escapeHtml(cls)} yet. They are added when admitted (Students → Admit a new learner).</div>`; msCount(); return; }
-  const subjects = only ? [only] : subjectsFor(cls);
+  // A subject teacher types only in their own subjects, which come first; the
+  // other columns are shown for reference and stay locked, so nobody overwrites
+  // a colleague's marks.
+  const mine = mySubjectsFor(cls);
+  const subjects = only ? [only] : subjectsFor(cls).sort((a, b) => (mine ? Number(!mine.includes(a.toLowerCase())) - Number(!mine.includes(b.toLowerCase())) : 0));
   const many = subjects.length > 1;
+  const locked = subj => !!mine && !mine.includes(subj.toLowerCase());
+  const off = subj => locked(subj) ? ' disabled title="Entered by the subject\'s own teacher"' : '';
   const markOf = (s, subj) => (s.academics || []).find(a => a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subj.toLowerCase());
-  const head = subjects.map(subj => `<th class="ms-col"><div class="ms-subj">${escapeHtml(subj)}</div>
-      <label class="ms-out">out of <input class="ms-outof" type="number" inputmode="numeric" min="1" max="1000" value="${msOut(subj)}" data-subject="${escapeHtml(subj)}" aria-label="${escapeHtml(subj)}: the paper is marked out of"></label></th>`).join('');
+  const head = subjects.map(subj => `<th class="ms-col${mine && !locked(subj) ? ' ms-mine' : ''}"><div class="ms-subj">${escapeHtml(subj)}</div>${locked(subj) && teacherOf(subj, cls) ? `<div class="card-desc">${escapeHtml(teacherOf(subj, cls))}</div>` : ''}
+      <label class="ms-out">out of <input class="ms-outof" type="number" inputmode="numeric" min="1" max="1000" value="${msOut(subj)}" data-subject="${escapeHtml(subj)}"${off(subj)} aria-label="${escapeHtml(subj)}: the paper is marked out of"></label></th>`).join('');
   const rows = learners.map(s => `<tr class="ms-row" data-student="${escapeHtml(s.id)}" data-find="${escapeHtml(s.name.toLowerCase() + ' ' + s.id.toLowerCase())}">
       <td class="ts-name">${learnerLink(s.id, s.name, 'marks')}${s.stream && !stream ? ` <span class="card-desc">${escapeHtml(s.stream)}</span>` : ''}</td>
       ${subjects.map(subj => {
         const m = markOf(s, subj);
         const shown = m ? round2(m.score * msOut(subj) / 100) : '';
-        return `<td class="ms-cell"><input class="input ms-score" type="number" inputmode="decimal" min="0" step="any" data-student="${escapeHtml(s.id)}" data-subject="${escapeHtml(subj)}"${m ? ` data-pct="${m.score}"` : ''} value="${shown}" aria-label="${escapeHtml(subj)} mark for ${escapeHtml(s.name)}">
+        return `<td class="ms-cell"><input class="input ms-score" type="number" inputmode="decimal" min="0" step="any" data-student="${escapeHtml(s.id)}" data-subject="${escapeHtml(subj)}"${m ? ` data-pct="${m.score}"` : ''} value="${shown}"${off(subj)} aria-label="${escapeHtml(subj)} mark for ${escapeHtml(s.name)}">
           <div class="ms-under"><span class="ms-pct">${m ? pctText(m.score) : ''}</span> <span class="ms-grade">${m ? escapeHtml(gradeFor(s.level, m.score).grade) : ''}</span></div></td>`;
       }).join('')}
       ${many ? '<td class="ts-tot ms-avg"></td>' : ''}</tr>`).join('');
-  box.innerHTML = `<div class="ts-wrap"><table class="ts ms-table"><thead><tr><th class="ts-name">Child</th>${head}${many ? '<th>Child\'s average</th>' : ''}</tr></thead>
+  const yours = mine ? subjects.filter(x => !locked(x)) : [];
+  const note = !mine ? '' : yours.length
+    ? (yours.length < subjects.length ? `<p class="card-desc ms-lock-note">You type in ${escapeHtml(yours.join(', '))} (highlighted). The other subjects are shown so you can see how each child is doing; their own teachers enter them.</p>` : '')
+    : `<p class="card-desc ms-lock-note t-warn">You are not set to teach ${only ? escapeHtml(only) : 'any subject'} in ${escapeHtml(cls)}, so these marks are shown but locked. The director sets who teaches what (Administration → Staff).</p>`;
+  box.innerHTML = note + `<div class="ts-wrap"><table class="ts ms-table"><thead><tr><th class="ts-name">Child</th>${head}${many ? '<th>Child\'s average</th>' : ''}</tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td class="ts-name">Class average</td>${subjects.map(subj => `<td class="ms-cavg" data-subject="${escapeHtml(subj)}"></td>`).join('')}${many ? '<td class="ms-cavg-all"></td>' : ''}</tr></tfoot></table></div>`;
   msFilter();
@@ -309,11 +398,13 @@ function msTotals() {
 /* "S.4 · Mid-term · Term 3 2026: 34 of 60 marked" and who is still to be marked. */
 function msCount() {
   const box = el('msCounter'); if (!box) return;
-  const inputs = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+  const all = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+  const inputs = all.filter(i => !i.disabled);
   if (!inputs.length) { box.style.display = 'none'; return; }
   const filled = inputs.filter(i => i.value !== '').length;
   const exam = (EXAM_SETS.find(x => x.id === el('msExam').value) || {}).label || '';
-  const only = msSubject();
+  const subs = [...new Set(inputs.map(i => i.dataset.subject))];
+  const only = subs.length === 1 ? subs[0] : '';
   const left = only ? inputs.filter(i => i.value === '').map(i => learnerName(i.dataset.student)) : [];
   box.style.display = '';
   box.innerHTML = `${escapeHtml(el('msClass').value)}${only ? ' · ' + escapeHtml(only) : ''} · ${escapeHtml(exam)} · ${escapeHtml(termLabel(termById(el('msTerm').value)))}: <strong>${filled} of ${inputs.length}</strong> marked`
@@ -379,7 +470,14 @@ async function msChoiceChanged(e) {
       return;
     }
   }
-  if (id === 'msClass') { if (el('msFind')) el('msFind').value = ''; renderAcademicControls(); }
+  if (id === 'msClass') {
+    if (el('msFind')) el('msFind').value = '';
+    renderAcademicControls();
+    // A teacher who teaches one subject in this class gets that column on its own.
+    const mine = mySubjectsFor(el('msClass').value);
+    const opt = mine && mine.length === 1 && [...el('msSubject').options].find(o => o.value.toLowerCase() === mine[0]);
+    if (opt) el('msSubject').value = opt.value;
+  }
   renderMarkSheet();
 }
 async function msSetExam(set) {
@@ -391,38 +489,68 @@ async function msSetExam(set) {
   }
   renderMarkSheet();
 }
-async function saveMarkSheet() {
-  if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
-  const cls = el('msClass').value, termId = el('msTerm').value, set = el('msExam').value;
-  if (!cls) return toast('Choose the class first.', 'error');
-  const boxes = [...document.querySelectorAll('#markSheetRoster .ms-score')];
+/* Typed marks are saved by the same rules everywhere (the mark sheet and a
+   learner's page): a mark outside the paper's total is refused, changing or
+   removing a saved mark is confirmed first, and every save is written to "who
+   did what". Each box: { s, subj, had (saved %, or null), p (typed %, null
+   when empty, NaN when out of range), raw, out, inp }. Returns 'saved',
+   'cancelled' (the confirmation was declined) or '' (nothing was saved). */
+async function commitMarks(boxes, termId, set, where) {
   const wrong = [], toSave = [], changes = [], removals = [];
-  boxes.forEach(inp => {
-    const s = visibleStudents().find(x => x.id === inp.dataset.student); if (!s) return;
-    const subj = inp.dataset.subject;
-    const had = inp.dataset.pct !== undefined ? Number(inp.dataset.pct) : null;
-    const p = msBoxPct(inp);
-    if (Number.isNaN(p)) { wrong.push(`${s.name} (${subj}: ${inp.value} is not between 0 and ${msOut(subj)})`); inp.style.borderColor = 'var(--danger)'; return; }
+  boxes.forEach(({ s, subj, had, p, raw, out, inp }) => {
+    if (Number.isNaN(p)) { wrong.push(`${s.name} (${subj}: ${raw} is not between 0 and ${out})`); if (inp) inp.style.borderColor = 'var(--danger)'; return; }
     if (p === null) { if (had !== null) removals.push({ s, subj, had }); return; }
     if (had !== null && Math.abs(had - p) < 0.01) return;   // unchanged
     toSave.push({ s, subj, p });
     if (had !== null) changes.push(`${s.name}'s ${subj} from ${pctText(had)} to ${pctText(p)}`);
   });
-  if (wrong.length) return toast(`Not saved. ${wrong.length === 1 ? 'This mark is' : 'These marks are'} out of range: ${wrong.slice(0, 4).join('; ')}${wrong.length > 4 ? ` and ${wrong.length - 4} more` : ''}.`, 'error');
-  if (!toSave.length && !removals.length) return toast('Nothing new to save: type a mark in a box first.', 'info');
+  if (wrong.length) { toast(`Not saved. ${wrong.length === 1 ? 'This mark is' : 'These marks are'} out of range: ${wrong.slice(0, 4).join('; ')}${wrong.length > 4 ? ` and ${wrong.length - 4} more` : ''}.`, 'error'); return ''; }
+  if (!toSave.length && !removals.length) { toast('Nothing new to save: type a mark in a box first.', 'info'); return ''; }
   if (changes.length || removals.length) {
     const lines = [...changes.map(c => 'change ' + c), ...removals.map(r => `remove ${r.s.name}'s ${r.subj} mark (${pctText(r.had)})`)];
     const ok = await confirmDialog({ title: 'Change marks already saved?', message: `You are about to ${lines.slice(0, 5).join('; ')}${lines.length > 5 ? `; and ${lines.length - 5} more` : ''}. Everything else stays as it is.`, confirmLabel: 'Yes, change them' });
-    if (!ok) return;
+    if (!ok) return 'cancelled';
   }
   toSave.forEach(({ s, subj, p }) => saveMark(s, termId, set, subj, p));
   removals.forEach(({ s, subj }) => { s.academics = (s.academics || []).filter(a => !(a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subj.toLowerCase())); });
-  msDirty = false;
-  saveState(); renderAll();
+  saveState();
   const exam = (EXAM_SETS.find(x => x.id === set) || {}).label || set;
-  AUTH.audit('MARKS_SAVE', `${cls} · ${exam} · ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${changes.length ? ` (${changes.length} changed)` : ''}${removals.length ? ` · ${removals.length} removed` : ''}`);
+  AUTH.audit('MARKS_SAVE', `${where} · ${exam} · ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${changes.length ? ` (${changes.length} changed)` : ''}${removals.length ? ` · ${removals.length} removed` : ''}`);
+  toast(`Saved ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${removals.length ? `, removed ${removals.length}` : ''} for ${where}, ${exam}.`, 'success');
+  return 'saved';
+}
+async function saveMarkSheet() {
+  if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
+  const cls = el('msClass').value, termId = el('msTerm').value, set = el('msExam').value;
+  if (!cls) return toast('Choose the class first.', 'error');
+  const boxes = [...document.querySelectorAll('#markSheetRoster .ms-score')].filter(inp => !inp.disabled).map(inp => {
+    const s = visibleStudents().find(x => x.id === inp.dataset.student);
+    return s && { s, subj: inp.dataset.subject, had: inp.dataset.pct !== undefined ? Number(inp.dataset.pct) : null, p: msBoxPct(inp), raw: inp.value, out: msOut(inp.dataset.subject), inp };
+  }).filter(Boolean);
+  if (await commitMarks(boxes, termId, set, cls) !== 'saved') return;
+  msDirty = false;
+  renderAll();
   renderMarkSheet();
-  toast(`Saved ${toSave.length} mark${toSave.length === 1 ? '' : 's'}${removals.length ? `, removed ${removals.length}` : ''} for ${cls}, ${exam}.`, 'success');
+}
+/* Open the mark sheet ready to type: the class, the exam and (for a subject
+   teacher) their subject already chosen. From a teacher's home, the marks
+   progress and the "marks still missing" lists. */
+async function openMarkSheet(cls, subject, set, termId) {
+  if (msDirty && msLast && !await confirmDialog({ title: 'Marks not saved yet', message: 'You typed marks that are not saved. Open the other sheet and lose them?', confirmLabel: 'Open it and lose them', danger: true })) return;
+  msDirty = false;
+  switchTab('academics', 'marks');
+  if (subject && !subjectsFor(cls).some(x => x.toLowerCase() === subject.toLowerCase())) msExtraSubjects.push(subject);
+  el('msClass').value = cls;
+  renderAcademicControls();
+  if (termId && termById(termId)) el('msTerm').value = termId;
+  if (el('msStream')) el('msStream').value = '';
+  el('msExam').value = EXAM_SETS.some(e => e.id === set) ? set : 'EOT';
+  const opt = [...el('msSubject').options].find(o => subject && o.value.toLowerCase() === subject.toLowerCase());
+  el('msSubject').value = opt ? opt.value : '';
+  if (el('msFind')) el('msFind').value = '';
+  renderMarkSheet();
+  const first = [...document.querySelectorAll('#markSheetRoster .ms-score')].find(i => !i.disabled && i.value === '');
+  if (first) first.focus();
 }
 
 /* ── Class results: the class "broad sheet" ─────────────────────────────── */
@@ -450,14 +578,44 @@ function classResultsTable(d, print) {
   return `<div class="ts-wrap"><table class="ts"><thead><tr><th class="ts-name">Position · learner</th>${head}<th class="ts-tot">Average</th><th class="ts-tot" style="text-align:left">Result</th>${print ? '' : '<th class="ts-c"></th>'}</tr></thead><tbody>${rows}</tbody></table></div>
     <p class="card-desc" style="margin-top:8px">Each subject shows the final mark and its grade. Positions are out of ${out} in ${escapeHtml(d.cls)}${d.stream ? ' (all streams)' : ''}.</p>`;
 }
+/* Marks progress for a class: subjects down the side, the three exams across;
+   each cell says how many learners have a mark and opens that mark sheet. Below
+   it, every unfinished sheet with the names still to enter and whose it is. */
+function marksProgressHtml(cls, stream, termId) {
+  const ix = markIndex(cls, stream, termId);
+  const subjects = classSheetSubjects(cls, termId);
+  if (!subjects.length || !ix.learners.length) return '';
+  // BOT, MOT and EOT, as on the report card, so the three exams fit a phone.
+  const head = EXAM_SETS.map(e => `<th class="ts-c" title="${escapeHtml(e.label)}">${escapeHtml(e.id)}</th>`).join('');
+  const rows = subjects.map(subj => {
+    const who = teacherOf(subj, cls);
+    const cells = EXAM_SETS.map(e => {
+      if (!ix.started.has(e.id)) return '<td class="ts-c ts-none" title="Not given yet this term">—</td>';
+      const p = ix.progress(e.id, subj), full = p.done === p.total;
+      return `<td class="ts-c"><button type="button" class="link-btn ${full ? 't-ok' : 't-warn'}" ${sheetAttrs(cls, subj, e.id, termId)} aria-label="${escapeHtml(`${subj}, ${e.label}: ${p.done} of ${p.total} marked. Open the mark sheet`)}">${p.done}/${p.total}${full ? ' ✓' : ''}</button></td>`;
+    }).join('');
+    return `<tr><td class="ts-name">${escapeHtml(subj)}${who ? `<div class="card-desc">${escapeHtml(who)}</div>` : ''}</td>${cells}</tr>`;
+  }).join('');
+  const gaps = missingSheets(cls, stream, termId);
+  const given = EXAM_SETS.filter(e => ix.started.has(e.id)).map(e => e.label);
+  const list = !given.length ? `<p class="card-desc">No exam has been given in ${escapeHtml(cls)} this term yet.</p>`
+    : gaps.length ? gaps.slice(0, 12).map(g => `<div class="abs-item"><strong>${escapeHtml(g.subject)} · ${escapeHtml(g.exam)}</strong>${g.teacher ? ` <span class="card-desc">(${escapeHtml(g.teacher)})</span>` : ''}: ${g.total - g.done} still to enter — ${namesList(g.missing, 8)}</div>`).join('')
+      + (gaps.length > 12 ? `<p class="card-desc">and ${gaps.length - 12} more sheets not finished.</p>` : '')
+    : `<p class="card-desc t-ok">Every learner has a mark in every subject for ${escapeHtml(given.join(', '))}.</p>`;
+  return `<div class="tile ms-progress"><div style="font-weight:700">Marks progress</div>
+    <p class="card-desc">How many learners have a mark in each subject: BOT beginning of term, MOT mid-term, EOT end of term. Tap a number to open that mark sheet; "—" is an exam not given yet this term.</p>
+    <div class="ts-wrap" style="margin-top:8px"><table class="ts"><thead><tr><th class="ts-name">Subject</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="margin-top:8px">${list}</div></div>`;
+}
 function renderClassResults() {
   const box = el('classResults'); if (!box) return;
   const cls = el('crClass').value;
   if (!cls) { box.innerHTML = '<div class="empty">Choose a class to see its results.</div>'; return; }
   const d = classResultsData(cls, el('crStream').value, el('crTerm').value);
   if (!d.rows.length) { box.innerHTML = '<div class="empty">No learners in this class.</div>'; return; }
-  if (!d.subjects.length) { box.innerHTML = `<div class="empty">No marks entered for ${escapeHtml(cls)} in ${escapeHtml(termLabel(termById(d.termId)))} yet. Use Enter marks.</div>`; return; }
-  box.innerHTML = classResultsTable(d, false);
+  const progress = marksProgressHtml(cls, d.stream, d.termId);
+  if (!d.subjects.length) { box.innerHTML = progress + `<div class="empty">No marks entered for ${escapeHtml(cls)} in ${escapeHtml(termLabel(termById(d.termId)))} yet. Use Enter marks.</div>`; return; }
+  box.innerHTML = progress + '<div class="form-label" style="margin:16px 0 6px">Class results</div>' + classResultsTable(d, false);
 }
 function printClassResults() {
   const cls = el('crClass').value;
@@ -617,6 +775,7 @@ function renderReportCardList() {
   const btn = el('rcPrintBtn');
   const cls = el('rcClass').value, stream = el('rcStream').value, termId = el('rcTerm').value;
   if (!cls) {
+    if (el('rcWarn')) el('rcWarn').style.display = 'none';
     box.innerHTML = '<div class="empty">Choose a class to list its report cards.</div>';
     if (btn) { btn.disabled = true; btn.textContent = 'Print all report cards'; }
     return;
@@ -624,6 +783,15 @@ function renderReportCardList() {
   const pos = classPositions(termId, cls);
   const learners = visibleStudents().filter(s => s.class === cls && (!stream || s.stream === stream)).sort((a, b) => a.name.localeCompare(b.name));
   if (btn) { btn.disabled = !learners.length; btn.textContent = `Print all ${learners.length} report card${learners.length === 1 ? '' : 's'} for ${cls}${stream ? ' ' + stream : ''}`; }
+  // Nobody prints a card with holes in it without knowing.
+  const warn = el('rcWarn');
+  if (warn) {
+    const gaps = missingSheets(cls, stream, termId);
+    warn.style.display = gaps.length ? '' : 'none';
+    warn.innerHTML = gaps.length ? `<strong class="t-warn">Marks still missing — check before printing.</strong>
+      ${gaps.slice(0, 6).map(g => `<div class="abs-item">${escapeHtml(g.subject)}: ${g.total - g.done} learner${g.total - g.done === 1 ? ' has' : 's have'} no ${escapeHtml(g.exam)} mark${g.teacher ? ` (${escapeHtml(g.teacher)})` : ''} — ${namesList(g.missing, 5)} · <button type="button" class="link-btn" ${sheetAttrs(cls, g.subject, g.set, termId)}>Open the mark sheet</button></div>`).join('')}
+      ${gaps.length > 6 ? `<p class="card-desc">and ${gaps.length - 6} more. See Class results → Marks progress.</p>` : ''}` : '';
+  }
   box.innerHTML = learners.length ? learners.map(s => {
     const r = studentTermResult(s, termId), p = pos[s.id];
     const c = (s.comments && s.comments[termId]) || {};
@@ -701,7 +869,161 @@ function renderAcademicControls() {
   if (el('rcNextFees') && !el('rcNextFees').value && opts.nextTermFees) el('rcNextFees').value = opts.nextTermFees;
 }
 
+/* ── A teacher's home: "My work today" ─────────────────────────────────── */
+/* A teacher opens the app on their own jobs: the class they call the roll for,
+   and one card per subject they teach with how far each exam's marking has
+   got. The director and the administrator see "Marks still missing" for the
+   whole school instead. */
+function classTeacherCard(cls) {
+  const today = todayISO();
+  const learners = visibleStudents().filter(s => s.class === cls);
+  const regs = (state.registers || []).filter(r => r.class === cls && r.date === today);
+  let status;
+  if (!learners.length) status = `<p class="card-desc">No children in ${escapeHtml(cls)} yet. They are added when admitted.</p>`;
+  else if (!regs.length) status = `<div class="t-warn" style="font-weight:600;margin-top:6px">Not taken yet today (${learners.length} children).</div>`;
+  else {
+    const recs = regs.flatMap(r => r.records || []);
+    const absent = recs.filter(x => x.status === 'A').map(x => state.students.find(s => s.id === x.studentId)).filter(Boolean);
+    const here = recs.filter(x => x.status === 'P' || x.status === 'L').length;
+    const by = [...new Set(regs.map(r => r.markedBy).filter(Boolean))].join(', ');
+    const at = regs.map(r => r.createdAt).filter(Boolean).sort()[0];
+    const left = streamsFor(cls).filter(st => !regs.some(r => r.stream === st || !r.stream));
+    status = `<div class="t-ok" style="font-weight:600;margin-top:6px">Taken${at ? ' at ' + escapeHtml(fmtWhen(at).split(', ').pop()) : ''}${by ? ' by ' + escapeHtml(by) : ''}.</div>
+      <div>${here} present · ${absent.length} absent${absent.length ? ': ' + namesList(absent, 10, 'attendance') : ''}</div>
+      ${left.length ? `<div class="t-warn">Not taken yet for ${escapeHtml(left.join(', '))}.</div>` : ''}`;
+  }
+  const streaks = typeof absentStreaks === 'function' ? absentStreaks([cls]) : [];
+  return `<div class="work-card"><div class="work-title">Attendance today · ${escapeHtml(cls)}</div>
+    <div class="card-desc">You are the class teacher: call the roll each morning.</div>${status}
+    ${streaksHtml(streaks)}
+    <div class="toolbar" style="margin-top:10px"><button class="btn ${regs.length ? 'btn-outline' : 'btn-primary'} btn-sm" type="button" data-act="takeRegister" data-class="${escapeHtml(cls)}">${regs.length ? 'Open the register' : "Take today's attendance"}</button></div></div>`;
+}
+/* "Okello Peter: absent Mon 2, Tue 3, Wed 4 Nov — call the guardian 0772…". */
+function streaksHtml(streaks) {
+  if (!streaks.length) return '';
+  return `<div class="form-label" style="margin:10px 0 2px">Absent 3 days or more in a row — call the guardian</div>
+    ${streaks.map(x => {
+      const n = normalizePhone(x.s.guardian);
+      return `<div class="abs-item streak-item">${learnerLink(x.s.id, x.s.name, 'attendance')} <span class="card-desc">${escapeHtml(x.s.class)}</span>: absent ${x.days} days, ${escapeHtml(x.dates.map(d => fmtDay(d, false)).join(', '))}${n ? ` · <a href="tel:${escapeHtml(n)}">Call ${escapeHtml(x.s.guardian)}</a>` : ' · <span class="t-warn">no guardian number</span>'}</div>`;
+    }).join('')}`;
+}
+function subjectWorkCard(cls, subject, termId) {
+  const ix = markIndex(cls, '', termId);
+  const chips = EXAM_SETS.map(e => {
+    const p = ix.progress(e.id, subject);
+    const given = ix.started.has(e.id);
+    const full = p.total && p.done === p.total;
+    const txt = !p.total ? 'no children yet' : full ? `${p.done} of ${p.total} ✓` : given ? `${p.done} of ${p.total} · ${p.total - p.done} to go` : 'not started';
+    return `<button type="button" class="btn btn-outline btn-sm work-exam${full ? ' is-done' : given ? ' is-part' : ''}" ${sheetAttrs(cls, subject, e.id, termId)}><span>${escapeHtml(e.label)}</span><strong>${escapeHtml(txt)}</strong></button>`;
+  }).join('');
+  // The exam being marked now: the latest one given in this class.
+  const now = [...EXAM_SETS].reverse().find(e => ix.started.has(e.id));
+  const p = now && ix.progress(now.id, subject);
+  const line = p && p.missing.length ? `<div class="card-desc" style="margin-top:8px">${escapeHtml(now.label)}: still to enter — ${namesList(p.missing, 8)}</div>` : '';
+  return `<div class="work-card"><div class="work-title">${escapeHtml(subject)} · ${escapeHtml(cls)}</div>
+    <div class="card-desc">Tap an exam to open its mark sheet, ready to type.</div><div class="work-exams">${chips}</div>${line}</div>`;
+}
+function renderMyWork() {
+  const card = el('myWorkCard'), body = el('myWorkBody'); if (!card || !body) return;
+  const role = currentSession ? currentSession.role : '';
+  const term = getCurrentTerm(), termId = term && term.id;
+  const set = (title, desc, html) => { card.style.display = ''; el('myWorkTitle').textContent = title; el('myWorkDesc').textContent = desc; body.innerHTML = html; };
+  if (role === 'teacher') {
+    const t = myTeaching();
+    const rank = c => classRank(c);
+    const teaches = [...t.teaches].sort((a, b) => rank(a.class) - rank(b.class) || subjectRank(a.class)(a.subject) - subjectRank(a.class)(b.subject));
+    const parts = [];
+    if (t.classTeacherOf) parts.push(classTeacherCard(t.classTeacherOf));
+    if (termId) teaches.forEach(x => parts.push(subjectWorkCard(x.class, x.subject, termId)));
+    if (!parts.length) {
+      return set('My work today', 'Your class and subjects.', `<p class="card-desc">The director has not yet set the class you are class teacher of or the subjects you teach (Administration → Staff). Until then, use these:</p>
+        <div class="toolbar" style="margin-top:10px"><button class="btn btn-primary btn-sm" type="button" data-act="goto" data-to="directory/daily">Attendance today</button><button class="btn btn-outline btn-sm" type="button" data-act="goto" data-to="academics/marks">Enter marks</button></div>`);
+    }
+    return set('My work today', `${term ? termLabel(term) + ' · ' : ''}${fmtDay(todayISO())}`, parts.join(''));
+  }
+  if (['exec', 'admin'].includes(role) && termId) {
+    const classes = visibleClasses();
+    const gaps = classes.flatMap(c => missingSheets(c, '', termId));
+    const anyGiven = classes.some(c => markIndex(c, '', termId).started.size);
+    const desc = `${termLabel(term)}: every mark sheet that is not finished, and whose it is. Tap one to open it.`;
+    if (!anyGiven) return set('Marks still missing', desc, `<p class="card-desc">No marks have been entered for ${escapeHtml(termLabel(term))} yet.</p>`);
+    if (!gaps.length) return set('Marks still missing', desc, '<p class="card-desc t-ok">Every mark sheet started this term is complete.</p>');
+    const MAX = 12;
+    return set('Marks still missing', desc, gaps.slice(0, MAX).map(g => `<div class="abs-item work-gap"><div><strong>${escapeHtml(g.cls)} · ${escapeHtml(g.subject)}</strong> — ${escapeHtml(g.exam)}: ${g.done} of ${g.total}${g.teacher ? ` <span class="card-desc">· ${escapeHtml(g.teacher)}</span>` : ''}
+        <div class="card-desc">Still to enter: ${namesList(g.missing, 6)}</div></div><button class="btn btn-outline btn-xs" type="button" ${sheetAttrs(g.cls, g.subject, g.set, termId)}>Open</button></div>`).join('')
+      + (gaps.length > MAX ? `<p class="card-desc" style="margin-top:8px">and ${gaps.length - MAX} more. Academics → Class results shows each class's marks progress.</p>` : ''));
+  }
+  card.style.display = 'none';
+}
+
+/* ── One learner, every subject (from the learner's page) ──────────────── */
+/* A make-up paper, or a child who joined late: their marks for one exam,
+   subject by subject, by the same rules as the mark sheet. */
+function openLearnerMarks(studentId, set, typed) {
+  const s = visibleStudents().find(x => x.id === studentId); if (!s) return;
+  if (!can('canAddAcademic')) return toast('You do not have permission.', 'error');
+  const term = getCurrentTerm();
+  if (!term) return toast('There is no current term yet. The office opens it under Fees → Terms & fee structures.', 'error');
+  const termId = term.id;
+  const ix = markIndex(s.class, '', termId);
+  set = set || ([...EXAM_SETS].reverse().find(e => ix.started.has(e.id)) || EXAM_SETS[0]).id;
+  const mine = mySubjectsFor(s.class);
+  const subjects = subjectsFor(s.class).sort((a, b) => (mine ? Number(!mine.includes(a.toLowerCase())) - Number(!mine.includes(b.toLowerCase())) : 0));
+  const out = subj => msOutOf[paperKey(s.class, termId, set, subj)] || 100;
+  const markOf = subj => (s.academics || []).find(a => a.termId === termId && (a.examSet || 'EOT') === set && a.subject.toLowerCase() === subj.toLowerCase());
+  const rows = subjects.map(subj => {
+    const m = markOf(subj), locked = !!mine && !mine.includes(subj.toLowerCase());
+    const key = subj.toLowerCase();
+    const val = typed && key in typed ? typed[key].v : m ? round2(m.score * out(subj) / 100) : '';
+    const o = typed && key in typed ? typed[key].o : out(subj);
+    return `<div class="lm-row" data-subject="${escapeHtml(subj)}"${m ? ` data-pct="${m.score}"` : ''}>
+      <div class="lm-subj">${escapeHtml(subj)}${locked ? `<div class="card-desc">Entered by ${escapeHtml(teacherOf(subj, s.class) || 'its teacher')}</div>` : ''}</div>
+      <input class="input lm-score" type="number" inputmode="decimal" min="0" step="any" value="${escapeHtml(String(val))}"${locked ? ' disabled' : ''} aria-label="${escapeHtml(subj)} mark">
+      <label class="lm-out">out of <input class="input lm-outof" type="number" inputmode="numeric" min="1" max="1000" value="${o}"${locked ? ' disabled' : ''} aria-label="${escapeHtml(subj)}: marked out of"></label>
+      <span class="lm-pct">${m ? pctText(m.score) + ' ' + escapeHtml(gradeFor(s.level, m.score).grade) : ''}</span></div>`;
+  }).join('');
+  const seg = EXAM_SETS.map(e => `<button type="button" role="radio" data-lm-exam="${e.id}" class="${e.id === set ? 'on-P' : ''}" aria-checked="${e.id === set}">${escapeHtml(e.label)}</button>`).join('');
+  openModal({
+    title: escapeHtml(`Enter marks — ${s.name}`), wide: true,
+    bodyHtml: `<p class="card-desc" style="margin:-6px 0 10px">${escapeHtml(classLabel(s.class, s.stream))} · ${escapeHtml(termLabel(term))}. For a make-up paper or a child who joined late: type each mark as written on the script, then press Save marks. Empty boxes are papers not marked yet.</p>
+      <div class="form-label">Exam</div><div class="seg seg-words ms-exams" role="radiogroup" aria-label="Exam">${seg}</div>
+      <div class="lm-list" style="margin-top:12px">${rows}</div>`,
+    footHtml: `<button class="btn btn-ghost" type="button" data-act="learner" data-id="${escapeHtml(s.id)}" data-section="marks">Back to ${escapeHtml(s.name)}</button><button class="btn btn-primary" type="button" id="lmSave">Save marks</button>`,
+    onOpen(root) {
+      const read = () => [...root.querySelectorAll('.lm-row')].reduce((acc, r) => { acc[r.dataset.subject.toLowerCase()] = { v: r.querySelector('.lm-score').value, o: r.querySelector('.lm-outof').value }; return acc; }, {});
+      const pctOf = r => {
+        const v = r.querySelector('.lm-score').value; if (v === '') return null;
+        const o = Math.max(1, Math.round(Number(r.querySelector('.lm-outof').value) || 100)), raw = Number(v);
+        return !Number.isFinite(raw) || raw < 0 || raw > o ? NaN : round2(raw / o * 100);
+      };
+      root.addEventListener('input', e => {
+        const r = e.target.closest('.lm-row'); if (!r) return;
+        const p = pctOf(r);
+        if (e.target.classList.contains('lm-outof')) msOutOf[paperKey(s.class, termId, set, r.dataset.subject)] = Math.max(1, Math.round(Number(e.target.value) || 100));
+        r.querySelector('.lm-score').style.borderColor = Number.isNaN(p) ? 'var(--danger)' : '';
+        r.querySelector('.lm-pct').textContent = p === null ? '' : Number.isNaN(p) ? `0–${r.querySelector('.lm-outof').value}` : `${pctText(p)} ${gradeFor(s.level, p).grade}`;
+      });
+      root.addEventListener('click', e => {
+        const b = e.target.closest('[data-lm-exam]'); if (!b || b.dataset.lmExam === set) return;
+        openLearnerMarks(s.id, b.dataset.lmExam);
+      });
+      root.querySelector('#lmSave').addEventListener('click', async () => {
+        const typedNow = read();
+        const boxes = [...root.querySelectorAll('.lm-row')].filter(r => !r.querySelector('.lm-score').disabled).map(r => ({
+          s, subj: r.dataset.subject, had: r.dataset.pct !== undefined ? Number(r.dataset.pct) : null, p: pctOf(r),
+          raw: r.querySelector('.lm-score').value, out: r.querySelector('.lm-outof').value, inp: r.querySelector('.lm-score'),
+        }));
+        const res = await commitMarks(boxes, termId, set, s.name);
+        if (res === 'saved') { renderAll(); openLearner(s.id, 'marks'); }
+        else if (res === 'cancelled') openLearnerMarks(s.id, set, typedNow);
+      });
+    },
+  });
+}
+
 Object.assign(ACTIONS, {
+  openSheet: d => openMarkSheet(d.class, d.subject, d.exam, d.term),
+  learnerMarks: d => openLearnerMarks(d.id),
   academic: d => openLearner(d.id, 'marks'),
   reportCard: d => openReportCard(d.id, d.term),
   previewReport: d => previewReportCard(d.id, d.term, d.back === '1'),
@@ -786,5 +1108,7 @@ MODULES.push({
     on('bandsSaveBtn', 'click', saveBands);
     on('bandsResetBtn', 'click', resetBands);
   },
-  render() { renderAcademicControls(); renderClassResults(); renderReportCardList(); renderBandsForm(); renderPublishBox(); },
+  render() { renderAcademicControls(); renderClassResults(); renderReportCardList(); renderBandsForm(); renderPublishBox(); renderMyWork(); },
+  // The home screen is looked at often: show it as things stand now.
+  onSub(tab) { if (tab === 'overview') renderMyWork(); },
 });

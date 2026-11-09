@@ -338,6 +338,29 @@ function printTermSheet() {
   printDoc('<style>@page { size: A4 landscape; margin: 10mm; }</style>' + docHeader(`Class attendance — ${escapeHtml(c.label)} — ${escapeHtml(c.period)}`) + termSheetTable(d, true));
 }
 
+/* ── Absent several days in a row ──────────────────────────────────────── */
+/* A child marked Absent at each of their class's last 3 (or more) registers,
+   the latest within the past week: the class teacher should call home. */
+function absentStreaks(classes, min = 3) {
+  const weekAgo = addDaysISO(todayISO(), -7);
+  const out = [];
+  classes.forEach(cls => {
+    const regs = (state.registers || []).filter(r => r.class === cls).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    visibleStudents().filter(s => s.class === cls).forEach(s => {
+      const seen = new Set(), dates = [];
+      for (const r of regs) {
+        const rec = (r.records || []).find(x => x.studentId === s.id);
+        if (!rec || seen.has(r.date)) continue;
+        seen.add(r.date);
+        if (rec.status !== 'A') break;
+        dates.push(r.date);
+      }
+      if (dates.length >= min && dates[0] >= weekAgo) out.push({ s, days: dates.length, dates: dates.slice(0, 5).reverse() });
+    });
+  });
+  return out.sort((a, b) => b.days - a.days || a.s.name.localeCompare(b.s.name));
+}
+
 /* ── Dashboard: today's registers, with the names of absent children ───── */
 function renderAttendanceToday() {
   const box = el('attTodayBody'); if (!box) return;
@@ -375,7 +398,8 @@ function renderAttendanceToday() {
     ${absentBlock}
     ${waiting.length
       ? `<div class="pill-list" style="margin-top:12px;align-items:center"><span class="card-desc">Not marked yet:</span> ${waiting.map(c => `<span class="badge badge-warn">${escapeHtml(c)}</span>`).join(' ')}</div>`
-      : '<p class="card-desc" style="margin-top:12px">Every class has been marked today.</p>'}`;
+      : '<p class="card-desc" style="margin-top:12px">Every class has been marked today.</p>'}
+    ${streaksHtml(absentStreaks(classes))}`;
 }
 
 Object.assign(ACTIONS, {
@@ -393,6 +417,16 @@ Object.assign(ACTIONS, {
     renderRegDay();
     renderRegisterRoster();
     showAbsentees(d.class, d.stream, d.date);
+  },
+  // From a class teacher's home: today's register for their class.
+  takeRegister: d => {
+    switchTab('directory', 'daily');
+    el('regClass').value = d.class;
+    const w = el('regDateWrap'); if (w) { delete w.dataset.open; w.style.display = 'none'; }
+    el('regDate').value = todayISO();
+    renderRegisterControls();
+    renderRegisterRoster();
+    el('registerAbsentees').innerHTML = '';
   },
   absentToday: () => {
     switchTab('directory', 'recent');

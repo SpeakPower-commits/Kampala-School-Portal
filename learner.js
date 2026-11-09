@@ -69,7 +69,8 @@ const LEARNER_HTML = {
     const terms = termsWithMarks(s);
     const cur = getCurrentTerm();
     const termId = cur && terms.includes(cur.id) ? cur.id : terms[terms.length - 1];
-    if (!termId) return `<p class="card-desc">No marks recorded for ${escapeHtml(s.name)} yet.</p>`;
+    const enter = can('canAddAcademic') ? `<button class="btn ${termId ? 'btn-outline' : 'btn-primary'} btn-sm" type="button" data-act="learnerMarks" data-id="${escapeHtml(s.id)}">Enter marks</button>` : '';
+    if (!termId) return `<p class="card-desc">No marks recorded for ${escapeHtml(s.name)} yet.</p>${enter ? `<div class="toolbar" style="margin-top:12px">${enter}</div>` : ''}`;
     const r = studentTermResult(s, termId);
     const p = classPositions(termId, s.class)[s.id];
     const cell = v => v === null || v === undefined ? '<span class="t-muted">—</span>' : v;
@@ -87,6 +88,7 @@ const LEARNER_HTML = {
       <div class="toolbar" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" type="button" data-act="previewReport" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}" data-back="1">View report card</button>
         <button class="btn btn-outline btn-sm" type="button" data-act="reportCard" data-id="${escapeHtml(s.id)}" data-term="${escapeHtml(termId)}">Print report card</button>
+        ${enter}
       </div>`;
   },
 
